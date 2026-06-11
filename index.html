@@ -277,6 +277,12 @@
     display: flex; align-items: center; justify-content: center;
   }
   .train-pin svg { width: 11px; height: 11px; }
+  .train-shape {
+    width: 26px; height: 26px;
+    display: flex; align-items: center; justify-content: center;
+    filter: drop-shadow(0 1px 4px rgba(0,0,0,.55));
+  }
+  .train-shape svg { width: 15px; height: 26px; }
   .train-pin.express { border-radius: 6px; }
   .leaflet-tooltip.stn-label {
     background: transparent; border: none; box-shadow: none;
@@ -661,6 +667,22 @@ function lineOfTrain(t) {
   return state.line !== "ALL" ? state.line : "2호선";
 }
 function colorOfTrain(t) { return LINES[lineOfTrain(t)].color; }
+function bearingDeg(a, b) {
+  /* 화면 기준 방위각: 0=북, 시계방향 */
+  const dLat = b[0] - a[0];
+  const dLng = (b[1] - a[1]) * Math.cos(((a[0] + b[0]) / 2) * Math.PI / 180);
+  return Math.atan2(dLng, dLat) * 180 / Math.PI;
+}
+function dirLabel(t) {
+  const ln = lineOfTrain(t);
+  const L_ = LINES[ln];
+  if (L_.loop) {
+    const term = resolve(t.statnTnm);
+    const loopArr = L_.segments[0].slice(0, -1);
+    if (!term || loopArr.includes(term)) return t.updnLine === "0" ? "내선" : "외선";
+  }
+  return t.updnLine === "0" ? "상행" : "하행";
+}
 const distCache = {};
 function distMap(lineName, terminus) {
   if (!terminus) return null;
@@ -714,23 +736,33 @@ function trainCoord(t) {
   }
   const C = STN[cur];
   const s = String(t.trainSttus);
-  if (s === "0" && prev) return lerp(STN[prev], C, 0.78);
-  if (s === "3" && prev) return lerp(STN[prev], C, 0.5);
-  if (s === "2" && next) return lerp(C, STN[next], 0.22);
-  return C;
+  let pos = C, hFrom = null, hTo = null;
+  if (s === "0" && prev) { pos = lerp(STN[prev], C, 0.78); hFrom = prev; hTo = cur; }
+  else if (s === "3" && prev) { pos = lerp(STN[prev], C, 0.5); hFrom = prev; hTo = cur; }
+  else if (s === "2" && next) { pos = lerp(C, STN[next], 0.22); hFrom = cur; hTo = next; }
+  else if (next) { hFrom = cur; hTo = next; }
+  else if (prev) { hFrom = prev; hTo = cur; }
+  const heading = hFrom && hTo ? bearingDeg(STN[hFrom], STN[hTo]) : 0;
+  return { pos, heading };
 }
 
 /* ════════════════ 공통 마크업 ════════════════ */
 function isExpress(t) { return t.directAt === "1" || t.directAt === "7"; }
-function trainPinHtml(t) {
-  return `<div class="train-pin${isExpress(t) ? " express" : ""}" style="width:20px;height:20px;background:${colorOfTrain(t)}">
-    <svg viewBox="0 0 24 24" fill="#fff"><path d="M12 2C8 2 4 2.5 4 6v9.5C4 17.43 5.57 19 7.5 19L6 20.5V21h2.23l2-2h3.54l2 2H18v-.5L16.5 19c1.93 0 3.5-1.57 3.5-3.5V6c0-3.5-4-4-8-4zM7.5 17c-.83 0-1.5-.67-1.5-1.5S6.67 14 7.5 14s1.5.67 1.5 1.5S8.33 17 7.5 17zm3.5-6H6V6h5v5zm5.5 6c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm1.5-6h-5V6h5v5z"/></svg>
+function trainPinHtml(t, heading) {
+  const c = colorOfTrain(t);
+  const ex = isExpress(t);
+  return `<div class="train-shape" style="transform:rotate(${Math.round(heading || 0)}deg)">
+    <svg viewBox="0 0 15 26">
+      <path d="M7.5 0.8 C11.2 0.8 13.2 3 13.2 6.2 L13.2 22 C13.2 24.4 10.8 25.4 7.5 25.4 C4.2 25.4 1.8 24.4 1.8 22 L1.8 6.2 C1.8 3 3.8 0.8 7.5 0.8 Z" fill="${c}" stroke="#fff" stroke-width="1.6"/>
+      <path d="M4.6 5.2 C5.2 3.6 9.8 3.6 10.4 5.2 L10.4 7.6 L4.6 7.6 Z" fill="rgba(255,255,255,.9)"/>
+      ${ex ? '<path d="M4.8 12.5 L7.5 10.2 L10.2 12.5 M4.8 16.5 L7.5 14.2 L10.2 16.5" stroke="#fff" stroke-width="1.5" fill="none" stroke-linecap="round"/>' : '<rect x="4.6" y="12" width="5.8" height="1.6" rx="0.8" fill="rgba(255,255,255,.75)"/>'}
+    </svg>
   </div>`;
 }
 function popupHtml(t) {
   return `<div class="pp-line">${lineOfTrain(t)}${isExpress(t) ? " · 급행" : ""}${t.lstcarAt === "1" ? " · 막차" : ""}</div>
     <div class="pp-title">${t.statnNm} ${STATUS_LABEL[String(t.trainSttus)] || ""}</div>
-    <div class="pp-meta">${t.statnTnm}행 · 열차 ${t.trainNo}</div>`;
+    <div class="pp-meta">${dirLabel(t)} · ${t.statnTnm}행 · 열차 ${t.trainNo}</div>`;
 }
 function loadScript(src) {
   return new Promise((res, rej) => {
@@ -783,8 +815,8 @@ const basicAdapter = {
     if (this.map.getZoom() >= LABEL_ZOOM) { if (!this.map.hasLayer(this.labelLayer)) this.map.addLayer(this.labelLayer); }
     else if (this.map.hasLayer(this.labelLayer)) this.map.removeLayer(this.labelLayer);
   },
-  upsertTrain(no, pos, t) {
-    const icon = L.divIcon({ className: "", iconSize: [20, 20], iconAnchor: [10, 10], html: trainPinHtml(t) });
+  upsertTrain(no, pos, t, heading) {
+    const icon = L.divIcon({ className: "", iconSize: [26, 26], iconAnchor: [13, 13], html: trainPinHtml(t, heading) });
     let m = this.markers.get(no);
     if (m) { m.setLatLng(pos); m.setIcon(icon); m.getPopup().setContent(popupHtml(t)); }
     else {
@@ -882,11 +914,10 @@ const googleAdapter = {
       s.marker.setLabel(on ? { text: s.name, color: "#9A9DA3", fontSize: "10px", fontWeight: "600", className: "gm-stn-label" } : null);
     }
   },
-  upsertTrain(no, pos, t) {
+  upsertTrain(no, pos, t, heading) {
     const lineColor = colorOfTrain(t);
-    const icon = isExpress(t)
-      ? { path: "M -1,-1 L 1,-1 L 1,1 L -1,1 Z", scale: 8, fillColor: lineColor, fillOpacity: 1, strokeColor: "#fff", strokeWeight: 2 }
-      : { path: google.maps.SymbolPath.CIRCLE, scale: 8.5, fillColor: lineColor, fillOpacity: 1, strokeColor: "#fff", strokeWeight: 2 };
+    const TRAIN_PATH = "M 0,-11 C 3.7,-11 5.7,-8.8 5.7,-5.6 L 5.7,8 C 5.7,10.4 3.3,11.4 0,11.4 C -3.3,11.4 -5.7,10.4 -5.7,8 L -5.7,-5.6 C -5.7,-8.8 -3.7,-11 0,-11 Z";
+    const icon = { path: TRAIN_PATH, scale: 1, rotation: heading || 0, fillColor: lineColor, fillOpacity: 1, strokeColor: "#fff", strokeWeight: isExpress(t) ? 2.5 : 1.5 };
     let m = this.markers.get(no);
     if (m) { m.setPosition({ lat: pos[0], lng: pos[1] }); m.setIcon(icon); m._pp = popupHtml(t); }
     else {
@@ -953,12 +984,6 @@ const naverAdapter = {
     });
     naver.maps.Event.addListener(this.map, "zoom_changed", () => this.syncLabels());
     setTimeout(() => { if (this.map) naver.maps.Event.trigger(this.map, "resize"); }, 300);
-    setTimeout(() => { /* 임시 진단 */
-      if (state.mapProvider !== "naver" || !this.map) return;
-      const s = this.map.getSize();
-      const cv = document.querySelector("#map-naver canvas");
-      toast(`네이버 진단: 컨테이너 ${s.width}x${s.height} · 캔버스 ${cv ? cv.width + "x" + cv.height : "없음(이미지 타일 방식)"}`);
-    }, 2500);
   },
   destroy() {
     if (this.map) { this.map.destroy(); this.map = null; }
@@ -1006,17 +1031,17 @@ const naverAdapter = {
     this.labelsOn = on;
     for (const l of this.labels) l.setMap(on ? this.map : null);
   },
-  upsertTrain(no, pos, t) {
+  upsertTrain(no, pos, t, heading) {
     const ll = new naver.maps.LatLng(pos[0], pos[1]);
     let m = this.markers.get(no);
     if (m) {
       m.setPosition(ll);
-      m.setIcon({ content: trainPinHtml(t), anchor: new naver.maps.Point(10, 10) });
+      m.setIcon({ content: trainPinHtml(t, heading), anchor: new naver.maps.Point(13, 13) });
       m._pp = popupHtml(t);
     } else {
       m = new naver.maps.Marker({
         map: this.map, position: ll,
-        icon: { content: trainPinHtml(t), anchor: new naver.maps.Point(10, 10) }, zIndex: 100
+        icon: { content: trainPinHtml(t, heading), anchor: new naver.maps.Point(13, 13) }, zIndex: 100
       });
       m._pp = popupHtml(t);
       naver.maps.Event.addListener(m, "click", () => {
@@ -1074,10 +1099,10 @@ function drawLine(lineName) {
 function renderTrains() {
   const seen = new Set();
   for (const t of state.trains) {
-    const pos = trainCoord(t);
-    if (!pos) continue;
+    const r = trainCoord(t);
+    if (!r) continue;
     seen.add(t.trainNo);
-    adapter.upsertTrain(t.trainNo, pos, t);
+    adapter.upsertTrain(t.trainNo, r.pos, t, r.heading);
   }
   adapter.prune(seen);
   renderList();
@@ -1094,7 +1119,7 @@ function renderList() {
       <div class="t-marker${isExpress(t) ? " express" : ""}" style="background:${colorOfTrain(t)}">${isExpress(t) ? "急" : "🚇"}</div>
       <div class="t-info">
         <div class="t-top"><span class="t-station">${t.statnNm}</span><span class="t-status">${STATUS_LABEL[String(t.trainSttus)] || ""}</span></div>
-        <div class="t-sub">${state.line === "ALL" ? lineOfTrain(t) + " · " : ""}${t.statnTnm}행 · ${t.trainNo}${isExpress(t) ? ' <span class="badge express">급행</span>' : ""}${t.lstcarAt === "1" ? ' <span class="badge">막차</span>' : ""}</div>
+        <div class="t-sub">${state.line === "ALL" ? lineOfTrain(t) + " · " : ""}<b style="color:var(--text)">${dirLabel(t)}</b> · ${t.statnTnm}행 · ${t.trainNo}${isExpress(t) ? ' <span class="badge express">급행</span>' : ""}${t.lstcarAt === "1" ? ' <span class="badge">막차</span>' : ""}</div>
       </div>
     </div>`).join("");
   list.querySelectorAll(".train-item").forEach(el =>
