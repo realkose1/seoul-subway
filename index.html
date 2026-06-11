@@ -1075,7 +1075,7 @@ async function fetchLive() {
       setStatus(`실시간(${src.name}) · ${new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`, true);
       return;
     } catch (e) {
-      const msg = e instanceof TypeError ? "네트워크/CORS 차단" : e.message;
+      const msg = e instanceof TypeError ? "연결 끊김 (서버 응답 지연 또는 차단)" : e.message;
       errors.push(`${src.name}: ${msg}`);
     }
   }

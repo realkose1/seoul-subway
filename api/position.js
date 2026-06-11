@@ -6,7 +6,7 @@ const ALLOWED = new Set(["1호선", "2호선", "3호선", "4호선", "5호선", 
 async function callUpstream(scheme, key, line) {
   const url = `${scheme}://swopenapi.seoul.go.kr/api/subway/${key}/json/realtimePosition/0/200/${encodeURIComponent(line)}`;
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 8000);
+  const timer = setTimeout(() => ctrl.abort(), 4000);
   try {
     const r = await fetch(url, { signal: ctrl.signal });
     return await r.json();
@@ -20,16 +20,16 @@ module.exports = async (req, res) => {
   const key = process.env.SUBWAY_API_KEY;
 
   /* 프록시 사용 가능 여부 확인용 (상위 API 호출 없음) */
-  if (req.query.probe) return res.status(200).json({ ok: !!key });
+  if (req.query.probe) return res.status(200).json({ ok: !!key, region: process.env.VERCEL_REGION || "unknown" });
 
   if (!key) return res.status(500).json({ code: "ERROR-ENV", message: "서버에 SUBWAY_API_KEY 환경변수가 설정되지 않았습니다." });
 
   const line = String(req.query.line || "");
   if (!ALLOWED.has(line)) return res.status(400).json({ code: "ERROR-PARAM", message: "지원하지 않는 노선입니다." });
 
-  /* 열린데이터광장 서버의 인증서 체인 문제로 https가 실패할 수 있어 http로 폴백 */
+  /* 인증서 체인 문제 회피를 위해 서버 간 통신은 http를 우선 사용 */
   const errors = [];
-  for (const scheme of ["https", "http"]) {
+  for (const scheme of ["http", "https"]) {
     try {
       const data = await callUpstream(scheme, key, line);
       return res.status(200).json(data);
