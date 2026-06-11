@@ -46,11 +46,11 @@ const tests = [
   }},
   { id: "t5", name: "5. 네이버 지도 스크립트 (script 태그)", run: () => new Promise((res, rej) => {
       const s = document.createElement("script");
-      s.src = "https://oapi.map.naver.com/openapi/v3/maps.js?ncpClientId=7dklj0rqzc";
+      s.src = "https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=7dklj0rqzc";
       window.navermap_authFailure = () => rej(new Error("스크립트 로드됨, 인증 실패 (URL 미등록)"));
       s.onload = () => setTimeout(() => {
-        if (window.naver && window.naver.maps) res("로드 + 인증 성공");
-      }, 1500);
+        if (window.naver && window.naver.maps) res("로드 + 인증 성공 (4초 내 실패 없음)");
+      }, 4000);
       s.onerror = () => rej(new Error("스크립트 로드 차단"));
       document.head.appendChild(s);
       setTimeout(() => rej(new Error("8초 시간 초과")), 8000);

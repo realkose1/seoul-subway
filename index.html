@@ -901,16 +901,17 @@ const naverAdapter = {
         setProvider("basic");
       }
     };
-    /* 구형(AI·NAVER API: ncpClientId)과 신형(NCP Maps: ncpKeyId) 키를 모두 지원 */
-    for (const param of ["ncpClientId", "ncpKeyId"]) {
-      window.__naverAuthFailed = false;
-      try {
-        await loadScript(`https://oapi.map.naver.com/openapi/v3/maps.js?${param}=${encodeURIComponent(state.naverId)}`);
-      } catch (e) { continue; }
-      await new Promise(r => setTimeout(r, 1000)); /* 인증 콜백 대기 */
-      if (window.naver && window.naver.maps && !window.__naverAuthFailed) return true;
+    /* 신규 Maps 상품(2025~)은 ncpKeyId로 인증한다 */
+    window.__naverAuthFailed = false;
+    try {
+      await loadScript(`https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=${encodeURIComponent(state.naverId)}`);
+    } catch (e) {
+      toast("네이버 지도 스크립트를 불러오지 못했습니다.");
+      return false;
     }
-    toast("네이버 지도 인증에 실패했습니다. 콘솔의 Web 서비스 URL에 현재 주소가 등록되어 있는지 확인해 주세요.");
+    await new Promise(r => setTimeout(r, 1500)); /* 인증 콜백 대기 */
+    if (window.naver && window.naver.maps && !window.__naverAuthFailed) return true;
+    toast("네이버 지도 인증에 실패했습니다. 콘솔의 Web 서비스 URL 등록을 확인해 주세요.");
     return false;
   },
   init(center, zoom) {
