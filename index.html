@@ -1352,6 +1352,8 @@ async function tryFetch(url) {
   catch { throw new Error(`응답 해석 실패 (HTTP ${res.status})`); }
   if (data.code && String(data.code).startsWith("ERROR")) throw new Error(data.message || data.code);
   if (data.status && data.status >= 400) throw new Error(data.message || `API 오류 (${data.code || data.status})`);
+  if (data.errorMessage && data.errorMessage.code && data.errorMessage.code !== "INFO-000")
+    throw new Error(data.errorMessage.message || data.errorMessage.code);
   if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
   return data;
 }
@@ -1653,6 +1655,12 @@ document.getElementById("listFab").addEventListener("click", () => {
 });
 document.getElementById("panelHead").addEventListener("click", () => {
   if (window.innerWidth < 768) document.getElementById("trainPanel").classList.remove("open");
+});
+
+/* 백그라운드 탭에서는 호출을 멈춰 일일 한도를 아낀다 */
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) clearInterval(state.timer);
+  else { refresh(); restartTimer(); }
 });
 
 /* 시작 */
