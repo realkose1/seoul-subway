@@ -1,0 +1,6 @@
+# 개인 API 키
+config.js
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,1215 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>서울 지하철 라이브</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root {
+    --bg: #0d0e10;
+    --panel: rgba(20, 21, 24, 0.94);
+    --panel-solid: #141518;
+    --border: rgba(255, 255, 255, 0.08);
+    --text: #ECEDEE;
+    --muted: #9A9DA3;
+    --faint: #5A5D63;
+    --line: #00A84D; /* 선택된 노선 색이 화면의 유일한 색 */
+    --radius: 14px;
+    --font: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard Variable", Pretendard, "Noto Sans KR", "Malgun Gothic", sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    overflow: hidden;
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+  }
+  #map { position: absolute; inset: 0; background: var(--bg); }
+  .leaflet-container { background: var(--bg); font-family: var(--font); }
+  .leaflet-control-attribution { background: rgba(13,14,16,.6) !important; color: var(--faint) !important; font-size: 10px; }
+  .leaflet-control-attribution a { color: var(--muted) !important; }
+  .leaflet-control-zoom { border: 1px solid var(--border) !important; border-radius: 10px; overflow: hidden; }
+  .leaflet-control-zoom a { background: var(--panel-solid) !important; color: var(--text) !important; border-color: var(--border) !important; }
+  .leaflet-marker-icon { transition: transform 1.4s cubic-bezier(.4,0,.2,1); }
+
+  /* ── 상단 바 ───────────────────────── */
+  .topbar {
+    position: absolute; top: 0; left: 0; right: 0;
+    z-index: 1000;
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: max(12px, env(safe-area-inset-top)) 14px 0 14px;
+    pointer-events: none;
+  }
+  .brand-card {
+    pointer-events: auto;
+    background: var(--panel);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    min-width: 0;
+    flex: 1;
+    max-width: 560px;
+  }
+  .brand-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .brand { font-size: 15px; font-weight: 700; letter-spacing: -0.02em; white-space: nowrap; }
+  .status {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; color: var(--muted); white-space: nowrap;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }
+  .dot.live { background: var(--line); animation: pulse 1.8s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+  .chips {
+    display: flex; gap: 6px; margin-top: 10px;
+    overflow-x: auto; scrollbar-width: none;
+  }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip {
+    flex: none;
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    font-family: var(--font);
+    font-size: 12.5px; font-weight: 600;
+    cursor: pointer;
+    transition: all .18s ease;
+  }
+  .chip .swatch { width: 8px; height: 8px; border-radius: 50%; background: var(--c); opacity: .55; transition: opacity .18s; }
+  .chip:hover { color: var(--text); border-color: rgba(255,255,255,.18); }
+  .chip.on {
+    background: var(--c);
+    border-color: var(--c);
+    color: #fff;
+  }
+  .chip.on .swatch { background: #fff; opacity: .9; }
+
+  .icon-btn {
+    pointer-events: auto;
+    width: 42px; height: 42px; flex: none;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--panel);
+    backdrop-filter: blur(16px);
+    color: var(--text);
+    font-size: 17px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .icon-btn:hover { border-color: rgba(255,255,255,.2); }
+
+  /* ── 설정 패널 ─────────────────────── */
+  .settings {
+    position: absolute; top: 64px; right: 14px;
+    z-index: 1100;
+    width: min(320px, calc(100vw - 28px));
+    background: var(--panel);
+    backdrop-filter: blur(16px);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    display: none;
+  }
+  .settings.open { display: block; }
+  .settings h3 { font-size: 13px; font-weight: 700; margin-bottom: 12px; }
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+  .field input[type="text"] {
+    width: 100%;
+    background: rgba(255,255,255,.05);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 13px;
+    padding: 9px 11px;
+    outline: none;
+  }
+  .field input[type="text"]:focus { border-color: var(--line); }
+  .seg {
+    display: flex; gap: 4px;
+    background: rgba(255,255,255,.05);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 3px;
+  }
+  .seg button {
+    flex: 1;
+    background: transparent;
+    border: none;
+    border-radius: 7px;
+    color: var(--muted);
+    font-family: var(--font);
+    font-size: 12px; font-weight: 600;
+    padding: 7px 0;
+    cursor: pointer;
+  }
+  .seg button.on { background: var(--line); color: #fff; }
+  .hint { font-size: 11px; color: var(--faint); line-height: 1.6; margin-top: 4px; }
+  .hint a { color: var(--muted); }
+  .meter { font-size: 11px; color: var(--muted); display: flex; justify-content: space-between; padding-top: 10px; border-top: 1px solid var(--border); }
+
+  /* ── 열차 패널 ─────────────────────── */
+  .panel {
+    position: absolute; z-index: 1000;
+    background: var(--panel);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  @media (min-width: 768px) {
+    .panel {
+      top: 130px; right: 14px; bottom: 14px;
+      width: 300px;
+      border-radius: var(--radius);
+    }
+  }
+  @media (max-width: 767px) {
+    .panel {
+      left: 0; right: 0; bottom: 0;
+      height: 38vh;
+      border-radius: 18px 18px 0 0;
+      border-bottom: none;
+      transition: height .25s ease;
+    }
+    .panel.min { height: 52px; }
+    .panel.min .panel-body, .panel.min .panel-tabs { display: none; }
+  }
+  .panel-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 13px 16px 10px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .panel-head h2 { font-size: 13px; font-weight: 700; }
+  .panel-head .count { font-size: 12px; color: var(--muted); }
+  .panel-tabs { display: flex; gap: 4px; padding: 0 12px 10px; }
+  .panel-tabs button {
+    flex: 1;
+    background: rgba(255,255,255,.04);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--muted);
+    font-family: var(--font);
+    font-size: 11.5px; font-weight: 600;
+    padding: 6px 0;
+    cursor: pointer;
+  }
+  .panel-tabs button.on { background: var(--line); border-color: var(--line); color: #fff; }
+  .panel-body { flex: 1; overflow-y: auto; padding: 0 8px 12px; }
+  .panel-body::-webkit-scrollbar { width: 4px; }
+  .panel-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 2px; }
+
+  .train-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px;
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  .train-item:hover { background: rgba(255,255,255,.05); }
+  .t-marker {
+    width: 30px; height: 30px; flex: none;
+    border-radius: 9px;
+    background: var(--line);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px;
+  }
+  .t-marker.express { border-radius: 50%; outline: 2px solid var(--line); outline-offset: 2px; }
+  .t-info { flex: 1; min-width: 0; }
+  .t-top { display: flex; align-items: baseline; gap: 6px; }
+  .t-station { font-size: 13.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .t-status { font-size: 11px; color: var(--line); font-weight: 600; flex: none; filter: brightness(1.35); }
+  .t-sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; display: flex; gap: 6px; align-items: center; }
+  .badge {
+    font-size: 9.5px; font-weight: 700;
+    padding: 1.5px 6px;
+    border-radius: 5px;
+    background: rgba(255,255,255,.09);
+    color: var(--muted);
+  }
+  .badge.express { background: var(--line); color: #fff; }
+  .empty { text-align: center; color: var(--faint); font-size: 12.5px; padding: 36px 16px; line-height: 1.7; }
+
+  /* ── 지도 마커 ─────────────────────── */
+  .stn-dot {
+    width: 100%; height: 100%;
+    border-radius: 50%;
+    background: var(--bg);
+    border: 1.5px solid var(--faint);
+  }
+  .stn-dot.terminal { border-color: var(--line); border-width: 2px; }
+  .train-pin {
+    width: 100%; height: 100%;
+    border-radius: 50%;
+    background: var(--line);
+    border: 2px solid #fff;
+    box-shadow: 0 1px 8px rgba(0,0,0,.5);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .train-pin svg { width: 11px; height: 11px; }
+  .train-pin.express { border-radius: 6px; }
+  .leaflet-tooltip.stn-label {
+    background: transparent; border: none; box-shadow: none;
+    color: var(--muted); font-size: 10px; font-weight: 600;
+    font-family: var(--font);
+    text-shadow: 0 1px 3px rgba(0,0,0,.9), 0 0 6px rgba(0,0,0,.8);
+  }
+  .leaflet-tooltip.stn-label::before { display: none; }
+  .leaflet-popup-content-wrapper {
+    background: var(--panel-solid); color: var(--text);
+    border: 1px solid var(--border); border-radius: 12px;
+    font-family: var(--font);
+  }
+  .leaflet-popup-tip { background: var(--panel-solid); border: 1px solid var(--border); }
+  .leaflet-popup-content { margin: 12px 14px; font-size: 12.5px; line-height: 1.7; }
+  .pp-title { font-weight: 700; font-size: 14px; }
+  .pp-line { color: var(--line); font-weight: 700; font-size: 11px; filter: brightness(1.35); }
+  .pp-meta { color: var(--muted); font-size: 11.5px; }
+
+  /* ── 구글/네이버 지도 오버라이드 ────── */
+  .gm-style .gm-style-iw-c { background: var(--panel-solid) !important; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px !important; box-shadow: 0 4px 20px rgba(0,0,0,.5); }
+  .gm-style .gm-style-iw-d { overflow: hidden !important; color: var(--text); font-family: var(--font); font-size: 12.5px; line-height: 1.7; }
+  .gm-style .gm-style-iw-tc::after { background: var(--panel-solid) !important; }
+  .gm-style-iw button.gm-ui-hover-effect span { background-color: var(--muted) !important; }
+  .gm-stn-label { transform: translateY(-15px); }
+  .stn-label-light { color: #3a3d42; font-size: 10px; font-weight: 700; font-family: var(--font); white-space: nowrap; text-shadow: 0 0 3px #fff, 0 0 5px #fff, 0 0 8px #fff; transform: translate(8px, -6px); }
+  .stn-dot-html { width: 9px; height: 9px; border-radius: 50%; background: #fff; border: 2px solid #8a8d93; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+  .stn-dot-html.terminal { border-color: var(--line); width: 11px; height: 11px; }
+  .naver-pp { font-family: var(--font); color: var(--text); font-size: 12.5px; line-height: 1.7; padding: 12px 14px; min-width: 150px; }
+
+  /* ── 토스트 ───────────────────────── */
+  .toast {
+    position: absolute; left: 50%; bottom: 24px;
+    transform: translateX(-50%) translateY(80px);
+    z-index: 2000;
+    background: var(--panel-solid);
+    border: 1px solid var(--border);
+    border-radius: 11px;
+    padding: 11px 18px;
+    font-size: 12.5px;
+    max-width: calc(100vw - 40px);
+    transition: transform .3s ease;
+    text-align: center;
+  }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+  @media (max-width: 767px) { .toast { bottom: calc(38vh + 16px); } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .leaflet-marker-icon, .toast, .chip { transition: none; }
+    .dot.live { animation: none; }
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="topbar">
+  <div class="brand-card">
+    <div class="brand-row">
+      <div class="brand">서울 지하철 라이브</div>
+      <div class="status"><span class="dot" id="statusDot"></span><span id="statusText">모의 데이터</span></div>
+    </div>
+    <div class="chips" id="lineChips"></div>
+  </div>
+  <button class="icon-btn" id="settingsBtn" aria-label="설정">&#9881;</button>
+</div>
+
+<div class="settings" id="settingsPanel">
+  <h3>설정</h3>
+  <div class="field">
+    <label>지도</label>
+    <div class="seg" id="mapSeg">
+      <button data-map="basic" class="on">기본</button>
+      <button data-map="google">구글</button>
+      <button data-map="naver">네이버</button>
+    </div>
+  </div>
+  <div class="field" id="googleKeyField" style="display:none">
+    <label>구글 지도 API 키 (Maps JavaScript API)</label>
+    <input type="text" id="googleKey" placeholder="AIza..." autocomplete="off" spellcheck="false">
+    <div class="hint">Google Cloud Console에서 발급. 키 입력 후 위의 '구글'을 다시 눌러주세요. 파일을 직접 열어도 동작합니다.</div>
+  </div>
+  <div class="field" id="naverKeyField" style="display:none">
+    <label>네이버 지도 클라이언트 ID (NCP Maps)</label>
+    <input type="text" id="naverId" placeholder="Client ID" autocomplete="off" spellcheck="false">
+    <div class="hint">네이버 클라우드 플랫폼에서 Maps 이용 신청 후 발급. Web 서비스 URL에 http://localhost:8000 을 등록하고, 파일이 있는 폴더에서 <b>python3 -m http.server 8000</b> 실행 후 localhost:8000으로 열어야 인증이 통과됩니다.</div>
+  </div>
+  <div class="field">
+    <label>데이터 모드</label>
+    <div class="seg" id="modeSeg">
+      <button data-mode="mock" class="on">모의 데이터</button>
+      <button data-mode="live">실시간 API</button>
+    </div>
+  </div>
+  <div class="field" id="keyField" style="display:none">
+    <label>서울 열린데이터광장 실시간 지하철 인증키</label>
+    <input type="text" id="apiKey" placeholder="인증키 붙여넣기" autocomplete="off" spellcheck="false">
+    <div class="hint">키는 이 브라우저 세션에만 보관됩니다. 파일 상단의 DEFAULT_API_KEY에 직접 넣어두면 매번 입력하지 않아도 됩니다.</div>
+  </div>
+  <div class="field">
+    <label>갱신 주기</label>
+    <div class="seg" id="intervalSeg">
+      <button data-sec="15">15초</button>
+      <button data-sec="30" class="on">30초</button>
+      <button data-sec="60">60초</button>
+    </div>
+    <div class="hint">실시간 API는 하루 1,000회 제한이 있습니다. 30초 주기로 약 8시간 사용 가능합니다.</div>
+  </div>
+  <div class="meter"><span>이번 세션 API 호출</span><span id="callCount">0회</span></div>
+</div>
+
+<div class="panel" id="trainPanel">
+  <div class="panel-head" id="panelHead">
+    <h2 id="panelTitle">운행 중인 열차</h2>
+    <span class="count" id="panelCount"></span>
+  </div>
+  <div class="panel-tabs" id="dirTabs">
+    <button data-dir="all" class="on">전체</button>
+    <button data-dir="0" id="tabUp">상행</button>
+    <button data-dir="1" id="tabDown">하행</button>
+  </div>
+  <div class="panel-body" id="trainList">
+    <div class="empty">데이터를 불러오는 중...</div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="config.js"></script>
+<script>
+/* ════════════════════════════════════════════════════
+   설정: 인증키를 여기에 넣어두면 매번 입력할 필요가 없습니다.
+   발급: https://data.seoul.go.kr (실시간 지하철 인증키 신청)
+   ════════════════════════════════════════════════════ */
+const DEFAULT_API_KEY = window.SUBWAY_API_KEY || "";          /* config.js 에서 주입 (레포에 키를 올리지 마세요) */
+const DEFAULT_GOOGLE_MAPS_KEY = window.GOOGLE_MAPS_KEY || "";  /* config.js 에서 주입 (선택) */
+const DEFAULT_NAVER_CLIENT_ID = window.NAVER_CLIENT_ID || "";  /* config.js 에서 주입 (선택) */
+
+/* 역 좌표 (위도, 경도) — *표시는 근사 좌표 */
+const STN = {
+"연천":[38.0996,127.0750],"전곡":[38.0263,127.0648],"청산":[38.0046,127.0790],
+"소요산":[37.9481,127.061034],"동두천":[37.927878,127.05479],"보산":[37.913702,127.057277],
+"동두천중앙":[37.901885,127.056482],"지행":[37.892334,127.055716],"덕정":[37.843188,127.061277],
+"덕계":[37.818486,127.056486],"양주":[37.774381,127.044708],"녹양":[37.75938,127.042292],
+"가능":[37.748577,127.044213],"의정부":[37.738415,127.045958],"회룡":[37.724846,127.046895],
+"망월사":[37.709914,127.047455],"도봉산":[37.689313,127.046222],"도봉":[37.679563,127.045595],
+"방학":[37.667503,127.044273],"창동":[37.653166,127.047731],"녹천":[37.644799,127.051269],
+"월계":[37.633212,127.058831],"광운대":[37.623632,127.061835],"석계":[37.614805,127.065851],
+"신이문":[37.601854,127.067325],"외대앞":[37.596073,127.063549],"회기":[37.58946,127.057583],
+"청량리":[37.580178,127.046835],"제기동":[37.578103,127.034893],"신설동":[37.575297,127.025087],
+"동묘앞":[37.572627,127.016429],"동대문":[37.57142,127.009745],"종로5가":[37.570926,127.001849],
+"종로3가":[37.571607,126.991806],"종각":[37.570161,126.982923],"시청":[37.564718,126.977108],
+"서울":[37.554648,126.972559],"남영":[37.541021,126.9713],"용산":[37.529849,126.964561],
+"노량진":[37.514219,126.942454],"대방":[37.513342,126.926382],"신길":[37.517122,126.917169],
+"영등포":[37.515504,126.907628],"신도림":[37.508725,126.891295],"구로":[37.503039,126.881966],
+"구일":[37.496756,126.870793],"개봉":[37.494594,126.85868],"오류동":[37.494526,126.845365],
+"온수":[37.492258,126.823388],"역곡":[37.485178,126.811502],"소사":[37.482753,126.79544],
+"부천":[37.48405,126.782686],"중동":[37.486562,126.764843],"송내":[37.4876,126.753664],
+"부개":[37.488418,126.74109],"부평":[37.489493,126.724805],"백운":[37.483664,126.707704],
+"동암":[37.471408,126.702896],"간석":[37.464737,126.694181],"주안":[37.464941,126.679923],
+"도화":[37.46607,126.668672],"제물포":[37.466769,126.656666],"도원":[37.468446,126.642706],
+"동인천":[37.475276,126.632802],"인천":[37.476691,126.616936],
+"가산디지털단지":[37.481072,126.882343],"독산":[37.466613,126.889249],"금천구청":[37.455626,126.89398],
+"광명":[37.416182,126.884466],"석수":[37.435047,126.902295],"관악":[37.419232,126.908706],
+"안양":[37.401592,126.922874],"명학":[37.384653,126.935433],"금정":[37.372221,126.943429],
+"군포":[37.35356,126.948462],"당정":[37.344285,126.948345],"의왕":[37.320852,126.948217],
+"성균관대":[37.300349,126.97075],"화서":[37.283862,126.989627],"수원":[37.265974,126.999874],
+"세류":[37.245025,127.013222],"병점":[37.207503,127.032731],"서동탄":[37.195504,127.051672],
+"세마":[37.187533,127.04318],"오산대":[37.168953,127.063197],"오산":[37.145885,127.06672],
+"진위":[37.109447,127.062278],"송탄":[37.075696,127.054301],"서정리":[37.056496,127.052819],
+"지제":[37.0188,127.070444],"평택":[36.990726,127.085159],"성환":[36.916076,127.126964],
+"직산":[36.870593,127.143904],"두정":[36.833705,127.14896],"천안":[36.810005,127.146826],
+"봉명":[36.801215,127.135763],"쌍용(나사렛대)":[36.793759,127.1214],"아산":[36.792053,127.104361],
+"탕정":[36.7886,127.0846],"배방":[36.777629,127.052991],"온양온천":[36.780483,127.003249],
+"신창":[36.769502,126.951108],
+"을지로입구":[37.566014,126.982618],"을지로3가":[37.566295,126.99191],"을지로4가":[37.566941,126.998079],
+"동대문역사문화공원":[37.565138,127.007896],"신당":[37.565972,127.01782],"상왕십리":[37.564354,127.029354],
+"왕십리":[37.561533,127.037732],"한양대":[37.555273,127.043655],"뚝섬":[37.547184,127.047367],
+"성수":[37.544581,127.055961],"건대입구":[37.540693,127.07023],"구의":[37.537077,127.085916],
+"강변":[37.535095,127.094681],"잠실나루":[37.520733,127.10379],"잠실":[37.51395,127.102234],
+"잠실새내":[37.511687,127.086162],"종합운동장":[37.510997,127.073642],"삼성":[37.508844,127.06316],
+"선릉":[37.504503,127.049008],"역삼":[37.500622,127.036456],"강남":[37.497175,127.027926],
+"교대":[37.493415,127.01408],"서초":[37.491897,127.007917],"방배":[37.481426,126.997596],
+"사당":[37.47653,126.981685],"낙성대":[37.47693,126.963693],"서울대입구":[37.481247,126.952739],
+"봉천":[37.482362,126.941892],"신림":[37.484201,126.929715],"신대방":[37.487462,126.913149],
+"구로디지털단지":[37.485266,126.901401],"대림":[37.49297,126.895801],"문래":[37.517933,126.89476],
+"영등포구청":[37.52497,126.895951],"당산":[37.53438,126.902281],"합정":[37.549463,126.913739],
+"홍대입구":[37.557192,126.925381],"신촌":[37.555134,126.936893],"이대":[37.556733,126.946013],
+"아현":[37.557345,126.956141],"충정로":[37.559973,126.963672],
+"용답":[37.561904,127.050899],"신답":[37.57004,127.046481],"용두":[37.574028,127.038091],
+"도림천":[37.514287,126.882768],"양천구청":[37.512398,126.865819],"신정네거리":[37.520074,126.852912],
+"까치산":[37.531768,126.846683],
+"대화":[37.676087,126.747569],"주엽":[37.670072,126.761334],"정발산":[37.659477,126.773359],
+"마두":[37.652206,126.77762],"백석":[37.643114,126.78787],"대곡":[37.631626,126.811024],
+"화정":[37.634592,126.83265],"원당":[37.653324,126.843041],"원흥":[37.650658,126.872642],
+"삼송":[37.653083,126.895558],"지축":[37.648048,126.913951],"구파발":[37.636763,126.918821],
+"연신내":[37.619001,126.921008],"불광":[37.610469,126.929887],"녹번":[37.600927,126.935756],
+"홍제":[37.589066,126.943736],"무악재":[37.582299,126.950291],"독립문":[37.574571,126.957748],
+"경복궁":[37.575762,126.97353],"안국":[37.576477,126.985443],"충무로":[37.561243,126.99428],
+"동대입구":[37.559052,127.005602],"약수":[37.55434,127.010655],"금호":[37.548034,127.015872],
+"옥수":[37.540685,127.017965],"압구정":[37.527072,127.028461],"신사":[37.516334,127.020114],
+"잠원":[37.512759,127.01122],"고속터미널":[37.50481,127.004943],"남부터미널":[37.485013,127.016189],
+"양재":[37.484147,127.034631],"매봉":[37.486947,127.046769],"도곡":[37.490858,127.055381],
+"대치":[37.494612,127.063642],"학여울":[37.496663,127.070594],"대청":[37.493514,127.079532],
+"일원":[37.483681,127.08439],"수서":[37.487371,127.10188],"가락시장":[37.492522,127.118234],
+"경찰병원":[37.495918,127.12454],"오금":[37.502162,127.128111],
+"진접":[37.7202,127.1924],"오남":[37.7008,127.2030],"별내별가람":[37.6669,127.1118],
+"당고개":[37.670272,127.079066],"상계":[37.660878,127.073572],"노원":[37.655128,127.061368],
+"쌍문":[37.648627,127.034709],"수유":[37.638052,127.025732],"미아":[37.62667,127.025983],
+"미아사거리":[37.613292,127.030053],"길음":[37.603407,127.025053],"성신여대입구":[37.592624,127.016403],
+"한성대입구":[37.588458,127.006221],"혜화":[37.582336,127.001844],"명동":[37.560989,126.986325],
+"회현":[37.558514,126.978246],"숙대입구":[37.54456,126.972106],"삼각지":[37.534777,126.97311],
+"신용산":[37.52917,126.967894],"이촌":[37.522272,126.974345],"동작":[37.502971,126.979306],
+"총신대입구(이수)":[37.486263,126.981989],"남태령":[37.463873,126.989134],"선바위":[37.451673,127.002303],
+"경마공원":[37.443885,127.007888],"대공원":[37.435675,127.006523],"과천":[37.433021,126.996568],
+"정부과천청사":[37.426513,126.98978],"인덕원":[37.401553,126.976715],"평촌":[37.394287,126.963883],
+"범계":[37.389793,126.950806],"산본":[37.358101,126.933274],"수리산":[37.349801,126.925365],
+"대야미":[37.328467,126.917332],"반월":[37.312212,126.903524],"상록수":[37.302795,126.866489],
+"한대앞":[37.309689,126.85344],"중앙":[37.315941,126.838573],"고잔":[37.316777,126.823249],
+"초지":[37.320646,126.805913],"안산":[37.327082,126.788532],"신길온천":[37.338212,126.765844],
+"정왕":[37.351735,126.742989],"오이도":[37.362357,126.738714],
+"방화":[37.577446,126.812741],"개화산":[37.572399,126.806171],"김포공항":[37.562434,126.801058],
+"송정":[37.561184,126.811973],"마곡":[37.560183,126.825448],"발산":[37.558598,126.837668],
+"우장산":[37.548768,126.836318],"화곡":[37.541513,126.840461],"신정":[37.524997,126.856191],
+"목동":[37.526065,126.864931],"오목교":[37.524496,126.875181],"양평":[37.525648,126.885778],
+"영등포시장":[37.522669,126.905139],"여의도":[37.521624,126.924191],"여의나루":[37.527098,126.932901],
+"마포":[37.539574,126.945932],"공덕":[37.544018,126.951592],"애오개":[37.553736,126.95682],
+"서대문":[37.565773,126.966641],"광화문":[37.571026,126.976669],"청구":[37.560245,127.013828],
+"신금호":[37.554548,127.020331],"행당":[37.557322,127.029476],"마장":[37.5661,127.042973],
+"답십리":[37.566747,127.052704],"장한평":[37.56144,127.064623],"군자":[37.557121,127.079542],
+"아차산":[37.551691,127.089761],"광나루":[37.545303,127.10357],"천호":[37.538397,127.123572],
+"강동":[37.535804,127.132481],"길동":[37.537801,127.140004],"굽은다리":[37.545477,127.142853],
+"명일":[37.55137,127.143999],"고덕":[37.555004,127.154151],"상일동":[37.556712,127.166417],
+"강일":[37.5577,127.1756],"미사":[37.5634,127.1928],"하남풍산":[37.5523,127.2040],
+"하남시청":[37.5417,127.2069],"하남검단산":[37.5396,127.2233],
+"둔촌동":[37.527788,127.136248],"올림픽공원":[37.516078,127.130848],"방이":[37.508857,127.126133],
+"개롱":[37.498079,127.13482],"거여":[37.493105,127.14415],"마천":[37.49499,127.152781],
+"응암":[37.598605,126.915577],"역촌":[37.606021,126.922744],"독바위":[37.618456,126.933031],
+"구산":[37.611377,126.91727],"새절":[37.591148,126.913629],"증산":[37.583876,126.909645],
+"디지털미디어시티":[37.576646,126.900984],"월드컵경기장":[37.569532,126.899298],"마포구청":[37.563515,126.903343],
+"망원":[37.556094,126.910052],"상수":[37.547716,126.922852],"광흥창":[37.547456,126.931993],
+"대흥":[37.547771,126.942069],"효창공원앞":[37.539261,126.961351],"녹사평":[37.534675,126.986695],
+"이태원":[37.534488,126.994302],"한강진":[37.539631,127.001725],"버티고개":[37.548013,127.007055],
+"창신":[37.579661,127.015241],"보문":[37.585286,127.019381],"안암":[37.586272,127.029005],
+"고려대":[37.590508,127.036296],"월곡":[37.601948,127.041518],"상월곡":[37.606377,127.048491],
+"돌곶이":[37.610537,127.056431],"태릉입구":[37.617983,127.07512],"화랑대":[37.620064,127.084689],
+"봉화산":[37.617283,127.091401],"신내":[37.612887,127.103218],
+"장암":[37.700109,127.053196],"수락산":[37.67785,127.055315],"마들":[37.66494,127.057675],
+"중계":[37.644583,127.064303],"하계":[37.636352,127.06799],"공릉":[37.625742,127.072896],
+"먹골":[37.610637,127.077725],"중화":[37.602545,127.079264],"상봉":[37.596362,127.085032],
+"면목":[37.588579,127.087503],"사가정":[37.580894,127.088478],"용마산":[37.573647,127.086727],
+"중곡":[37.565923,127.08432],"어린이대공원":[37.548014,127.074658],"뚝섬유원지":[37.53154,127.066704],
+"청담":[37.519365,127.05335],"강남구청":[37.517186,127.04128],"학동":[37.514229,127.031656],
+"논현":[37.511093,127.021415],"반포":[37.508178,127.011727],"내방":[37.487618,126.993513],
+"남성":[37.484596,126.971251],"숭실대입구":[37.496029,126.953822],"상도":[37.502834,126.94791],
+"장승배기":[37.504898,126.93915],"신대방삼거리":[37.499701,126.928276],"보라매":[37.499872,126.920428],
+"신풍":[37.50008,126.90993],"남구로":[37.486056,126.887249],"철산":[37.47605,126.867911],
+"광명사거리":[37.479252,126.854876],"천왕":[37.486637,126.838713],"까치울":[37.506207,126.810939],
+"부천종합운동장":[37.50538,126.797337],"춘의":[37.503663,126.787036],"신중동":[37.503048,126.77596],
+"부천시청":[37.504631,126.763538],"상동":[37.505781,126.753083],"삼산체육관":[37.506411,126.742153],
+"굴포천":[37.506997,126.73128],"부평구청":[37.508336,126.720548],"산곡":[37.5024,126.7093],
+"석남":[37.5089,126.6749],
+"별내":[37.64202,127.12684],"다산":[37.6204,127.1573],"동구릉":[37.6116,127.1340],
+"구리":[37.603392,127.143869],"장자호수공원":[37.5912,127.1437],"암사역사공원":[37.5567,127.1330],
+"암사":[37.55021,127.127562],"강동구청":[37.530341,127.120508],"몽촌토성":[37.517409,127.112359],
+"석촌":[37.505431,127.106979],"송파":[37.499703,127.112183],"문정":[37.485855,127.1225],
+"장지":[37.478703,127.126191],"복정":[37.470047,127.126662],"남위례":[37.4699,127.1431],
+"산성":[37.457122,127.149908],"남한산성입구":[37.451535,127.159816],"단대오거리":[37.44521,127.156866],
+"신흥":[37.440918,127.147564],"수진":[37.437428,127.140722],"모란":[37.43213,127.129087],
+"개화":[37.578608,126.798153],"공항시장":[37.563726,126.810678],"신방화":[37.567532,126.816601],
+"마곡나루":[37.567336,126.829497],"양천향교":[37.568381,126.841333],"가양":[37.561391,126.854456],
+"증미":[37.557402,126.861939],"등촌":[37.550632,126.865689],"염창":[37.546936,126.874916],
+"신목동":[37.544277,126.88308],"선유도":[37.53802,126.893525],"국회의사당":[37.528105,126.917874],
+"샛강":[37.517274,126.928422],"노들":[37.512887,126.953222],"흑석":[37.50877,126.963708],
+"구반포":[37.501364,126.987332],"신반포":[37.503415,126.995925],"사평":[37.504206,127.015259],
+"신논현":[37.504598,127.02506],"언주":[37.507287,127.033868],"선정릉":[37.51098,127.043593],
+"삼성중앙":[37.513011,127.053282],"봉은사":[37.514219,127.060245],
+"삼전":[37.5046,127.0883],"석촌고분":[37.5050,127.0993],"송파나루":[37.5099,127.1124],
+"한성백제":[37.5161,127.1158],"둔촌오륜":[37.5183,127.1372],"중앙보훈병원":[37.5288,127.1482]
+};
+
+/* API 역명 표기 차이 보정 */
+const ALIAS = {
+  "총신대입구": "총신대입구(이수)", "이수": "총신대입구(이수)",
+  "쌍용": "쌍용(나사렛대)", "서울역": "서울",
+  "신촌(지하)": "신촌", "동대문역사문화공원(DDP)": "동대문역사문화공원"
+};
+
+/* 노선 정의: 각 노선은 segments(순서대로 이어진 역 목록)의 집합 */
+const LINES = {
+  "1호선": { color: "#0052A4", center: [37.545, 126.95], zoom: 11, segments: [
+    ["연천","전곡","청산","소요산","동두천","보산","동두천중앙","지행","덕정","덕계","양주","녹양","가능","의정부","회룡","망월사","도봉산","도봉","방학","창동","녹천","월계","광운대","석계","신이문","외대앞","회기","청량리","제기동","신설동","동묘앞","동대문","종로5가","종로3가","종각","시청","서울","남영","용산","노량진","대방","신길","영등포","신도림","구로"],
+    ["구로","구일","개봉","오류동","온수","역곡","소사","부천","중동","송내","부개","부평","백운","동암","간석","주안","도화","제물포","도원","동인천","인천"],
+    ["구로","가산디지털단지","독산","금천구청","석수","관악","안양","명학","금정","군포","당정","의왕","성균관대","화서","수원","세류","병점","세마","오산대","오산","진위","송탄","서정리","지제","평택","성환","직산","두정","천안","봉명","쌍용(나사렛대)","아산","탕정","배방","온양온천","신창"],
+    ["병점","서동탄"],
+    ["금천구청","광명"]
+  ]},
+  "2호선": { color: "#00A84D", center: [37.534, 127.00], zoom: 12, loop: true, segments: [
+    ["시청","을지로입구","을지로3가","을지로4가","동대문역사문화공원","신당","상왕십리","왕십리","한양대","뚝섬","성수","건대입구","구의","강변","잠실나루","잠실","잠실새내","종합운동장","삼성","선릉","역삼","강남","교대","서초","방배","사당","낙성대","서울대입구","봉천","신림","신대방","구로디지털단지","대림","신도림","문래","영등포구청","당산","합정","홍대입구","신촌","이대","아현","충정로","시청"],
+    ["성수","용답","신답","용두","신설동"],
+    ["신도림","도림천","양천구청","신정네거리","까치산"]
+  ]},
+  "3호선": { color: "#EF7C1C", center: [37.55, 126.95], zoom: 11, segments: [
+    ["대화","주엽","정발산","마두","백석","대곡","화정","원당","원흥","삼송","지축","구파발","연신내","불광","녹번","홍제","무악재","독립문","경복궁","안국","종로3가","을지로3가","충무로","동대입구","약수","금호","옥수","압구정","신사","잠원","고속터미널","교대","남부터미널","양재","매봉","도곡","대치","학여울","대청","일원","수서","가락시장","경찰병원","오금"]
+  ]},
+  "4호선": { color: "#00A5DE", center: [37.50, 126.99], zoom: 11, segments: [
+    ["진접","오남","별내별가람","당고개","상계","노원","창동","쌍문","수유","미아","미아사거리","길음","성신여대입구","한성대입구","혜화","동대문","동대문역사문화공원","충무로","명동","회현","서울","숙대입구","삼각지","신용산","이촌","동작","총신대입구(이수)","사당","남태령","선바위","경마공원","대공원","과천","정부과천청사","인덕원","평촌","범계","금정","산본","수리산","대야미","반월","상록수","한대앞","중앙","고잔","초지","안산","신길온천","정왕","오이도"]
+  ]},
+  "5호선": { color: "#996CAC", center: [37.55, 126.99], zoom: 11, segments: [
+    ["방화","개화산","김포공항","송정","마곡","발산","우장산","화곡","까치산","신정","목동","오목교","양평","영등포구청","영등포시장","신길","여의도","여의나루","마포","공덕","애오개","충정로","서대문","광화문","종로3가","을지로4가","동대문역사문화공원","청구","신금호","행당","왕십리","마장","답십리","장한평","군자","아차산","광나루","천호","강동"],
+    ["강동","길동","굽은다리","명일","고덕","상일동","강일","미사","하남풍산","하남시청","하남검단산"],
+    ["강동","둔촌동","올림픽공원","방이","오금","개롱","거여","마천"]
+  ]},
+  "6호선": { color: "#CD7C2F", center: [37.57, 126.99], zoom: 12, segments: [
+    ["응암","역촌","불광","독바위","연신내","구산","응암"],
+    ["응암","새절","증산","디지털미디어시티","월드컵경기장","마포구청","망원","합정","상수","광흥창","대흥","공덕","효창공원앞","삼각지","녹사평","이태원","한강진","버티고개","약수","청구","신당","동묘앞","창신","보문","안암","고려대","월곡","상월곡","돌곶이","석계","태릉입구","화랑대","봉화산","신내"]
+  ]},
+  "7호선": { color: "#747F00", center: [37.53, 126.95], zoom: 11, segments: [
+    ["장암","도봉산","수락산","마들","노원","중계","하계","공릉","태릉입구","먹골","중화","상봉","면목","사가정","용마산","중곡","군자","어린이대공원","건대입구","뚝섬유원지","청담","강남구청","학동","논현","반포","고속터미널","내방","총신대입구(이수)","남성","숭실대입구","상도","장승배기","신대방삼거리","보라매","신풍","대림","남구로","가산디지털단지","철산","광명사거리","천왕","온수","까치울","부천종합운동장","춘의","신중동","부천시청","상동","삼산체육관","굴포천","부평구청","산곡","석남"]
+  ]},
+  "8호선": { color: "#E6186C", center: [37.52, 127.13], zoom: 12, segments: [
+    ["별내","다산","동구릉","구리","장자호수공원","암사역사공원","암사","천호","강동구청","몽촌토성","잠실","석촌","송파","가락시장","문정","장지","복정","남위례","산성","남한산성입구","단대오거리","신흥","수진","모란"]
+  ]},
+  "9호선": { color: "#BDB092", center: [37.53, 126.93], zoom: 12, segments: [
+    ["개화","김포공항","공항시장","신방화","마곡나루","양천향교","가양","증미","등촌","염창","신목동","선유도","당산","국회의사당","여의도","샛강","노량진","노들","흑석","동작","구반포","신반포","고속터미널","사평","신논현","언주","선정릉","삼성중앙","봉은사","종합운동장","삼전","석촌고분","석촌","송파나루","한성백제","올림픽공원","둔촌오륜","중앙보훈병원"]
+  ]}
+};
+</script>
+<script>
+/* ════════════════ 앱 상태 ════════════════ */
+const state = {
+  mode: DEFAULT_API_KEY ? "live" : "mock",   // mock | live
+  mapProvider: "basic",    // basic | google | naver
+  line: "2호선",
+  intervalSec: 30,
+  apiKey: DEFAULT_API_KEY,
+  googleKey: DEFAULT_GOOGLE_MAPS_KEY,
+  naverId: DEFAULT_NAVER_CLIENT_ID,
+  calls: 0,
+  dirFilter: "all",
+  trains: [],
+  timer: null
+};
+const STATUS_LABEL = { "0": "진입 중", "1": "도착", "2": "출발", "3": "전역 출발" };
+const LABEL_ZOOM = 13;
+
+/* ════════════════ 역명 해석 / 노선 그래프 ════════════════ */
+const NORM = {};
+for (const k of Object.keys(STN)) NORM[k.replace(/\(.*?\)/g, "").trim()] = k;
+function resolve(name) {
+  if (!name) return null;
+  name = String(name).trim();
+  if (STN[name]) return name;
+  if (ALIAS[name] && STN[ALIAS[name]]) return ALIAS[name];
+  const stripped = name.replace(/\(.*?\)/g, "").replace(/역$/, "").trim();
+  if (STN[stripped]) return stripped;
+  if (NORM[stripped]) return NORM[stripped];
+  return null;
+}
+function buildGraph(lineName) {
+  const adj = {};
+  for (const seg of LINES[lineName].segments) {
+    for (let i = 0; i < seg.length - 1; i++) {
+      const a = seg[i], b = seg[i + 1];
+      (adj[a] = adj[a] || new Set()).add(b);
+      (adj[b] = adj[b] || new Set()).add(a);
+    }
+  }
+  return adj;
+}
+let graph = buildGraph(state.line);
+const distCache = {};
+function distMap(lineName, terminus) {
+  if (!terminus) return null;
+  const key = lineName + "→" + terminus;
+  if (distCache[key]) return distCache[key];
+  if (!graph[terminus]) return null;
+  const d = { [terminus]: 0 };
+  const q = [terminus];
+  while (q.length) {
+    const cur = q.shift();
+    for (const nb of graph[cur]) if (!(nb in d)) { d[nb] = d[cur] + 1; q.push(nb); }
+  }
+  return (distCache[key] = d);
+}
+function lerp(a, b, t) { return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]; }
+
+function trainCoord(t) {
+  const cur = resolve(t.statnNm);
+  if (!cur) return null;
+  let prev = null, next = null;
+  const term = resolve(t.statnTnm);
+  const d = distMap(state.line, term);
+  if (d && d[cur] != null && graph[cur]) {
+    for (const nb of graph[cur]) {
+      if (d[nb] == null) continue;
+      if (d[nb] < d[cur] && !next) next = nb;
+      if (d[nb] > d[cur] && !prev) prev = nb;
+    }
+  }
+  if (!next && !prev && LINES[state.line].loop) {
+    const arr = LINES[state.line].segments[0].slice(0, -1);
+    const idx = arr.indexOf(cur);
+    if (idx >= 0) {
+      const dir = t.updnLine === "0" ? 1 : -1;
+      next = arr[(idx + dir + arr.length) % arr.length];
+      prev = arr[(idx - dir + arr.length) % arr.length];
+    }
+  }
+  const C = STN[cur];
+  const s = String(t.trainSttus);
+  if (s === "0" && prev) return lerp(STN[prev], C, 0.78);
+  if (s === "3" && prev) return lerp(STN[prev], C, 0.5);
+  if (s === "2" && next) return lerp(C, STN[next], 0.22);
+  return C;
+}
+
+/* ════════════════ 공통 마크업 ════════════════ */
+function isExpress(t) { return t.directAt === "1" || t.directAt === "7"; }
+function trainPinHtml(t) {
+  return `<div class="train-pin${isExpress(t) ? " express" : ""}" style="width:20px;height:20px">
+    <svg viewBox="0 0 24 24" fill="#fff"><path d="M12 2C8 2 4 2.5 4 6v9.5C4 17.43 5.57 19 7.5 19L6 20.5V21h2.23l2-2h3.54l2 2H18v-.5L16.5 19c1.93 0 3.5-1.57 3.5-3.5V6c0-3.5-4-4-8-4zM7.5 17c-.83 0-1.5-.67-1.5-1.5S6.67 14 7.5 14s1.5.67 1.5 1.5S8.33 17 7.5 17zm3.5-6H6V6h5v5zm5.5 6c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm1.5-6h-5V6h5v5z"/></svg>
+  </div>`;
+}
+function popupHtml(t) {
+  return `<div class="pp-line">${state.line}${isExpress(t) ? " · 급행" : ""}${t.lstcarAt === "1" ? " · 막차" : ""}</div>
+    <div class="pp-title">${t.statnNm} ${STATUS_LABEL[String(t.trainSttus)] || ""}</div>
+    <div class="pp-meta">${t.statnTnm}행 · 열차 ${t.trainNo}</div>`;
+}
+function loadScript(src) {
+  return new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = src; s.async = true;
+    s.onload = res; s.onerror = () => rej(new Error("스크립트 로드 실패"));
+    document.head.appendChild(s);
+  });
+}
+
+/* ════════════════ 지도 어댑터: 기본(Leaflet) ════════════════ */
+const basicAdapter = {
+  map: null, lineLayer: null, stationLayer: null, labelLayer: null, trainLayer: null,
+  markers: new Map(),
+  async ensure() { return true; },
+  init(center, zoom) {
+    this.map = L.map("map", { zoomControl: true }).setView(center, zoom);
+    this.map.zoomControl.setPosition("bottomleft");
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+      attribution: "&copy; OpenStreetMap &copy; CARTO", subdomains: "abcd", maxZoom: 19
+    }).addTo(this.map);
+    this.lineLayer = L.layerGroup().addTo(this.map);
+    this.stationLayer = L.layerGroup().addTo(this.map);
+    this.labelLayer = L.layerGroup();
+    this.trainLayer = L.layerGroup().addTo(this.map);
+    this.map.on("zoomend", () => this.syncLabels());
+  },
+  destroy() { if (this.map) { this.map.remove(); this.map = null; } this.markers.clear(); },
+  setView(c, z) { this.map.flyTo(c, z, { duration: 0.7 }); },
+  clearLine() { this.lineLayer.clearLayers(); this.stationLayer.clearLayers(); this.labelLayer.clearLayers(); },
+  addPolyline(pts, color) {
+    L.polyline(pts, { color, weight: 3.5, opacity: 0.85, lineJoin: "round" }).addTo(this.lineLayer);
+  },
+  addStation(name, pos, isTerminal, color) {
+    const m = L.circleMarker(pos, {
+      radius: isTerminal ? 4.5 : 3, color: isTerminal ? color : "#6A6D73",
+      weight: isTerminal ? 2 : 1.5, fillColor: "#0d0e10", fillOpacity: 1
+    }).addTo(this.stationLayer);
+    m.bindPopup(`<div class="pp-line">${state.line}</div><div class="pp-title">${name}</div>`);
+    this.labelLayer.addLayer(
+      L.marker(pos, { opacity: 0, interactive: false })
+        .bindTooltip(name, { permanent: true, direction: "right", offset: [6, 0], className: "stn-label" })
+    );
+    this.syncLabels();
+  },
+  syncLabels() {
+    if (!this.map) return;
+    if (this.map.getZoom() >= LABEL_ZOOM) { if (!this.map.hasLayer(this.labelLayer)) this.map.addLayer(this.labelLayer); }
+    else if (this.map.hasLayer(this.labelLayer)) this.map.removeLayer(this.labelLayer);
+  },
+  upsertTrain(no, pos, t) {
+    const icon = L.divIcon({ className: "", iconSize: [20, 20], iconAnchor: [10, 10], html: trainPinHtml(t) });
+    let m = this.markers.get(no);
+    if (m) { m.setLatLng(pos); m.setIcon(icon); m.getPopup().setContent(popupHtml(t)); }
+    else {
+      m = L.marker(pos, { icon, zIndexOffset: 1000 }).bindPopup(popupHtml(t));
+      this.trainLayer.addLayer(m);
+      this.markers.set(no, m);
+    }
+  },
+  prune(seen) {
+    for (const [no, m] of this.markers) if (!seen.has(no)) { this.trainLayer.removeLayer(m); this.markers.delete(no); }
+  },
+  clearTrains() { this.trainLayer.clearLayers(); this.markers.clear(); },
+  focusTrain(no) {
+    const m = this.markers.get(no);
+    if (m) { this.map.flyTo(m.getLatLng(), Math.max(this.map.getZoom(), 13), { duration: 0.6 }); m.openPopup(); }
+  }
+};
+
+/* ════════════════ 지도 어댑터: 구글 ════════════════ */
+const GOOGLE_DARK = [
+  { elementType: "geometry", stylers: [{ color: "#17181b" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#8a8d93" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#0d0e10" }] },
+  { featureType: "poi", stylers: [{ visibility: "off" }] },
+  { featureType: "transit", stylers: [{ visibility: "off" }] },
+  { featureType: "road", elementType: "geometry", stylers: [{ color: "#222428" }] },
+  { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#6a6d73" }] },
+  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#2c2e33" }] },
+  { featureType: "water", elementType: "geometry", stylers: [{ color: "#101216" }] },
+  { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#51565e" }] }
+];
+const googleAdapter = {
+  map: null, shapes: [], stations: [], markers: new Map(), info: null, labelsOn: false,
+  async ensure() {
+    if (window.google && window.google.maps) return true;
+    if (!state.googleKey) { toast("구글 지도 API 키를 먼저 입력해 주세요."); return false; }
+    window.gm_authFailure = () => toast("구글 지도 인증에 실패했습니다. API 키와 Maps JavaScript API 활성화 여부를 확인해 주세요.");
+    try {
+      await new Promise((res, rej) => {
+        window.__gmReady = res;
+        loadScript(`https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(state.googleKey)}&loading=async&callback=__gmReady`).catch(rej);
+        setTimeout(() => rej(new Error("시간 초과")), 12000);
+      });
+      return !!(window.google && window.google.maps);
+    } catch (e) { toast("구글 지도를 불러오지 못했습니다: " + e.message); return false; }
+  },
+  init(center, zoom) {
+    this.map = new google.maps.Map(document.getElementById("map"), {
+      center: { lat: center[0], lng: center[1] }, zoom,
+      styles: GOOGLE_DARK, backgroundColor: "#0d0e10",
+      disableDefaultUI: true, zoomControl: true,
+      zoomControlOptions: { position: google.maps.ControlPosition.LEFT_BOTTOM }
+    });
+    this.info = new google.maps.InfoWindow();
+    this.map.addListener("zoom_changed", () => this.syncLabels());
+  },
+  destroy() { this.shapes = []; this.stations = []; this.markers.clear(); this.map = null; },
+  setView(c, z) { this.map.panTo({ lat: c[0], lng: c[1] }); this.map.setZoom(z); },
+  clearLine() {
+    this.shapes.forEach(s => s.setMap(null)); this.shapes = [];
+    this.stations.forEach(s => s.marker.setMap(null)); this.stations = [];
+  },
+  addPolyline(pts, color) {
+    const p = new google.maps.Polyline({
+      map: this.map, path: pts.map(x => ({ lat: x[0], lng: x[1] })),
+      strokeColor: color, strokeWeight: 3.5, strokeOpacity: 0.9
+    });
+    this.shapes.push(p);
+  },
+  addStation(name, pos, isTerminal, color) {
+    const marker = new google.maps.Marker({
+      map: this.map, position: { lat: pos[0], lng: pos[1] },
+      icon: {
+        path: google.maps.SymbolPath.CIRCLE, scale: isTerminal ? 4.5 : 3,
+        fillColor: "#0d0e10", fillOpacity: 1,
+        strokeColor: isTerminal ? color : "#6A6D73", strokeWeight: isTerminal ? 2 : 1.5
+      },
+      title: name, zIndex: 1
+    });
+    marker.addListener("click", () => {
+      this.info.setContent(`<div class="pp-line">${state.line}</div><div class="pp-title">${name}</div>`);
+      this.info.open({ map: this.map, anchor: marker });
+    });
+    this.stations.push({ marker, name });
+    this.syncLabels();
+  },
+  syncLabels() {
+    if (!this.map) return;
+    const on = this.map.getZoom() >= LABEL_ZOOM;
+    if (on === this.labelsOn) return;
+    this.labelsOn = on;
+    for (const s of this.stations) {
+      s.marker.setLabel(on ? { text: s.name, color: "#9A9DA3", fontSize: "10px", fontWeight: "600", className: "gm-stn-label" } : null);
+    }
+  },
+  upsertTrain(no, pos, t) {
+    const lineColor = LINES[state.line].color;
+    const icon = isExpress(t)
+      ? { path: "M -1,-1 L 1,-1 L 1,1 L -1,1 Z", scale: 8, fillColor: lineColor, fillOpacity: 1, strokeColor: "#fff", strokeWeight: 2 }
+      : { path: google.maps.SymbolPath.CIRCLE, scale: 8.5, fillColor: lineColor, fillOpacity: 1, strokeColor: "#fff", strokeWeight: 2 };
+    let m = this.markers.get(no);
+    if (m) { m.setPosition({ lat: pos[0], lng: pos[1] }); m.setIcon(icon); m._pp = popupHtml(t); }
+    else {
+      m = new google.maps.Marker({ map: this.map, position: { lat: pos[0], lng: pos[1] }, icon, zIndex: 100 });
+      m._pp = popupHtml(t);
+      m.addListener("click", () => { this.info.setContent(m._pp); this.info.open({ map: this.map, anchor: m }); });
+      this.markers.set(no, m);
+    }
+  },
+  prune(seen) { for (const [no, m] of this.markers) if (!seen.has(no)) { m.setMap(null); this.markers.delete(no); } },
+  clearTrains() { this.markers.forEach(m => m.setMap(null)); this.markers.clear(); },
+  focusTrain(no) {
+    const m = this.markers.get(no);
+    if (m) {
+      this.map.panTo(m.getPosition()); this.map.setZoom(Math.max(this.map.getZoom(), 13));
+      this.info.setContent(m._pp); this.info.open({ map: this.map, anchor: m });
+    }
+  }
+};
+
+/* ════════════════ 지도 어댑터: 네이버 ════════════════ */
+const naverAdapter = {
+  map: null, shapes: [], stations: [], labels: [], markers: new Map(), info: null, labelsOn: false,
+  async ensure() {
+    if (window.naver && window.naver.maps) return true;
+    if (!state.naverId) { toast("네이버 지도 클라이언트 ID를 먼저 입력해 주세요."); return false; }
+    window.navermap_authFailure = () => toast("네이버 지도 인증에 실패했습니다. 클라이언트 ID와 Web 서비스 URL 등록(localhost 포함)을 확인해 주세요.");
+    try {
+      await loadScript(`https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=${encodeURIComponent(state.naverId)}`);
+      return !!(window.naver && window.naver.maps);
+    } catch (e) { toast("네이버 지도를 불러오지 못했습니다: " + e.message); return false; }
+  },
+  init(center, zoom) {
+    this.map = new naver.maps.Map("map", {
+      center: new naver.maps.LatLng(center[0], center[1]), zoom,
+      mapDataControl: false, scaleControl: false,
+      zoomControl: true, zoomControlOptions: { position: naver.maps.Position.LEFT_BOTTOM }
+    });
+    this.info = new naver.maps.InfoWindow({
+      content: "", borderWidth: 1, borderColor: "rgba(255,255,255,.15)",
+      backgroundColor: "#141518", anchorSize: new naver.maps.Size(10, 10),
+      anchorColor: "#141518", pixelOffset: new naver.maps.Point(0, -8)
+    });
+    naver.maps.Event.addListener(this.map, "zoom_changed", () => this.syncLabels());
+  },
+  destroy() {
+    if (this.map) { this.map.destroy(); this.map = null; }
+    this.shapes = []; this.stations = []; this.labels = []; this.markers.clear();
+  },
+  setView(c, z) { this.map.morph(new naver.maps.LatLng(c[0], c[1]), z); },
+  clearLine() {
+    this.shapes.forEach(s => s.setMap(null)); this.shapes = [];
+    this.stations.forEach(s => s.setMap(null)); this.stations = [];
+    this.labels.forEach(l => l.setMap(null)); this.labels = [];
+  },
+  addPolyline(pts, color) {
+    this.shapes.push(new naver.maps.Polyline({
+      map: this.map, path: pts.map(x => new naver.maps.LatLng(x[0], x[1])),
+      strokeColor: color, strokeWeight: 4, strokeOpacity: 0.85, strokeLineJoin: "round"
+    }));
+  },
+  addStation(name, pos, isTerminal, color) {
+    const ll = new naver.maps.LatLng(pos[0], pos[1]);
+    const m = new naver.maps.Marker({
+      map: this.map, position: ll,
+      icon: {
+        content: `<div class="stn-dot-html${isTerminal ? " terminal" : ""}"></div>`,
+        anchor: new naver.maps.Point(isTerminal ? 7 : 6, isTerminal ? 7 : 6)
+      },
+      zIndex: 1
+    });
+    naver.maps.Event.addListener(m, "click", () => {
+      this.info.setContent(`<div class="naver-pp"><div class="pp-line">${state.line}</div><div class="pp-title">${name}</div></div>`);
+      this.info.open(this.map, m);
+    });
+    this.stations.push(m);
+    const lbl = new naver.maps.Marker({
+      map: null, position: ll, clickable: false,
+      icon: { content: `<div class="stn-label-light">${name}</div>`, anchor: new naver.maps.Point(0, 0) },
+      zIndex: 2
+    });
+    this.labels.push(lbl);
+    this.syncLabels(true);
+  },
+  syncLabels(force) {
+    if (!this.map) return;
+    const on = this.map.getZoom() >= LABEL_ZOOM;
+    if (on === this.labelsOn && !force) return;
+    this.labelsOn = on;
+    for (const l of this.labels) l.setMap(on ? this.map : null);
+  },
+  upsertTrain(no, pos, t) {
+    const ll = new naver.maps.LatLng(pos[0], pos[1]);
+    let m = this.markers.get(no);
+    if (m) {
+      m.setPosition(ll);
+      m.setIcon({ content: trainPinHtml(t), anchor: new naver.maps.Point(10, 10) });
+      m._pp = popupHtml(t);
+    } else {
+      m = new naver.maps.Marker({
+        map: this.map, position: ll,
+        icon: { content: trainPinHtml(t), anchor: new naver.maps.Point(10, 10) }, zIndex: 100
+      });
+      m._pp = popupHtml(t);
+      naver.maps.Event.addListener(m, "click", () => {
+        this.info.setContent(`<div class="naver-pp">${m._pp}</div>`);
+        this.info.open(this.map, m);
+      });
+      this.markers.set(no, m);
+    }
+  },
+  prune(seen) { for (const [no, m] of this.markers) if (!seen.has(no)) { m.setMap(null); this.markers.delete(no); } },
+  clearTrains() { this.markers.forEach(m => m.setMap(null)); this.markers.clear(); },
+  focusTrain(no) {
+    const m = this.markers.get(no);
+    if (m) {
+      this.map.morph(m.getPosition(), Math.max(this.map.getZoom(), 13));
+      this.info.setContent(`<div class="naver-pp">${m._pp}</div>`);
+      this.info.open(this.map, m);
+    }
+  }
+};
+
+const ADAPTERS = { basic: basicAdapter, google: googleAdapter, naver: naverAdapter };
+let adapter = basicAdapter;
+
+/* ════════════════ 그리기 ════════════════ */
+function drawLine(lineName) {
+  adapter.clearLine();
+  const L_ = LINES[lineName];
+  document.documentElement.style.setProperty("--line", L_.color);
+  const drawn = new Set();
+  const termini = new Set();
+  for (const seg of L_.segments) {
+    if (!L_.loop || seg !== L_.segments[0]) { termini.add(seg[0]); termini.add(seg[seg.length - 1]); }
+  }
+  for (const seg of L_.segments) {
+    adapter.addPolyline(seg.map(n => STN[n]).filter(Boolean), L_.color);
+    for (const n of seg) {
+      if (drawn.has(n) || !STN[n]) continue;
+      drawn.add(n);
+      adapter.addStation(n, STN[n], termini.has(n), L_.color);
+    }
+  }
+}
+
+function renderTrains() {
+  const seen = new Set();
+  for (const t of state.trains) {
+    const pos = trainCoord(t);
+    if (!pos) continue;
+    seen.add(t.trainNo);
+    adapter.upsertTrain(t.trainNo, pos, t);
+  }
+  adapter.prune(seen);
+  renderList();
+}
+function renderList() {
+  const list = document.getElementById("trainList");
+  const filtered = state.trains.filter(t => state.dirFilter === "all" || String(t.updnLine) === state.dirFilter);
+  document.getElementById("panelCount").textContent = filtered.length ? filtered.length + "대" : "";
+  if (!filtered.length) {
+    list.innerHTML = `<div class="empty">표시할 열차가 없습니다.<br>${state.mode === "live" ? "운행 시간이 아니거나 데이터 수신에 실패했을 수 있습니다." : ""}</div>`;
+    return;
+  }
+  list.innerHTML = filtered.map(t => `<div class="train-item" data-no="${t.trainNo}">
+      <div class="t-marker${isExpress(t) ? " express" : ""}">${isExpress(t) ? "急" : "🚇"}</div>
+      <div class="t-info">
+        <div class="t-top"><span class="t-station">${t.statnNm}</span><span class="t-status">${STATUS_LABEL[String(t.trainSttus)] || ""}</span></div>
+        <div class="t-sub">${t.statnTnm}행 · ${t.trainNo}${isExpress(t) ? ' <span class="badge express">급행</span>' : ""}${t.lstcarAt === "1" ? ' <span class="badge">막차</span>' : ""}</div>
+      </div>
+    </div>`).join("");
+  list.querySelectorAll(".train-item").forEach(el =>
+    el.addEventListener("click", () => adapter.focusTrain(el.dataset.no)));
+}
+
+/* ════════════════ 실시간 API ════════════════ */
+async function fetchLive() {
+  if (!state.apiKey) { toast("지하철 인증키를 설정에서 입력해 주세요."); return; }
+  const url = `https://swopenapi.seoul.go.kr/api/subway/${encodeURIComponent(state.apiKey)}/json/realtimePosition/0/200/${encodeURIComponent(state.line)}`;
+  try {
+    setStatus("불러오는 중...", false);
+    const res = await fetch(url);
+    state.calls++;
+    document.getElementById("callCount").textContent = state.calls + "회";
+    const data = await res.json();
+    if (data.code && String(data.code).startsWith("ERROR")) throw new Error(data.message || data.code);
+    if (data.status && data.status >= 400) throw new Error(data.message || "API 오류");
+    state.trains = data.realtimePositionList || [];
+    renderTrains();
+    setStatus(`실시간 · ${new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`, true);
+  } catch (e) {
+    setStatus("수신 실패", false);
+    toast("실시간 데이터를 가져오지 못했습니다: " + e.message);
+  }
+}
+
+/* ════════════════ 모의 데이터 ════════════════ */
+let mockTrains = [];
+function mockInit() {
+  mockTrains = [];
+  const L_ = LINES[state.line];
+  const allStations = [...new Set(L_.segments.flat())];
+  const termini = L_.loop
+    ? L_.segments.slice(1).flatMap(s => [s[0], s[s.length - 1]]).concat(["내선순환", "외선순환"])
+    : L_.segments.flatMap(s => [s[0], s[s.length - 1]]);
+  const n = 10 + Math.floor(Math.random() * 5);
+  for (let i = 0; i < n; i++) {
+    const stn = allStations[Math.floor(Math.random() * allStations.length)];
+    let term = termini[Math.floor(Math.random() * termini.length)];
+    let loopDir = null;
+    if (term === "내선순환") { loopDir = "0"; term = stn; }
+    if (term === "외선순환") { loopDir = "1"; term = stn; }
+    mockTrains.push({
+      trainNo: state.line[0] + String(1000 + Math.floor(Math.random() * 900)),
+      statnNm: stn, statnTnm: term,
+      trainSttus: String(Math.floor(Math.random() * 3)),
+      updnLine: loopDir || String(Math.floor(Math.random() * 2)),
+      directAt: state.line === "9호선" && Math.random() < 0.3 ? "1" : "0",
+      lstcarAt: "0", _loop: loopDir !== null
+    });
+  }
+}
+function mockStep() {
+  for (const t of mockTrains) {
+    const s = Number(t.trainSttus);
+    if (s === 1) { t.trainSttus = "2"; continue; }
+    const cur = resolve(t.statnNm);
+    let next = null;
+    if (t._loop && LINES[state.line].loop) {
+      const arr = LINES[state.line].segments[0].slice(0, -1);
+      const idx = arr.indexOf(cur);
+      if (idx >= 0) next = arr[(idx + (t.updnLine === "0" ? 1 : -1) + arr.length) % arr.length];
+    } else {
+      const d = distMap(state.line, resolve(t.statnTnm));
+      if (d && cur && d[cur] > 0 && graph[cur]) for (const nb of graph[cur]) if (d[nb] != null && d[nb] < d[cur]) { next = nb; break; }
+    }
+    if (!next) {
+      const L_ = LINES[state.line];
+      const termini = L_.segments.flatMap(sg => [sg[0], sg[sg.length - 1]]).filter(x => x !== cur);
+      t.statnTnm = termini[Math.floor(Math.random() * termini.length)];
+      t.trainSttus = "1";
+      continue;
+    }
+    if (s === 2) { t.statnNm = next; t.trainSttus = "0"; }
+    else { t.trainSttus = "1"; }
+  }
+  state.trains = mockTrains.map(t => ({ ...t }));
+  renderTrains();
+  setStatus("모의 데이터 · 자동 운행", false);
+}
+
+/* ════════════════ 갱신 루프 ════════════════ */
+function refresh() { state.mode === "live" ? fetchLive() : mockStep(); }
+function restartTimer() {
+  clearInterval(state.timer);
+  state.timer = setInterval(refresh, state.mode === "mock" ? Math.min(state.intervalSec, 5) * 1000 : state.intervalSec * 1000);
+}
+
+/* ════════════════ UI ════════════════ */
+function setStatus(text, live) {
+  document.getElementById("statusText").textContent = text;
+  document.getElementById("statusDot").className = "dot" + (live ? " live" : "");
+}
+let toastTimer;
+function toast(msg) {
+  const el = document.getElementById("toast");
+  el.textContent = msg; el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 4500);
+}
+function selectLine(name) {
+  state.line = name;
+  graph = buildGraph(name);
+  for (const k in distCache) delete distCache[k];
+  adapter.clearTrains();
+  state.trains = [];
+  drawLine(name);
+  adapter.setView(LINES[name].center, LINES[name].zoom);
+  document.querySelectorAll("#lineChips .chip").forEach(c => c.classList.toggle("on", c.dataset.line === name));
+  document.getElementById("panelTitle").textContent = name + " 운행 열차";
+  const isLoop = !!LINES[name].loop;
+  document.getElementById("tabUp").textContent = isLoop ? "내선" : "상행";
+  document.getElementById("tabDown").textContent = isLoop ? "외선" : "하행";
+  if (state.mode === "mock") mockInit();
+  refresh();
+  restartTimer();
+}
+
+/* 지도 제공자 전환 */
+function syncMapSeg() {
+  document.querySelectorAll("#mapSeg button").forEach(b => b.classList.toggle("on", b.dataset.map === state.mapProvider));
+  document.getElementById("googleKeyField").style.display = "none";
+  document.getElementById("naverKeyField").style.display = "none";
+}
+async function setProvider(p) {
+  if (p === "google") document.getElementById("googleKeyField").style.display = "block";
+  if (p === "naver") document.getElementById("naverKeyField").style.display = "block";
+  if (p === state.mapProvider) return;
+  const next = ADAPTERS[p];
+  const ok = await next.ensure();
+  if (!ok) return; /* 키 미입력 또는 로드 실패: 현재 지도 유지 */
+  adapter.destroy();
+  document.getElementById("map").innerHTML = "";
+  state.mapProvider = p;
+  adapter = next;
+  adapter.init(LINES[state.line].center, LINES[state.line].zoom);
+  drawLine(state.line);
+  renderTrains();
+  syncMapSeg();
+  toast({ basic: "기본 지도로 전환했습니다.", google: "구글 지도로 전환했습니다.", naver: "네이버 지도로 전환했습니다." }[p]);
+}
+
+/* 노선 칩 */
+const chipsEl = document.getElementById("lineChips");
+for (const [name, def] of Object.entries(LINES)) {
+  const b = document.createElement("button");
+  b.className = "chip"; b.dataset.line = name;
+  b.style.setProperty("--c", def.color);
+  b.innerHTML = `<span class="swatch"></span>${name}`;
+  b.addEventListener("click", () => selectLine(name));
+  chipsEl.appendChild(b);
+}
+
+/* 설정 */
+const settingsPanel = document.getElementById("settingsPanel");
+document.getElementById("settingsBtn").addEventListener("click", () => settingsPanel.classList.toggle("open"));
+document.getElementById("mapSeg").addEventListener("click", e => {
+  const btn = e.target.closest("button"); if (!btn) return;
+  setProvider(btn.dataset.map);
+});
+document.getElementById("modeSeg").addEventListener("click", e => {
+  const btn = e.target.closest("button"); if (!btn) return;
+  document.querySelectorAll("#modeSeg button").forEach(b => b.classList.toggle("on", b === btn));
+  state.mode = btn.dataset.mode;
+  document.getElementById("keyField").style.display = state.mode === "live" ? "block" : "none";
+  if (state.mode === "mock") mockInit();
+  refresh(); restartTimer();
+});
+document.getElementById("intervalSeg").addEventListener("click", e => {
+  const btn = e.target.closest("button"); if (!btn) return;
+  document.querySelectorAll("#intervalSeg button").forEach(b => b.classList.toggle("on", b === btn));
+  state.intervalSec = Number(btn.dataset.sec);
+  restartTimer();
+});
+document.getElementById("apiKey").addEventListener("change", e => { state.apiKey = e.target.value.trim(); });
+document.getElementById("apiKey").value = DEFAULT_API_KEY;
+document.getElementById("googleKey").addEventListener("change", e => { state.googleKey = e.target.value.trim(); });
+document.getElementById("googleKey").value = DEFAULT_GOOGLE_MAPS_KEY;
+document.getElementById("naverId").addEventListener("change", e => { state.naverId = e.target.value.trim(); });
+document.getElementById("naverId").value = DEFAULT_NAVER_CLIENT_ID;
+
+/* 방향 탭 */
+document.getElementById("dirTabs").addEventListener("click", e => {
+  const btn = e.target.closest("button"); if (!btn) return;
+  document.querySelectorAll("#dirTabs button").forEach(b => b.classList.toggle("on", b === btn));
+  state.dirFilter = btn.dataset.dir;
+  renderList();
+});
+
+/* 모바일 패널 접기 */
+document.getElementById("panelHead").addEventListener("click", () => {
+  if (window.innerWidth < 768) document.getElementById("trainPanel").classList.toggle("min");
+});
+
+/* 시작 */
+document.querySelectorAll("#modeSeg button").forEach(b => b.classList.toggle("on", b.dataset.mode === state.mode));
+document.getElementById("keyField").style.display = state.mode === "live" ? "block" : "none";
+adapter.init(LINES[state.line].center, LINES[state.line].zoom);
+selectLine(state.line);
+</script>
+</body>
+</html>
