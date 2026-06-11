@@ -18,7 +18,9 @@
     --radius: 14px;
     --font: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard Variable", Pretendard, "Noto Sans KR", "Malgun Gothic", sans-serif;
   }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
+  * { margin: 0; padding: 0; }
+  .topbar, .topbar *, .settings, .settings *, .panel, .panel *,
+  .icon-btn, .toast, .chip, .chip * { box-sizing: border-box; }
   html, body { height: 100%; }
   body {
     font-family: var(--font);
