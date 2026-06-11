@@ -290,6 +290,11 @@
     display: flex; align-items: center; justify-content: center;
   }
   .train-pin svg { width: 11px; height: 11px; }
+  .user-dot {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #4a9eff; border: 3px solid #fff;
+    box-shadow: 0 0 0 6px rgba(74,158,255,.22), 0 1px 6px rgba(0,0,0,.4);
+  }
   .train-shape {
     display: flex; align-items: center; justify-content: center;
     filter: drop-shadow(0 1px 4px rgba(0,0,0,.55));
@@ -887,6 +892,12 @@ const basicAdapter = {
     }
   },
   moveTrain(no, pos) { const m = this.markers.get(no); if (m) m.setLatLng(pos); },
+  getView() { const c = this.map.getCenter(); return { center: [c.lat, c.lng], zoom: this.map.getZoom() }; },
+  setUserLocation(pos) {
+    const icon = L.divIcon({ className: "", iconSize: [16, 16], iconAnchor: [8, 8], html: '<div class="user-dot"></div>' });
+    if (this.userMarker) this.userMarker.setLatLng(pos);
+    else this.userMarker = L.marker(pos, { icon, interactive: false, zIndexOffset: 2000 }).addTo(this.map);
+  },
   prune(seen) {
     for (const [no, m] of this.markers) if (!seen.has(no)) { this.trainLayer.removeLayer(m); this.markers.delete(no); }
   },
@@ -989,6 +1000,15 @@ const googleAdapter = {
     }
   },
   moveTrain(no, pos) { const m = this.markers.get(no); if (m) m.setPosition({ lat: pos[0], lng: pos[1] }); },
+  getView() { const c = this.map.getCenter(); return { center: [c.lat(), c.lng()], zoom: this.map.getZoom() }; },
+  setUserLocation(pos) {
+    const p = { lat: pos[0], lng: pos[1] };
+    if (this.userMarker) this.userMarker.setPosition(p);
+    else this.userMarker = new google.maps.Marker({
+      map: this.map, position: p, clickable: false, zIndex: 200,
+      icon: { path: google.maps.SymbolPath.CIRCLE, scale: 8, fillColor: "#4a9eff", fillOpacity: 1, strokeColor: "#fff", strokeWeight: 3 }
+    });
+  },
   prune(seen) { for (const [no, m] of this.markers) if (!seen.has(no)) { m.setMap(null); this.markers.delete(no); } },
   clearTrains() { this.markers.forEach(m => m.setMap(null)); this.markers.clear(); },
   focusTrain(no) {
@@ -1114,6 +1134,15 @@ const naverAdapter = {
     }
   },
   moveTrain(no, pos) { const m = this.markers.get(no); if (m) m.setPosition(new naver.maps.LatLng(pos[0], pos[1])); },
+  getView() { const c = this.map.getCenter(); return { center: [c.lat(), c.lng()], zoom: this.map.getZoom() }; },
+  setUserLocation(pos) {
+    const ll = new naver.maps.LatLng(pos[0], pos[1]);
+    if (this.userMarker) this.userMarker.setPosition(ll);
+    else this.userMarker = new naver.maps.Marker({
+      map: this.map, position: ll, clickable: false,
+      icon: { content: '<div class="user-dot"></div>', anchor: new naver.maps.Point(8, 8) }, zIndex: 200
+    });
+  },
   prune(seen) { for (const [no, m] of this.markers) if (!seen.has(no)) { m.setMap(null); this.markers.delete(no); } },
   clearTrains() { this.markers.forEach(m => m.setMap(null)); this.markers.clear(); },
   focusTrain(no) {
@@ -1504,6 +1533,7 @@ async function setProvider(p) {
   if (!ok) { syncMapSeg(); return; } /* 키 미입력 또는 로드 실패: 현재 지도 유지 */
   try {
     const prev = adapter;
+    const keepView = prev.map && prev.getView ? prev.getView() : null;
     showLayer(next.containerId);
     state.mapProvider = p;
     adapter = next;
@@ -1512,7 +1542,9 @@ async function setProvider(p) {
     if (prev !== adapter && prev.map) { prev.clearLine(); prev.clearTrains(); }
     drawLine(state.line);
     renderTrains();
-    adapter.setView(viewOf(state.line).center, viewOf(state.line).zoom);
+    if (keepView) adapter.setView(keepView.center, keepView.zoom);
+    else adapter.setView(viewOf(state.line).center, viewOf(state.line).zoom);
+    if (state.userPos && adapter.setUserLocation) adapter.setUserLocation(state.userPos);
     syncMapSeg();
     toast({ basic: "기본 지도로 전환했습니다.", google: "구글 지도로 전환했습니다.", naver: "네이버 지도로 전환했습니다." }[p]);
   } catch (e) {
@@ -1631,6 +1663,20 @@ selectLine(state.line);
 
 /* 네이버 지도 자동 시작 (진단으로 검증됨, 실패 시 기본 지도 자동 복구) */
 if (DEFAULT_NAVER_CLIENT_ID) setProvider("naver");
+
+/* 모바일: 현재 위치를 얻어 지도 중심 이동 (수도권 내일 때만) */
+state.userPos = null;
+function locateUser() {
+  if (!("geolocation" in navigator)) return;
+  navigator.geolocation.getCurrentPosition(p => {
+    const lat = p.coords.latitude, lng = p.coords.longitude;
+    if (lat < 36.5 || lat > 38.3 || lng < 126.2 || lng > 127.8) return; /* 노선망 밖 */
+    state.userPos = [lat, lng];
+    if (adapter.setUserLocation) adapter.setUserLocation(state.userPos);
+    adapter.setView(state.userPos, 14);
+  }, () => { /* 거부/실패 시 조용히 기본 뷰 유지 */ }, { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 });
+}
+if (window.innerWidth < 768) locateUser();
 
 /* 배포 환경 프록시 감지: 키가 없어도 /api/position 이 살아 있으면 실시간으로 자동 전환 */
 (async () => {
