@@ -1220,16 +1220,30 @@ async function setProvider(p) {
   if (p === state.mapProvider) return;
   const next = ADAPTERS[p];
   const ok = await next.ensure();
-  if (!ok) return; /* 키 미입력 또는 로드 실패: 현재 지도 유지 */
-  adapter.destroy();
-  document.getElementById("map").innerHTML = "";
-  state.mapProvider = p;
-  adapter = next;
-  adapter.init(LINES[state.line].center, LINES[state.line].zoom);
-  drawLine(state.line);
-  renderTrains();
-  syncMapSeg();
-  toast({ basic: "기본 지도로 전환했습니다.", google: "구글 지도로 전환했습니다.", naver: "네이버 지도로 전환했습니다." }[p]);
+  if (!ok) { syncMapSeg(); return; } /* 키 미입력 또는 로드 실패: 현재 지도 유지 */
+  try {
+    adapter.destroy();
+    document.getElementById("map").innerHTML = "";
+    state.mapProvider = p;
+    adapter = next;
+    adapter.init(LINES[state.line].center, LINES[state.line].zoom);
+    drawLine(state.line);
+    renderTrains();
+    syncMapSeg();
+    toast({ basic: "기본 지도로 전환했습니다.", google: "구글 지도로 전환했습니다.", naver: "네이버 지도로 전환했습니다." }[p]);
+  } catch (e) {
+    console.error("지도 전환 실패:", e);
+    if (p !== "basic") {
+      toast(`지도 전환 중 오류(${e.message}). 기본 지도로 복구합니다.`);
+      document.getElementById("map").innerHTML = "";
+      state.mapProvider = "basic";
+      adapter = ADAPTERS.basic;
+      adapter.init(LINES[state.line].center, LINES[state.line].zoom);
+      drawLine(state.line);
+      renderTrains();
+      syncMapSeg();
+    }
+  }
 }
 
 /* 노선 칩 */
@@ -1318,9 +1332,6 @@ document.querySelectorAll("#modeSeg button").forEach(b => b.classList.toggle("on
 syncKeyField();
 adapter.init(LINES[state.line].center, LINES[state.line].zoom);
 selectLine(state.line);
-
-/* 네이버 ID가 있으면 네이버 지도로 자동 전환 (실패 시 기본 지도 유지) */
-if (DEFAULT_NAVER_CLIENT_ID) setProvider("naver");
 
 /* 배포 환경 프록시 감지: 키가 없어도 /api/position 이 살아 있으면 실시간으로 자동 전환 */
 (async () => {

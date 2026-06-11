@@ -20,6 +20,11 @@
 <div class="sub" id="env"></div>
 <div id="tests"></div>
 <div class="summary" id="summary">진단 중...</div>
+<div class="test" style="margin-top:10px">
+  <div class="name">7. 네이버 지도 실제 렌더링<span class="wait" id="t7s">5번 이후 시작</span></div>
+  <div class="detail">아래 박스에 지도가 그려지면 정상입니다.</div>
+  <div id="navermap" style="width:100%;height:240px;border-radius:8px;margin-top:10px;background:#222"></div>
+</div>
 <script>
 document.getElementById("env").textContent = location.href + " · " + navigator.userAgent;
 const tests = [
@@ -81,6 +86,14 @@ tests.forEach(t => {
       results[t.id] = false;
     }
   }
+  /* 7번: 실제 지도 렌더 */
+  const t7 = document.getElementById("t7s");
+  if (window.naver && window.naver.maps) {
+    try {
+      new naver.maps.Map("navermap", { center: new naver.maps.LatLng(37.5665, 126.9780), zoom: 12 });
+      t7.textContent = "지도 생성됨 (박스 확인)"; t7.className = "ok";
+    } catch (e) { t7.textContent = "생성 실패: " + e.message; t7.className = "fail"; }
+  } else { t7.textContent = "스크립트 없음"; t7.className = "fail"; }
   let verdict;
   if (results.t1 && results.t4) verdict = "페이지 내부 요청이 모두 정상입니다. 본 앱이 안 된다면 캐시 문제일 수 있으니 강력 새로고침(Ctrl+Shift+R)을 해보세요.";
   else if (!results.t1 && results.t6) verdict = "외부 CDN은 되는데 같은 도메인 API 호출이 막힙니다. 보안 확장이나 네트워크 장비가 fetch 요청을 선별 차단 중일 가능성이 큽니다.";
