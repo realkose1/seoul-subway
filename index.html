@@ -407,9 +407,10 @@
       <button data-sec="30" class="on">30초</button>
       <button data-sec="60">60초</button>
     </div>
-    <div class="hint">실시간 API는 하루 1,000회 제한이 있습니다. 30초 주기로 약 8시간 사용 가능합니다.</div>
+    <div class="hint">실시간 API는 하루 1,000회 제한이 있습니다. 전체 모드는 확대 시 화면에 보이는 노선만 조회하고, 5분간 조작이 없거나 탭이 백그라운드면 갱신을 자동으로 줄입니다.</div>
   </div>
   <div class="meter"><span>이번 세션 API 호출</span><span id="callCount">0회</span></div>
+  <div class="meter"><span>오늘 호출 (이 기기 추정)</span><span id="usageToday">0 / 1,000회</span></div>
 </div>
 
 <div class="panel" id="trainPanel">
@@ -1205,9 +1206,40 @@ function stationPath(line, a, b) {
   while (c) { path.push(c); c = parent[c]; }
   return path.reverse();
 }
+/* 노선별 경계 상자 (화면 기반 조회용) */
+const LINE_BBOX = {};
+for (const [nm, def] of Object.entries(LINES)) {
+  let a = 90, b = -90, c = 180, e = -180;
+  for (const seg of def.segments) for (const n of seg) {
+    const s = STN[n]; if (!s) continue;
+    a = Math.min(a, s[0]); b = Math.max(b, s[0]);
+    c = Math.min(c, s[1]); e = Math.max(e, s[1]);
+  }
+  LINE_BBOX[nm] = [a - 0.012, b + 0.012, c - 0.015, e + 0.015];
+}
+/* 전체 모드에서 줌인 시 화면과 겹치는 노선만 반환 (그 외 null = 전부) */
+function visibleLines() {
+  if (state.line !== "ALL" || !adapter.map || !adapter.getView) return null;
+  const v = adapter.getView();
+  if (v.zoom < 13) return null;
+  const el = document.getElementById(adapter.containerId);
+  if (!el || !el.clientWidth) return null;
+  const mpp = 156543.03392 * Math.cos(v.center[0] * Math.PI / 180) / Math.pow(2, v.zoom);
+  const hLat = (el.clientHeight / 2) * mpp / 111320;
+  const hLng = (el.clientWidth / 2) * mpp / (111320 * Math.cos(v.center[0] * Math.PI / 180));
+  const box = [v.center[0] - hLat, v.center[0] + hLat, v.center[1] - hLng, v.center[1] + hLng];
+  const hit = Object.keys(LINES).filter(nm => {
+    const B = LINE_BBOX[nm];
+    return B[0] <= box[1] && B[1] >= box[0] && B[2] <= box[3] && B[3] >= box[2];
+  });
+  return (hit.length === 0 || hit.length >= 7) ? null : hit;
+}
 function currentRefreshSec() {
   let sec = state.mode === "mock" ? Math.min(state.intervalSec, 5) : state.intervalSec;
-  if (state.mode === "live" && state.line === "ALL") sec = Math.max(sec, 60);
+  if (state.mode === "live" && state.line === "ALL") {
+    const sub = visibleLines();
+    sec = Math.max(sec, sub ? 60 : 120); /* 화면 노선만 조회 시 60초, 전체 9개 조회 시 120초 */
+  }
   return sec;
 }
 const animState = new Map(); /* trainNo → { cur, goal, speed, heading, train } */
@@ -1358,8 +1390,8 @@ async function tryFetch(url) {
   return data;
 }
 
-async function directFetchAll() {
-  const results = await Promise.allSettled(Object.keys(LINES).map(ln =>
+async function directFetchAll(lines) {
+  const results = await Promise.allSettled((lines || Object.keys(LINES)).map(ln =>
     tryFetch(`https://swopenapi.seoul.go.kr/api/subway/${encodeURIComponent(state.apiKey)}/json/realtimePosition/0/200/${encodeURIComponent(ln)}`)
   ));
   const merged = [];
@@ -1368,13 +1400,25 @@ async function directFetchAll() {
   return { realtimePositionList: merged };
 }
 
+function idleGate() {
+  if (state.mode !== "live") return true;
+  const idle = Date.now() - lastUserAct > 5 * 60 * 1000;
+  if (idle && Date.now() - lastLiveFetch < currentRefreshSec() * 4 * 1000) return false;
+  return true;
+}
+
 async function fetchLive() {
+  if (!idleGate()) return;
+  lastLiveFetch = Date.now();
   /* 호출 경로 후보: 프록시(배포 환경) 우선, 직접 호출(키 입력 시) 폴백 */
+  const sub = state.line === "ALL" ? visibleLines() : null;
+  const lineParam = sub ? sub.join(",") : state.line;
+  const upstreamCost = state.line === "ALL" ? (sub ? sub.length : 9) : 1;
   const sources = [];
   if (location.protocol !== "file:")
-    sources.push({ name: "프록시", url: `/api/position?line=${encodeURIComponent(state.line)}` });
+    sources.push({ name: "프록시", url: `/api/position?line=${encodeURIComponent(lineParam)}` });
   if (state.apiKey) {
-    if (state.line === "ALL") sources.push({ name: "직접", runAll: true });
+    if (state.line === "ALL") sources.push({ name: "직접", runAll: true, lines: sub || Object.keys(LINES) });
     else sources.push({ name: "직접", url: `https://swopenapi.seoul.go.kr/api/subway/${encodeURIComponent(state.apiKey)}/json/realtimePosition/0/200/${encodeURIComponent(state.line)}` });
   }
   if (!sources.length) { toast("인증키를 입력하거나 프록시가 있는 배포 환경에서 실행해 주세요."); return; }
@@ -1386,7 +1430,7 @@ async function fetchLive() {
   let data = null, used = null;
   for (const src of sources) {
     try {
-      data = src.runAll ? await directFetchAll() : await tryFetch(src.url);
+      data = src.runAll ? await directFetchAll(src.lines) : await tryFetch(src.url);
       used = src;
       break;
     } catch (e) {
@@ -1401,6 +1445,7 @@ async function fetchLive() {
   }
   state.calls++;
   document.getElementById("callCount").textContent = state.calls + "회";
+  addUsage(upstreamCost);
   state.dataPath = used.name;
   state.trains = data.realtimePositionList || [];
   /* 2단계: 표시 (렌더링 오류는 별도로 보고한다) */
@@ -1657,6 +1702,35 @@ document.getElementById("panelHead").addEventListener("click", () => {
   if (window.innerWidth < 768) document.getElementById("trainPanel").classList.remove("open");
 });
 
+/* 일일 호출 추정 (이 기기 기준, 자정 리셋과 동일한 날짜 키) */
+function usageKey() { const d = new Date(); return `usage_${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; }
+function addUsage(n) {
+  try {
+    const k = usageKey();
+    const v = (parseInt(localStorage.getItem(k) || "0", 10) || 0) + n;
+    localStorage.setItem(k, String(v));
+    const el = document.getElementById("usageToday");
+    if (el) el.textContent = v + " / 1,000회";
+    if (v > 800 && !state._usageWarned) { state._usageWarned = true; toast("오늘 호출이 800회를 넘었습니다. 갱신 주기를 늘리거나 잠시 모의 데이터로 전환하는 것을 권합니다."); }
+  } catch (e) {}
+}
+function showUsage() {
+  try {
+    const el = document.getElementById("usageToday");
+    if (el) el.textContent = (parseInt(localStorage.getItem(usageKey()) || "0", 10) || 0) + " / 1,000회";
+  } catch (e) {}
+}
+
+/* 5분간 조작이 없으면 갱신을 4배 늦춘다 */
+let lastUserAct = Date.now(), lastLiveFetch = 0;
+["pointerdown", "wheel", "touchstart", "keydown"].forEach(ev =>
+  document.addEventListener(ev, () => {
+    const wasIdle = Date.now() - lastUserAct > 5 * 60 * 1000;
+    lastUserAct = Date.now();
+    if (wasIdle && state.mode === "live") refresh();
+  }, { passive: true })
+);
+
 /* 백그라운드 탭에서는 호출을 멈춰 일일 한도를 아낀다 */
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) clearInterval(state.timer);
@@ -1668,6 +1742,7 @@ document.querySelectorAll("#modeSeg button").forEach(b => b.classList.toggle("on
 syncKeyField();
 adapter.init(viewOf(state.line).center, viewOf(state.line).zoom);
 selectLine(state.line);
+showUsage();
 
 /* 네이버 지도 자동 시작 (진단으로 검증됨, 실패 시 기본 지도 자동 복구) */
 if (DEFAULT_NAVER_CLIENT_ID) setProvider("naver");
