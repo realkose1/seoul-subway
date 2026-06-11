@@ -3,6 +3,18 @@
 
 const ALLOWED = new Set(["1호선", "2호선", "3호선", "4호선", "5호선", "6호선", "7호선", "8호선", "9호선"]);
 
+async function callUpstream(scheme, key, line) {
+  const url = `${scheme}://swopenapi.seoul.go.kr/api/subway/${key}/json/realtimePosition/0/200/${encodeURIComponent(line)}`;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    const r = await fetch(url, { signal: ctrl.signal });
+    return await r.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 module.exports = async (req, res) => {
   res.setHeader("Cache-Control", "s-maxage=15, stale-while-revalidate=30");
   const key = process.env.SUBWAY_API_KEY;
@@ -15,12 +27,15 @@ module.exports = async (req, res) => {
   const line = String(req.query.line || "");
   if (!ALLOWED.has(line)) return res.status(400).json({ code: "ERROR-PARAM", message: "지원하지 않는 노선입니다." });
 
-  try {
-    const upstream = `https://swopenapi.seoul.go.kr/api/subway/${key}/json/realtimePosition/0/200/${encodeURIComponent(line)}`;
-    const r = await fetch(upstream);
-    const data = await r.json();
-    return res.status(200).json(data);
-  } catch (e) {
-    return res.status(502).json({ code: "ERROR-UPSTREAM", message: "실시간 API 호출에 실패했습니다." });
+  /* 열린데이터광장 서버의 인증서 체인 문제로 https가 실패할 수 있어 http로 폴백 */
+  const errors = [];
+  for (const scheme of ["https", "http"]) {
+    try {
+      const data = await callUpstream(scheme, key, line);
+      return res.status(200).json(data);
+    } catch (e) {
+      errors.push(`${scheme}: ${(e && e.cause && e.cause.code) || e.name || e.message}`);
+    }
   }
+  return res.status(502).json({ code: "ERROR-UPSTREAM", message: `실시간 API 호출 실패 (${errors.join(" / ")})` });
 };
