@@ -739,7 +739,7 @@ function trainCoord(t) {
   else if (s === "2" && next) { pos = lerp(C, STN[next], 0.22); goal = lerp(C, STN[next], 0.9); hFrom = cur; hTo = next; }
   else { /* 도착: 정차 */ if (next) { hFrom = cur; hTo = next; } else if (prev) { hFrom = prev; hTo = cur; } }
   const heading = hFrom && hTo ? bearingDeg(STN[hFrom], STN[hTo]) : 0;
-  return { pos, goal, heading };
+  return { pos, goal, heading, anchor: hTo || cur };
 }
 
 /* ════════════════ 공통 마크업 ════════════════ */
@@ -1126,6 +1126,31 @@ function distM(a, b) {
   const dx = (b[1] - a[1]) * 111320 * Math.cos(a[0] * Math.PI / 180);
   return Math.hypot(dx, dy);
 }
+const TRACK_OFFSET_M = 10; /* 좌측통행: 진행 방향 왼쪽으로 복선 분리 */
+function offsetLeft(pos, headingDeg, meters) {
+  const rad = (headingDeg - 90) * Math.PI / 180;
+  return [
+    pos[0] + Math.cos(rad) * meters / 111320,
+    pos[1] + Math.sin(rad) * meters / (111320 * Math.cos(pos[0] * Math.PI / 180))
+  ];
+}
+function stationPath(line, a, b) {
+  if (a === b) return [a];
+  const g = graphOf(line);
+  if (!g[a] || !g[b]) return null;
+  const parent = { [a]: null };
+  const q = [a];
+  while (q.length) {
+    const c = q.shift();
+    if (c === b) break;
+    for (const nb of g[c]) if (!(nb in parent)) { parent[nb] = c; q.push(nb); }
+  }
+  if (!(b in parent)) return null;
+  const path = [];
+  let c = b;
+  while (c) { path.push(c); c = parent[c]; }
+  return path.reverse();
+}
 function currentRefreshSec() {
   let sec = state.mode === "mock" ? Math.min(state.intervalSec, 5) : state.intervalSec;
   if (state.mode === "live" && state.line === "ALL") sec = Math.max(sec, 60);
@@ -1139,14 +1164,36 @@ setInterval(() => {
   const dt = Math.min(1, (now - animLastTs) / 1000);
   animLastTs = now;
   for (const st of animState.values()) {
-    const d = distM(st.cur, st.goal);
-    if (d < 1.5) continue;
-    if (REDUCED_MOTION) { st.cur = st.goal.slice(); adapter.moveTrain(st.no, st.cur); continue; }
-    const step = Math.min(d, st.speed * dt);
-    const f = step / d;
-    st.cur[0] += (st.goal[0] - st.cur[0]) * f;
-    st.cur[1] += (st.goal[1] - st.cur[1]) * f;
-    adapter.moveTrain(st.no, st.cur);
+    if (st.idx >= st.route.length) continue;
+    if (REDUCED_MOTION) {
+      st.cur = st.route[st.route.length - 1].slice();
+      st.idx = st.route.length;
+      adapter.moveTrain(st.no, offsetLeft(st.cur, st.heading, TRACK_OFFSET_M));
+      continue;
+    }
+    let remain = st.speed * dt;
+    let moved = false;
+    while (remain > 0 && st.idx < st.route.length) {
+      const tgt = st.route[st.idx];
+      const d = distM(st.cur, tgt);
+      if (d < 1) { st.idx++; continue; }
+      if (d <= remain) {
+        st.cur = tgt.slice(); remain -= d; st.idx++; moved = true;
+        if (st.idx < st.route.length) {
+          const nh = bearingDeg(st.cur, st.route[st.idx]);
+          if (Math.abs(nh - st.heading) > 4) {
+            st.heading = nh;
+            adapter.upsertTrain(st.no, st.cur, st.train, nh); /* 모서리에서 회전 */
+          }
+        }
+      } else {
+        const f = remain / d;
+        st.cur[0] += (tgt[0] - st.cur[0]) * f;
+        st.cur[1] += (tgt[1] - st.cur[1]) * f;
+        remain = 0; moved = true;
+      }
+    }
+    if (moved) adapter.moveTrain(st.no, offsetLeft(st.cur, st.heading, TRACK_OFFSET_M));
   }
 }, 120);
 let reIconTimer;
@@ -1193,20 +1240,26 @@ function renderTrains() {
     seen.add(t.trainNo);
     const st = animState.get(t.trainNo);
     let startPos = st ? st.cur.slice() : r.pos.slice();
-    let heading = r.heading;
-    const jump = distM(startPos, r.goal);
-    if (jump > 1200) {
-      /* 여러 역을 건너뛴 보정: 직선으로 가로지르면 노선을 벗어나므로 즉시 재배치 */
-      startPos = r.pos.slice();
-      adapter.moveTrain(t.trainNo, startPos);
-    } else if (jump > 30) {
-      /* 움직이는 동안의 방향은 실제 이동 벡터 기준 (노선과 항상 일치) */
-      heading = bearingDeg(startPos, r.goal);
+    let route = null;
+    /* 이전 이동의 종착 역 → 이번 종착 역을 잇는 역 경로를 따라 웨이포인트 구성 */
+    if (st && st.anchor && r.anchor) {
+      const sp = stationPath(lineOfTrain(t), st.anchor, r.anchor);
+      if (sp && sp.length <= 4) {
+        route = [];
+        for (let i = 0; i < sp.length - 1; i++) { const c = STN[sp[i]]; if (c) route.push(c.slice()); }
+        route.push(r.goal.slice());
+      }
     }
-    adapter.upsertTrain(t.trainNo, startPos, t, heading);
-    const d = distM(startPos, r.goal);
-    const speed = Math.min(28, Math.max(3, d / dur)); /* m/s, 약 10~100km/h */
-    animState.set(t.trainNo, { no: t.trainNo, cur: startPos.slice(), goal: r.goal.slice(), speed, heading, train: t });
+    if (!route) { startPos = r.pos.slice(); route = [r.goal.slice()]; }
+    let total = distM(startPos, route[0]);
+    for (let i = 0; i < route.length - 1; i++) total += distM(route[i], route[i + 1]);
+    if (total > 2500) { startPos = r.pos.slice(); route = [r.goal.slice()]; total = distM(startPos, route[0]); }
+    while (route.length > 1 && distM(startPos, route[0]) < 25) route.shift();
+    const heading = distM(startPos, route[0]) > 5 ? bearingDeg(startPos, route[0]) : r.heading;
+    adapter.upsertTrain(t.trainNo, offsetLeft(startPos, heading, TRACK_OFFSET_M), t, heading);
+    adapter.moveTrain(t.trainNo, offsetLeft(startPos, heading, TRACK_OFFSET_M));
+    const speed = Math.min(28, Math.max(3, total / dur)); /* m/s */
+    animState.set(t.trainNo, { no: t.trainNo, cur: startPos.slice(), route, idx: 0, speed, heading, anchor: r.anchor, train: t });
   }
   adapter.prune(seen);
   for (const no of [...animState.keys()]) if (!seen.has(no)) animState.delete(no);
