@@ -631,7 +631,7 @@ function resolve(name) {
   name = String(name).trim();
   if (STN[name]) return name;
   if (ALIAS[name] && STN[ALIAS[name]]) return ALIAS[name];
-  const stripped = name.replace(/\(.*?\)/g, "").replace(/역$/, "").trim();
+  const stripped = name.replace(/\(.*?\)/g, "").replace(/(종착|지선|순환|행)$/, "").replace(/역$/, "").trim();
   if (STN[stripped]) return stripped;
   if (NORM[stripped]) return NORM[stripped];
   return null;
@@ -669,21 +669,31 @@ function trainCoord(t) {
   if (!cur) return null;
   let prev = null, next = null;
   const term = resolve(t.statnTnm);
-  const d = distMap(state.line, term);
-  if (d && d[cur] != null && graph[cur]) {
-    for (const nb of graph[cur]) {
-      if (d[nb] == null) continue;
-      if (d[nb] < d[cur] && !next) next = nb;
-      if (d[nb] > d[cur] && !prev) prev = nb;
+  const L_ = LINES[state.line];
+  const loopArr = L_.loop ? L_.segments[0].slice(0, -1) : null;
+  /* 순환선 본선 열차는 행선지보다 내선(0)/외선(1) 방향이 정확하다 */
+  const useLoopDir = loopArr && loopArr.includes(cur) && (!term || loopArr.includes(term));
+  if (useLoopDir) {
+    const idx = loopArr.indexOf(cur);
+    const dir = t.updnLine === "0" ? 1 : -1;
+    next = loopArr[(idx + dir + loopArr.length) % loopArr.length];
+    prev = loopArr[(idx - dir + loopArr.length) % loopArr.length];
+  } else {
+    const d = distMap(state.line, term);
+    if (d && d[cur] != null && graph[cur]) {
+      for (const nb of graph[cur]) {
+        if (d[nb] == null) continue;
+        if (d[nb] < d[cur] && !next) next = nb;
+        if (d[nb] > d[cur] && !prev) prev = nb;
+      }
     }
-  }
-  if (!next && !prev && LINES[state.line].loop) {
-    const arr = LINES[state.line].segments[0].slice(0, -1);
-    const idx = arr.indexOf(cur);
-    if (idx >= 0) {
-      const dir = t.updnLine === "0" ? 1 : -1;
-      next = arr[(idx + dir + arr.length) % arr.length];
-      prev = arr[(idx - dir + arr.length) % arr.length];
+    if (!next && !prev && loopArr) {
+      const idx = loopArr.indexOf(cur);
+      if (idx >= 0) {
+        const dir = t.updnLine === "0" ? 1 : -1;
+        next = loopArr[(idx + dir + loopArr.length) % loopArr.length];
+        prev = loopArr[(idx - dir + loopArr.length) % loopArr.length];
+      }
     }
   }
   const C = STN[cur];
