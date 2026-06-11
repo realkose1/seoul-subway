@@ -1126,7 +1126,16 @@ function distM(a, b) {
   const dx = (b[1] - a[1]) * 111320 * Math.cos(a[0] * Math.PI / 180);
   return Math.hypot(dx, dy);
 }
-const TRACK_OFFSET_M = 10; /* 좌측통행: 진행 방향 왼쪽으로 복선 분리 */
+/* 좌측통행 복선 분리: 줌과 차체 폭에 맞춰 항상 차체가 비켜갈 만큼 벌린다 */
+let trackOffM = 10;
+function updateTrackOffset() {
+  const map = adapter && adapter.map;
+  const z = map && map.getZoom ? map.getZoom() : 12;
+  const mpp = 156543.03392 * Math.cos(37.55 * Math.PI / 180) / Math.pow(2, z);
+  const { carW } = trainGeo(trainSizePx(map));
+  const px = Math.min(10, Math.max(3.5, carW * 0.68 + 1)); /* 화면상 분리 픽셀 */
+  trackOffM = px * mpp;
+}
 function offsetLeft(pos, headingDeg, meters) {
   const rad = (headingDeg - 90) * Math.PI / 180;
   return [
@@ -1168,7 +1177,7 @@ setInterval(() => {
     if (REDUCED_MOTION) {
       st.cur = st.route[st.route.length - 1].slice();
       st.idx = st.route.length;
-      adapter.moveTrain(st.no, offsetLeft(st.cur, st.heading, TRACK_OFFSET_M));
+      adapter.moveTrain(st.no, offsetLeft(st.cur, st.heading, trackOffM));
       continue;
     }
     let remain = st.speed * dt;
@@ -1193,13 +1202,17 @@ setInterval(() => {
         remain = 0; moved = true;
       }
     }
-    if (moved) adapter.moveTrain(st.no, offsetLeft(st.cur, st.heading, TRACK_OFFSET_M));
+    if (moved) adapter.moveTrain(st.no, offsetLeft(st.cur, st.heading, trackOffM));
   }
 }, 120);
 let reIconTimer;
 function scheduleReIcon() { clearTimeout(reIconTimer); reIconTimer = setTimeout(reIconTrains, 160); }
 function reIconTrains() {
-  for (const st of animState.values()) adapter.upsertTrain(st.no, st.cur, st.train, st.heading);
+  updateTrackOffset();
+  for (const st of animState.values()) {
+    adapter.upsertTrain(st.no, st.cur, st.train, st.heading);
+    adapter.moveTrain(st.no, offsetLeft(st.cur, st.heading, trackOffM));
+  }
 }
 
 /* ════════════════ 그리기 ════════════════ */
@@ -1234,6 +1247,7 @@ function drawLine(lineName) {
 function renderTrains() {
   const seen = new Set();
   const dur = currentRefreshSec();
+  updateTrackOffset();
   for (const t of state.trains) {
     const r = trainCoord(t);
     if (!r) continue;
@@ -1256,8 +1270,8 @@ function renderTrains() {
     if (total > 2500) { startPos = r.pos.slice(); route = [r.goal.slice()]; total = distM(startPos, route[0]); }
     while (route.length > 1 && distM(startPos, route[0]) < 25) route.shift();
     const heading = distM(startPos, route[0]) > 5 ? bearingDeg(startPos, route[0]) : r.heading;
-    adapter.upsertTrain(t.trainNo, offsetLeft(startPos, heading, TRACK_OFFSET_M), t, heading);
-    adapter.moveTrain(t.trainNo, offsetLeft(startPos, heading, TRACK_OFFSET_M));
+    adapter.upsertTrain(t.trainNo, offsetLeft(startPos, heading, trackOffM), t, heading);
+    adapter.moveTrain(t.trainNo, offsetLeft(startPos, heading, trackOffM));
     const speed = Math.min(28, Math.max(3, total / dur)); /* m/s */
     animState.set(t.trainNo, { no: t.trainNo, cur: startPos.slice(), route, idx: 0, speed, heading, anchor: r.anchor, train: t });
   }
