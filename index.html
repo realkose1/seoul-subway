@@ -938,6 +938,7 @@ const naverAdapter = {
       anchorColor: "#141518", pixelOffset: new naver.maps.Point(0, -8)
     });
     naver.maps.Event.addListener(this.map, "zoom_changed", () => this.syncLabels());
+    setTimeout(() => { if (this.map) naver.maps.Event.trigger(this.map, "resize"); }, 300);
   },
   destroy() {
     if (this.map) { this.map.destroy(); this.map = null; }
@@ -1247,6 +1248,14 @@ function selectLine(name) {
   restartTimer();
 }
 
+/* 지도 컨테이너를 깨끗한 새 div로 교체 (이전 지도 라이브러리의 잔여 클래스/스타일 제거) */
+function freshMapContainer() {
+  const old = document.getElementById("map");
+  const fresh = document.createElement("div");
+  fresh.id = "map";
+  old.replaceWith(fresh);
+}
+
 /* 지도 제공자 전환 */
 function syncMapSeg() {
   document.querySelectorAll("#mapSeg button").forEach(b => b.classList.toggle("on", b.dataset.map === state.mapProvider));
@@ -1262,7 +1271,7 @@ async function setProvider(p) {
   if (!ok) { syncMapSeg(); return; } /* 키 미입력 또는 로드 실패: 현재 지도 유지 */
   try {
     adapter.destroy();
-    document.getElementById("map").innerHTML = "";
+    freshMapContainer();
     state.mapProvider = p;
     adapter = next;
     adapter.init(viewOf(state.line).center, viewOf(state.line).zoom);
@@ -1274,7 +1283,7 @@ async function setProvider(p) {
     console.error("지도 전환 실패:", e);
     if (p !== "basic") {
       toast(`지도 전환 중 오류(${e.message}). 기본 지도로 복구합니다.`);
-      document.getElementById("map").innerHTML = "";
+      freshMapContainer();
       state.mapProvider = "basic";
       adapter = ADAPTERS.basic;
       adapter.init(viewOf(state.line).center, viewOf(state.line).zoom);
