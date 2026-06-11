@@ -223,8 +223,18 @@
     cursor: pointer;
     user-select: none;
   }
-  .panel-head h2 { font-size: 13px; font-weight: 700; }
+  .panel-head h2 { font-size: 13px; font-weight: 700; flex: 1; }
   .panel-head .count { font-size: 12px; color: var(--muted); }
+  .panel-min {
+    background: none; border: none; cursor: pointer;
+    color: var(--muted); font-size: 15px; line-height: 1;
+    padding: 4px 2px 4px 10px;
+  }
+  .panel-min:hover { color: var(--text); }
+  @media (min-width: 768px) {
+    .panel.min { bottom: auto; }
+    .panel.min .panel-tabs, .panel.min .panel-body { display: none; }
+  }
   .panel-tabs { display: flex; gap: 4px; padding: 0 12px 10px; }
   .panel-tabs button {
     flex: 1;
@@ -400,6 +410,7 @@
   <div class="panel-head" id="panelHead">
     <h2 id="panelTitle">운행 중인 열차</h2>
     <span class="count" id="panelCount"></span>
+    <button class="panel-min" id="panelMin" aria-label="접기">&#9662;</button>
   </div>
   <div class="panel-tabs" id="dirTabs">
     <button data-dir="all" class="on">전체</button>
@@ -1666,9 +1677,13 @@ document.getElementById("dirTabs").addEventListener("click", e => {
 document.getElementById("listFab").addEventListener("click", () => {
   document.getElementById("trainPanel").classList.add("open");
 });
-document.getElementById("panelHead").addEventListener("click", () => {
-  if (window.innerWidth < 768) document.getElementById("trainPanel").classList.remove("open");
-});
+function togglePanel() {
+  const p = document.getElementById("trainPanel");
+  if (window.innerWidth < 768) { p.classList.remove("open"); return; }
+  p.classList.toggle("min");
+  document.getElementById("panelMin").innerHTML = p.classList.contains("min") ? "&#9652;" : "&#9662;";
+}
+document.getElementById("panelHead").addEventListener("click", togglePanel);
 
 /* 일일 호출 추정 (이 기기 기준, 자정 리셋과 동일한 날짜 키) */
 function usageKey() { const d = new Date(); return `usage_${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; }
