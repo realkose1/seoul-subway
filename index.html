@@ -744,17 +744,63 @@ function trainCoord(t) {
 
 /* ════════════════ 공통 마크업 ════════════════ */
 function isExpress(t) { return t.directAt === "1" || t.directAt === "7"; }
+function trainGeo(len) {
+  const carW = Math.max(6.5, Math.min(10, 5.5 + len * 0.028));
+  const cars = Math.max(1, Math.min(10, Math.round(len / (carW * 2.6))));
+  const gap = cars > 1 ? 1.1 : 0;
+  const carL = (len - gap * (cars - 1)) / cars;
+  return { carW, cars, gap, carL };
+}
+function carPathD(x, y, w, h, rt, rb) {
+  const f = n => Number(n.toFixed(1));
+  return `M ${f(x)} ${f(y + rt)} Q ${f(x)} ${f(y)} ${f(x + rt)} ${f(y)} L ${f(x + w - rt)} ${f(y)} Q ${f(x + w)} ${f(y)} ${f(x + w)} ${f(y + rt)} L ${f(x + w)} ${f(y + h - rb)} Q ${f(x + w)} ${f(y + h)} ${f(x + w - rb)} ${f(y + h)} L ${f(x + rb)} ${f(y + h)} Q ${f(x)} ${f(y + h)} ${f(x)} ${f(y + h - rb)} Z`;
+}
+function trainSilhouettePath(len) {
+  const { carW, cars, gap, carL } = trainGeo(len);
+  let d = "";
+  for (let i = 0; i < cars; i++) {
+    const y = -len / 2 + i * (carL + gap);
+    const rt = i === 0 ? Math.min(carW * 0.5, carL * 0.38) : 1.6;
+    const rb = i === cars - 1 ? Math.min(carW * 0.4, carL * 0.26) : 1.6;
+    d += carPathD(-carW / 2, y, carW, carL, rt, rb) + " ";
+  }
+  return d;
+}
 function trainPinHtml(t, heading, len) {
   const c = colorOfTrain(t);
   const ex = isExpress(t);
-  const w = Math.round(len * 15 / 26);
-  const sw = Math.min(1.6, Math.max(0.55, 70 / len)); /* 화면상 윤곽선 두께 보정 */
+  const { carW, cars, gap, carL } = trainGeo(len);
+  const W = carW + 3, x0 = 1.5;
+  const detail = carL >= 13;
+  const f = n => Number(n.toFixed(1));
+  const parts = [];
+  for (let i = 0; i < cars; i++) {
+    const y = i * (carL + gap);
+    const isFront = i === 0, isTail = i === cars - 1;
+    const rt = isFront ? Math.min(carW * 0.5, carL * 0.38) : 1.6;
+    const rb = isTail ? Math.min(carW * 0.4, carL * 0.26) : 1.6;
+    parts.push(`<path d="${carPathD(x0, y, carW, carL, rt, rb)}" fill="${c}" stroke="#fff" stroke-width="1"/>`);
+    if (isFront && detail) {
+      parts.push(`<rect x="${f(x0 + carW * 0.18)}" y="${f(y + rt * 0.7)}" width="${f(carW * 0.64)}" height="${f(Math.min(3.4, carL * 0.17))}" rx="1.1" fill="rgba(255,255,255,.92)"/>`);
+    }
+    if (!isFront && detail) {
+      parts.push(`<rect x="${f(x0 + carW * 0.33)}" y="${f(y + carL * 0.18)}" width="${f(carW * 0.34)}" height="${f(carL * 0.64)}" rx="1.2" fill="rgba(255,255,255,.18)"/>`);
+    }
+    if (isTail && detail && cars > 1) {
+      const tlY = f(y + carL - Math.max(rb * 0.55, 1.6));
+      parts.push(`<circle cx="${f(x0 + carW * 0.28)}" cy="${tlY}" r="${f(carW * 0.07)}" fill="#ff6b6b"/>`);
+      parts.push(`<circle cx="${f(x0 + carW * 0.72)}" cy="${tlY}" r="${f(carW * 0.07)}" fill="#ff6b6b"/>`);
+    }
+    if (ex && ((cars > 1 && i === 1) || (cars === 1 && carL >= 18))) {
+      const cy = y + carL * 0.42, cw = carW * 0.28, cx = x0 + carW * 0.5;
+      parts.push(`<path d="M ${f(cx - cw)} ${f(cy + 2)} L ${f(cx)} ${f(cy - 0.6)} L ${f(cx + cw)} ${f(cy + 2)} M ${f(cx - cw)} ${f(cy + 5)} L ${f(cx)} ${f(cy + 2.4)} L ${f(cx + cw)} ${f(cy + 5)}" stroke="#fff" stroke-width="1.1" fill="none" stroke-linecap="round"/>`);
+    }
+    if (cars === 1 && detail) {
+      parts.push(`<rect x="${f(x0 + carW * 0.18)}" y="${f(rt * 0.7)}" width="${f(carW * 0.64)}" height="${f(Math.min(3.2, carL * 0.16))}" rx="1.1" fill="rgba(255,255,255,.92)"/>`);
+    }
+  }
   return `<div class="train-shape" style="width:${len}px;height:${len}px;transform:rotate(${Math.round(heading || 0)}deg)">
-    <svg viewBox="0 0 15 26" style="width:${w}px;height:${len}px">
-      <path d="M7.5 0.8 C11.2 0.8 13.2 3 13.2 6.2 L13.2 22 C13.2 24.4 10.8 25.4 7.5 25.4 C4.2 25.4 1.8 24.4 1.8 22 L1.8 6.2 C1.8 3 3.8 0.8 7.5 0.8 Z" fill="${c}" stroke="#fff" stroke-width="${sw}"/>
-      <path d="M4.6 5.2 C5.2 3.6 9.8 3.6 10.4 5.2 L10.4 7.6 L4.6 7.6 Z" fill="rgba(255,255,255,.9)"/>
-      ${ex ? `<path d="M4.8 12.5 L7.5 10.2 L10.2 12.5 M4.8 16.5 L7.5 14.2 L10.2 16.5" stroke="#fff" stroke-width="${sw}" fill="none" stroke-linecap="round"/>` : '<rect x="4.6" y="12" width="5.8" height="1.6" rx="0.8" fill="rgba(255,255,255,.75)"/>'}
-    </svg>
+    <svg viewBox="0 0 ${W} ${len}" style="width:${W}px;height:${len}px">${parts.join("")}</svg>
   </div>`;
 }
 function popupHtml(t) {
@@ -916,8 +962,7 @@ const googleAdapter = {
   },
   upsertTrain(no, pos, t, heading) {
     const lineColor = colorOfTrain(t);
-    const TRAIN_PATH = "M 0,-11 C 3.7,-11 5.7,-8.8 5.7,-5.6 L 5.7,8 C 5.7,10.4 3.3,11.4 0,11.4 C -3.3,11.4 -5.7,10.4 -5.7,8 L -5.7,-5.6 C -5.7,-8.8 -3.7,-11 0,-11 Z";
-    const icon = { path: TRAIN_PATH, scale: trainSizePx(this.map) / 22.4, rotation: heading || 0, fillColor: lineColor, fillOpacity: 1, strokeColor: "#fff", strokeWeight: isExpress(t) ? 2.5 : 1.5 };
+    const icon = { path: trainSilhouettePath(trainSizePx(this.map)), scale: 1, rotation: heading || 0, fillColor: lineColor, fillOpacity: 1, strokeColor: "#fff", strokeWeight: isExpress(t) ? 1.8 : 1.1 };
     let m = this.markers.get(no);
     if (m) { m.setIcon(icon); m._pp = popupHtml(t); }
     else {
