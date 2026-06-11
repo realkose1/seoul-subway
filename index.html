@@ -947,6 +947,12 @@ const naverAdapter = {
     });
     naver.maps.Event.addListener(this.map, "zoom_changed", () => this.syncLabels());
     setTimeout(() => { if (this.map) naver.maps.Event.trigger(this.map, "resize"); }, 300);
+    setTimeout(() => { /* 임시 진단 */
+      if (state.mapProvider !== "naver" || !this.map) return;
+      const s = this.map.getSize();
+      const cv = document.querySelector("#map-naver canvas");
+      toast(`네이버 진단: 컨테이너 ${s.width}x${s.height} · 캔버스 ${cv ? cv.width + "x" + cv.height : "없음(이미지 타일 방식)"}`);
+    }, 2500);
   },
   destroy() {
     if (this.map) { this.map.destroy(); this.map = null; }

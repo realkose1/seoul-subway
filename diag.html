@@ -36,8 +36,35 @@
   <div class="detail">앱이 하는 모든 동작을 그대로 수행합니다. 여기가 검다면 범인은 이 중에 있습니다.</div>
   <div id="navermap3" style="width:100%;height:240px;border-radius:8px;margin-top:10px;background:#222"></div>
 </div>
+<div class="test">
+  <div class="name">10. 전체화면 네이버 지도 (앱과 동일 크기)<span class="wait" id="t10s">버튼으로 실행</span></div>
+  <div class="detail">앱처럼 화면 전체 크기 컨테이너에 지도를 만듭니다. 여기가 검다면 대형 캔버스 렌더링 문제로 확정됩니다.</div>
+  <button id="fsbtn" style="margin-top:10px;background:#4ade80;color:#000;border:none;border-radius:8px;padding:10px 16px;font-weight:700;font-family:inherit;cursor:pointer">전체화면 테스트 열기</button>
+</div>
+<div id="fswrap" style="display:none;position:fixed;inset:0;z-index:9999;background:#000">
+  <div id="navermap4" style="position:absolute;inset:0"></div>
+  <button id="fsclose" style="position:absolute;top:16px;right:16px;z-index:10000;background:#16171a;color:#fff;border:1px solid rgba(255,255,255,.2);border-radius:8px;padding:10px 16px;font-weight:700;font-family:inherit;cursor:pointer">닫기</button>
+</div>
 <script>
 document.getElementById("env").textContent = location.href + " · " + navigator.userAgent;
+let fsMap = null;
+document.getElementById("fsbtn").addEventListener("click", () => {
+  document.getElementById("fswrap").style.display = "block";
+  const t10 = document.getElementById("t10s");
+  if (!window.naver || !window.naver.maps) { t10.textContent = "스크립트 없음"; t10.className = "fail"; return; }
+  try {
+    if (!fsMap) fsMap = new naver.maps.Map("navermap4", { center: new naver.maps.LatLng(37.5400, 126.9860), zoom: 11 });
+    else naver.maps.Event.trigger(fsMap, "resize");
+    setTimeout(() => {
+      const cv = document.querySelector("#navermap4 canvas");
+      t10.textContent = `생성됨 · 캔버스 ${cv ? cv.width + "x" + cv.height : "없음(타일 방식)"} · 화면으로 판단`;
+      t10.className = "ok";
+    }, 1500);
+  } catch (e) { t10.textContent = "실패: " + e.message; t10.className = "fail"; }
+});
+document.getElementById("fsclose").addEventListener("click", () => {
+  document.getElementById("fswrap").style.display = "none";
+});
 const tests = [
   { id: "t1", name: "1. 같은 도메인 프록시 (fetch)", run: async () => {
       const r = await fetch("/api/position?probe=1");
