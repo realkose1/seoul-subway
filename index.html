@@ -331,9 +331,9 @@
 </style>
 </head>
 <body>
-<div id="map-basic" class="maplayer"></div>
-<div id="map-naver" class="maplayer" style="display:none"></div>
-<div id="map-google" class="maplayer" style="display:none"></div>
+<div id="map-basic" class="maplayer" style="position:absolute;top:0;right:0;bottom:0;left:0"></div>
+<div id="map-naver" class="maplayer" style="display:none;position:absolute;top:0;right:0;bottom:0;left:0"></div>
+<div id="map-google" class="maplayer" style="display:none;position:absolute;top:0;right:0;bottom:0;left:0"></div>
 
 <div class="topbar">
   <div class="brand-card">
@@ -940,6 +940,12 @@ const naverAdapter = {
     this.map = new naver.maps.Map("map-naver", {
       center: new naver.maps.LatLng(center[0], center[1]), zoom
     });
+    /* 네이버가 컨테이너 스타일을 건드려도 전체 화면 배치를 유지 */
+    const el = document.getElementById("map-naver");
+    el.classList.add("maplayer");
+    el.style.position = "absolute";
+    el.style.top = "0"; el.style.right = "0"; el.style.bottom = "0"; el.style.left = "0";
+    setTimeout(() => { if (this.map) naver.maps.Event.trigger(this.map, "resize"); }, 100);
     this.info = new naver.maps.InfoWindow({
       content: "", borderWidth: 1, borderColor: "rgba(255,255,255,.15)",
       backgroundColor: "#141518", anchorSize: new naver.maps.Size(10, 10),
