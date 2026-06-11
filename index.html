@@ -616,6 +616,7 @@ const state = {
   naverId: DEFAULT_NAVER_CLIENT_ID,
   calls: 0,
   dirFilter: "all",
+  dataPath: null,
   trains: [],
   timer: null
 };
@@ -1033,26 +1034,46 @@ function renderList() {
 }
 
 /* ════════════════ 실시간 API ════════════════ */
+async function tryFetch(url) {
+  const res = await fetch(url);
+  let data;
+  try { data = await res.json(); }
+  catch { throw new Error(`응답 해석 실패 (HTTP ${res.status})`); }
+  if (data.code && String(data.code).startsWith("ERROR")) throw new Error(data.message || data.code);
+  if (data.status && data.status >= 400) throw new Error(data.message || `API 오류 (${data.code || data.status})`);
+  if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+  return data;
+}
+
 async function fetchLive() {
-  const direct = !!state.apiKey;
-  const url = direct
-    ? `https://swopenapi.seoul.go.kr/api/subway/${encodeURIComponent(state.apiKey)}/json/realtimePosition/0/200/${encodeURIComponent(state.line)}`
-    : `/api/position?line=${encodeURIComponent(state.line)}`;
-  try {
-    setStatus("불러오는 중...", false);
-    const res = await fetch(url);
-    state.calls++;
-    document.getElementById("callCount").textContent = state.calls + "회";
-    const data = await res.json();
-    if (data.code && String(data.code).startsWith("ERROR")) throw new Error(data.message || data.code);
-    if (data.status && data.status >= 400) throw new Error(data.message || "API 오류");
-    state.trains = data.realtimePositionList || [];
-    renderTrains();
-    setStatus(`실시간 · ${new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`, true);
-  } catch (e) {
-    setStatus("수신 실패", false);
-    toast("실시간 데이터를 가져오지 못했습니다: " + e.message);
+  /* 호출 경로 후보: 프록시(배포 환경) 우선, 직접 호출(키 입력 시) 폴백 */
+  const sources = [];
+  if (location.protocol !== "file:")
+    sources.push({ name: "프록시", url: `/api/position?line=${encodeURIComponent(state.line)}` });
+  if (state.apiKey)
+    sources.push({ name: "직접", url: `https://swopenapi.seoul.go.kr/api/subway/${encodeURIComponent(state.apiKey)}/json/realtimePosition/0/200/${encodeURIComponent(state.line)}` });
+  if (!sources.length) { toast("인증키를 입력하거나 프록시가 있는 배포 환경에서 실행해 주세요."); return; }
+  if (state.dataPath) sources.sort((a, b) => (a.name === state.dataPath ? -1 : 0) - (b.name === state.dataPath ? -1 : 0));
+
+  setStatus("불러오는 중...", false);
+  const errors = [];
+  for (const src of sources) {
+    try {
+      const data = await tryFetch(src.url);
+      state.calls++;
+      document.getElementById("callCount").textContent = state.calls + "회";
+      state.dataPath = src.name;
+      state.trains = data.realtimePositionList || [];
+      renderTrains();
+      setStatus(`실시간(${src.name}) · ${new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`, true);
+      return;
+    } catch (e) {
+      const msg = e instanceof TypeError ? "네트워크/CORS 차단" : e.message;
+      errors.push(`${src.name}: ${msg}`);
+    }
   }
+  setStatus("수신 실패", false);
+  toast("실시간 데이터를 가져오지 못했습니다. " + errors.join(" · "));
 }
 
 /* ════════════════ 모의 데이터 ════════════════ */
@@ -1209,6 +1230,7 @@ document.getElementById("naverId").value = DEFAULT_NAVER_CLIENT_ID;
 
 function applySubwayKey() {
   state.apiKey = document.getElementById("apiKey").value.trim();
+  state.dataPath = null;
   state.mode = "live";
   document.querySelectorAll("#modeSeg button").forEach(b => b.classList.toggle("on", b.dataset.mode === "live"));
   document.getElementById("keyField").style.display = "block";
