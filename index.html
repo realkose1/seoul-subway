@@ -36,7 +36,6 @@
   .leaflet-control-attribution a { color: var(--muted) !important; }
   .leaflet-control-zoom { border: 1px solid var(--border) !important; border-radius: 10px; overflow: hidden; }
   .leaflet-control-zoom a { background: var(--panel-solid) !important; color: var(--text) !important; border-color: var(--border) !important; }
-  .leaflet-marker-icon { transition: transform 1.4s cubic-bezier(.4,0,.2,1); }
 
   /* ── 상단 바 ───────────────────────── */
   .topbar {
@@ -278,11 +277,9 @@
   }
   .train-pin svg { width: 11px; height: 11px; }
   .train-shape {
-    width: 26px; height: 26px;
     display: flex; align-items: center; justify-content: center;
     filter: drop-shadow(0 1px 4px rgba(0,0,0,.55));
   }
-  .train-shape svg { width: 15px; height: 26px; }
   .train-pin.express { border-radius: 6px; }
   .leaflet-tooltip.stn-label {
     background: transparent; border: none; box-shadow: none;
@@ -331,7 +328,7 @@
   @media (max-width: 767px) { .toast { bottom: calc(38vh + 16px); } }
 
   @media (prefers-reduced-motion: reduce) {
-    .leaflet-marker-icon, .toast, .chip { transition: none; }
+    .toast, .chip { transition: none; }
     .dot.live { animation: none; }
   }
 </style>
@@ -736,26 +733,27 @@ function trainCoord(t) {
   }
   const C = STN[cur];
   const s = String(t.trainSttus);
-  let pos = C, hFrom = null, hTo = null;
-  if (s === "0" && prev) { pos = lerp(STN[prev], C, 0.78); hFrom = prev; hTo = cur; }
-  else if (s === "3" && prev) { pos = lerp(STN[prev], C, 0.5); hFrom = prev; hTo = cur; }
-  else if (s === "2" && next) { pos = lerp(C, STN[next], 0.22); hFrom = cur; hTo = next; }
-  else if (next) { hFrom = cur; hTo = next; }
-  else if (prev) { hFrom = prev; hTo = cur; }
+  let pos = C, goal = C, hFrom = null, hTo = null;
+  if (s === "0" && prev) { pos = lerp(STN[prev], C, 0.78); goal = C; hFrom = prev; hTo = cur; }
+  else if (s === "3" && prev) { pos = lerp(STN[prev], C, 0.5); goal = lerp(STN[prev], C, 0.92); hFrom = prev; hTo = cur; }
+  else if (s === "2" && next) { pos = lerp(C, STN[next], 0.22); goal = lerp(C, STN[next], 0.9); hFrom = cur; hTo = next; }
+  else { /* 도착: 정차 */ if (next) { hFrom = cur; hTo = next; } else if (prev) { hFrom = prev; hTo = cur; } }
   const heading = hFrom && hTo ? bearingDeg(STN[hFrom], STN[hTo]) : 0;
-  return { pos, heading };
+  return { pos, goal, heading };
 }
 
 /* ════════════════ 공통 마크업 ════════════════ */
 function isExpress(t) { return t.directAt === "1" || t.directAt === "7"; }
-function trainPinHtml(t, heading) {
+function trainPinHtml(t, heading, len) {
   const c = colorOfTrain(t);
   const ex = isExpress(t);
-  return `<div class="train-shape" style="transform:rotate(${Math.round(heading || 0)}deg)">
-    <svg viewBox="0 0 15 26">
-      <path d="M7.5 0.8 C11.2 0.8 13.2 3 13.2 6.2 L13.2 22 C13.2 24.4 10.8 25.4 7.5 25.4 C4.2 25.4 1.8 24.4 1.8 22 L1.8 6.2 C1.8 3 3.8 0.8 7.5 0.8 Z" fill="${c}" stroke="#fff" stroke-width="1.6"/>
+  const w = Math.round(len * 15 / 26);
+  const sw = Math.min(1.6, Math.max(0.55, 70 / len)); /* 화면상 윤곽선 두께 보정 */
+  return `<div class="train-shape" style="width:${len}px;height:${len}px;transform:rotate(${Math.round(heading || 0)}deg)">
+    <svg viewBox="0 0 15 26" style="width:${w}px;height:${len}px">
+      <path d="M7.5 0.8 C11.2 0.8 13.2 3 13.2 6.2 L13.2 22 C13.2 24.4 10.8 25.4 7.5 25.4 C4.2 25.4 1.8 24.4 1.8 22 L1.8 6.2 C1.8 3 3.8 0.8 7.5 0.8 Z" fill="${c}" stroke="#fff" stroke-width="${sw}"/>
       <path d="M4.6 5.2 C5.2 3.6 9.8 3.6 10.4 5.2 L10.4 7.6 L4.6 7.6 Z" fill="rgba(255,255,255,.9)"/>
-      ${ex ? '<path d="M4.8 12.5 L7.5 10.2 L10.2 12.5 M4.8 16.5 L7.5 14.2 L10.2 16.5" stroke="#fff" stroke-width="1.5" fill="none" stroke-linecap="round"/>' : '<rect x="4.6" y="12" width="5.8" height="1.6" rx="0.8" fill="rgba(255,255,255,.75)"/>'}
+      ${ex ? `<path d="M4.8 12.5 L7.5 10.2 L10.2 12.5 M4.8 16.5 L7.5 14.2 L10.2 16.5" stroke="#fff" stroke-width="${sw}" fill="none" stroke-linecap="round"/>` : '<rect x="4.6" y="12" width="5.8" height="1.6" rx="0.8" fill="rgba(255,255,255,.75)"/>'}
     </svg>
   </div>`;
 }
@@ -790,7 +788,7 @@ const basicAdapter = {
     this.stationLayer = L.layerGroup().addTo(this.map);
     this.labelLayer = L.layerGroup();
     this.trainLayer = L.layerGroup().addTo(this.map);
-    this.map.on("zoomend", () => this.syncLabels());
+    this.map.on("zoomend", () => { this.syncLabels(); scheduleReIcon(); });
   },
   destroy() { if (this.map) { this.map.remove(); this.map = null; } this.markers.clear(); },
   setView(c, z) { this.map.flyTo(c, z, { duration: 0.7 }); },
@@ -816,15 +814,17 @@ const basicAdapter = {
     else if (this.map.hasLayer(this.labelLayer)) this.map.removeLayer(this.labelLayer);
   },
   upsertTrain(no, pos, t, heading) {
-    const icon = L.divIcon({ className: "", iconSize: [26, 26], iconAnchor: [13, 13], html: trainPinHtml(t, heading) });
+    const len = trainSizePx(this.map);
+    const icon = L.divIcon({ className: "", iconSize: [len, len], iconAnchor: [len / 2, len / 2], html: trainPinHtml(t, heading, len) });
     let m = this.markers.get(no);
-    if (m) { m.setLatLng(pos); m.setIcon(icon); m.getPopup().setContent(popupHtml(t)); }
+    if (m) { m.setIcon(icon); m.getPopup().setContent(popupHtml(t)); }
     else {
       m = L.marker(pos, { icon, zIndexOffset: 1000 }).bindPopup(popupHtml(t));
       this.trainLayer.addLayer(m);
       this.markers.set(no, m);
     }
   },
+  moveTrain(no, pos) { const m = this.markers.get(no); if (m) m.setLatLng(pos); },
   prune(seen) {
     for (const [no, m] of this.markers) if (!seen.has(no)) { this.trainLayer.removeLayer(m); this.markers.delete(no); }
   },
@@ -873,7 +873,7 @@ const googleAdapter = {
       zoomControlOptions: { position: google.maps.ControlPosition.LEFT_BOTTOM }
     });
     this.info = new google.maps.InfoWindow();
-    this.map.addListener("zoom_changed", () => this.syncLabels());
+    this.map.addListener("zoom_changed", () => { this.syncLabels(); scheduleReIcon(); });
   },
   destroy() { this.shapes = []; this.stations = []; this.markers.clear(); this.map = null; },
   setView(c, z) { this.map.panTo({ lat: c[0], lng: c[1] }); this.map.setZoom(z); },
@@ -917,9 +917,9 @@ const googleAdapter = {
   upsertTrain(no, pos, t, heading) {
     const lineColor = colorOfTrain(t);
     const TRAIN_PATH = "M 0,-11 C 3.7,-11 5.7,-8.8 5.7,-5.6 L 5.7,8 C 5.7,10.4 3.3,11.4 0,11.4 C -3.3,11.4 -5.7,10.4 -5.7,8 L -5.7,-5.6 C -5.7,-8.8 -3.7,-11 0,-11 Z";
-    const icon = { path: TRAIN_PATH, scale: 1, rotation: heading || 0, fillColor: lineColor, fillOpacity: 1, strokeColor: "#fff", strokeWeight: isExpress(t) ? 2.5 : 1.5 };
+    const icon = { path: TRAIN_PATH, scale: trainSizePx(this.map) / 22.4, rotation: heading || 0, fillColor: lineColor, fillOpacity: 1, strokeColor: "#fff", strokeWeight: isExpress(t) ? 2.5 : 1.5 };
     let m = this.markers.get(no);
-    if (m) { m.setPosition({ lat: pos[0], lng: pos[1] }); m.setIcon(icon); m._pp = popupHtml(t); }
+    if (m) { m.setIcon(icon); m._pp = popupHtml(t); }
     else {
       m = new google.maps.Marker({ map: this.map, position: { lat: pos[0], lng: pos[1] }, icon, zIndex: 100 });
       m._pp = popupHtml(t);
@@ -927,6 +927,7 @@ const googleAdapter = {
       this.markers.set(no, m);
     }
   },
+  moveTrain(no, pos) { const m = this.markers.get(no); if (m) m.setPosition({ lat: pos[0], lng: pos[1] }); },
   prune(seen) { for (const [no, m] of this.markers) if (!seen.has(no)) { m.setMap(null); this.markers.delete(no); } },
   clearTrains() { this.markers.forEach(m => m.setMap(null)); this.markers.clear(); },
   focusTrain(no) {
@@ -982,7 +983,7 @@ const naverAdapter = {
       backgroundColor: "#141518", anchorSize: new naver.maps.Size(10, 10),
       anchorColor: "#141518", pixelOffset: new naver.maps.Point(0, -8)
     });
-    naver.maps.Event.addListener(this.map, "zoom_changed", () => this.syncLabels());
+    naver.maps.Event.addListener(this.map, "zoom_changed", () => { this.syncLabels(); scheduleReIcon(); });
     setTimeout(() => { if (this.map) naver.maps.Event.trigger(this.map, "resize"); }, 300);
   },
   destroy() {
@@ -1033,15 +1034,15 @@ const naverAdapter = {
   },
   upsertTrain(no, pos, t, heading) {
     const ll = new naver.maps.LatLng(pos[0], pos[1]);
+    const len = trainSizePx(this.map);
     let m = this.markers.get(no);
     if (m) {
-      m.setPosition(ll);
-      m.setIcon({ content: trainPinHtml(t, heading), anchor: new naver.maps.Point(13, 13) });
+      m.setIcon({ content: trainPinHtml(t, heading, len), anchor: new naver.maps.Point(len / 2, len / 2) });
       m._pp = popupHtml(t);
     } else {
       m = new naver.maps.Marker({
         map: this.map, position: ll,
-        icon: { content: trainPinHtml(t, heading), anchor: new naver.maps.Point(13, 13) }, zIndex: 100
+        icon: { content: trainPinHtml(t, heading, len), anchor: new naver.maps.Point(len / 2, len / 2) }, zIndex: 100
       });
       m._pp = popupHtml(t);
       naver.maps.Event.addListener(m, "click", () => {
@@ -1051,6 +1052,7 @@ const naverAdapter = {
       this.markers.set(no, m);
     }
   },
+  moveTrain(no, pos) { const m = this.markers.get(no); if (m) m.setPosition(new naver.maps.LatLng(pos[0], pos[1])); },
   prune(seen) { for (const [no, m] of this.markers) if (!seen.has(no)) { m.setMap(null); this.markers.delete(no); } },
   clearTrains() { this.markers.forEach(m => m.setMap(null)); this.markers.clear(); },
   focusTrain(no) {
@@ -1066,6 +1068,47 @@ const naverAdapter = {
 
 const ADAPTERS = { basic: basicAdapter, google: googleAdapter, naver: naverAdapter };
 let adapter = basicAdapter;
+
+/* ════════════════ 열차 크기와 움직임 ════════════════ */
+const TRAIN_LENGTH_M = 200; /* 10량 1편성 약 200m */
+function trainSizePx(map) {
+  const z = map && map.getZoom ? map.getZoom() : 12;
+  const mpp = 156543.03392 * Math.cos(37.55 * Math.PI / 180) / Math.pow(2, z); /* 미터/픽셀 */
+  return Math.round(Math.max(22, Math.min(160, TRAIN_LENGTH_M / mpp)));
+}
+function distM(a, b) {
+  const dy = (b[0] - a[0]) * 111320;
+  const dx = (b[1] - a[1]) * 111320 * Math.cos(a[0] * Math.PI / 180);
+  return Math.hypot(dx, dy);
+}
+function currentRefreshSec() {
+  let sec = state.mode === "mock" ? Math.min(state.intervalSec, 5) : state.intervalSec;
+  if (state.mode === "live" && state.line === "ALL") sec = Math.max(sec, 60);
+  return sec;
+}
+const animState = new Map(); /* trainNo → { cur, goal, speed, heading, train } */
+const REDUCED_MOTION = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+let animLastTs = performance.now();
+setInterval(() => {
+  const now = performance.now();
+  const dt = Math.min(1, (now - animLastTs) / 1000);
+  animLastTs = now;
+  for (const st of animState.values()) {
+    const d = distM(st.cur, st.goal);
+    if (d < 1.5) continue;
+    if (REDUCED_MOTION) { st.cur = st.goal.slice(); adapter.moveTrain(st.no, st.cur); continue; }
+    const step = Math.min(d, st.speed * dt);
+    const f = step / d;
+    st.cur[0] += (st.goal[0] - st.cur[0]) * f;
+    st.cur[1] += (st.goal[1] - st.cur[1]) * f;
+    adapter.moveTrain(st.no, st.cur);
+  }
+}, 120);
+let reIconTimer;
+function scheduleReIcon() { clearTimeout(reIconTimer); reIconTimer = setTimeout(reIconTrains, 160); }
+function reIconTrains() {
+  for (const st of animState.values()) adapter.upsertTrain(st.no, st.cur, st.train, st.heading);
+}
 
 /* ════════════════ 그리기 ════════════════ */
 function drawLine(lineName) {
@@ -1098,13 +1141,20 @@ function drawLine(lineName) {
 
 function renderTrains() {
   const seen = new Set();
+  const dur = currentRefreshSec();
   for (const t of state.trains) {
     const r = trainCoord(t);
     if (!r) continue;
     seen.add(t.trainNo);
-    adapter.upsertTrain(t.trainNo, r.pos, t, r.heading);
+    const st = animState.get(t.trainNo);
+    const startPos = st ? st.cur : r.pos.slice();
+    adapter.upsertTrain(t.trainNo, startPos, t, r.heading);
+    const d = distM(startPos, r.goal);
+    const speed = Math.min(28, Math.max(3, d / dur)); /* m/s, 약 10~100km/h */
+    animState.set(t.trainNo, { no: t.trainNo, cur: startPos.slice(), goal: r.goal.slice(), speed, heading: r.heading, train: t });
   }
   adapter.prune(seen);
+  for (const no of [...animState.keys()]) if (!seen.has(no)) animState.delete(no);
   renderList();
 }
 function renderList() {
@@ -1280,6 +1330,7 @@ function toast(msg) {
 function selectLine(name) {
   state.line = name;
   adapter.clearTrains();
+  animState.clear();
   state.trains = [];
   drawLine(name);
   const v = viewOf(name);
