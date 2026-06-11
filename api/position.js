@@ -25,6 +25,21 @@ module.exports = async (req, res) => {
   if (!key) return res.status(500).json({ code: "ERROR-ENV", message: "서버에 SUBWAY_API_KEY 환경변수가 설정되지 않았습니다." });
 
   const line = String(req.query.line || "");
+
+  /* 전체 노선: 9개 호선을 병렬 조회해 병합. 캐시를 길게 잡아 호출량을 보호한다 */
+  if (line === "ALL") {
+    res.setHeader("Cache-Control", "s-maxage=55, stale-while-revalidate=60");
+    const results = await Promise.allSettled([...ALLOWED].map(async (ln) => {
+      try { return await callUpstream("http", key, ln); }
+      catch (e) { return await callUpstream("https", key, ln); }
+    }));
+    const merged = [];
+    for (const r of results) {
+      if (r.status === "fulfilled" && Array.isArray(r.value.realtimePositionList)) merged.push(...r.value.realtimePositionList);
+    }
+    return res.status(200).json({ errorMessage: { code: "INFO-000", total: merged.length }, realtimePositionList: merged });
+  }
+
   if (!ALLOWED.has(line)) return res.status(400).json({ code: "ERROR-PARAM", message: "지원하지 않는 노선입니다." });
 
   /* 인증서 체인 문제 회피를 위해 서버 간 통신은 http를 우선 사용 */

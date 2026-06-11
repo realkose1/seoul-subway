@@ -609,7 +609,7 @@ const LINES = {
 const state = {
   mode: DEFAULT_API_KEY ? "live" : "mock",   // mock | live
   mapProvider: "basic",    // basic | google | naver
-  line: "2호선",
+  line: "ALL",
   intervalSec: 30,
   apiKey: DEFAULT_API_KEY,
   googleKey: DEFAULT_GOOGLE_MAPS_KEY,
@@ -648,18 +648,27 @@ function buildGraph(lineName) {
   }
   return adj;
 }
-let graph = buildGraph(state.line);
+const GRAPHS = {};
+function graphOf(lineName) { return GRAPHS[lineName] || (GRAPHS[lineName] = buildGraph(lineName)); }
+const ALL_VIEW = { center: [37.5400, 126.9860], zoom: 11, color: "#8a8d93" };
+function viewOf(name) { return name === "ALL" ? ALL_VIEW : LINES[name]; }
+function lineOfTrain(t) {
+  if (t.subwayNm && LINES[t.subwayNm]) return t.subwayNm;
+  return state.line !== "ALL" ? state.line : "2호선";
+}
+function colorOfTrain(t) { return LINES[lineOfTrain(t)].color; }
 const distCache = {};
 function distMap(lineName, terminus) {
   if (!terminus) return null;
   const key = lineName + "→" + terminus;
   if (distCache[key]) return distCache[key];
-  if (!graph[terminus]) return null;
+  const g = graphOf(lineName);
+  if (!g[terminus]) return null;
   const d = { [terminus]: 0 };
   const q = [terminus];
   while (q.length) {
     const cur = q.shift();
-    for (const nb of graph[cur]) if (!(nb in d)) { d[nb] = d[cur] + 1; q.push(nb); }
+    for (const nb of g[cur]) if (!(nb in d)) { d[nb] = d[cur] + 1; q.push(nb); }
   }
   return (distCache[key] = d);
 }
@@ -669,8 +678,10 @@ function trainCoord(t) {
   const cur = resolve(t.statnNm);
   if (!cur) return null;
   let prev = null, next = null;
+  const ln = lineOfTrain(t);
+  const g = graphOf(ln);
   const term = resolve(t.statnTnm);
-  const L_ = LINES[state.line];
+  const L_ = LINES[ln];
   const loopArr = L_.loop ? L_.segments[0].slice(0, -1) : null;
   /* 순환선 본선 열차는 행선지보다 내선(0)/외선(1) 방향이 정확하다 */
   const useLoopDir = loopArr && loopArr.includes(cur) && (!term || loopArr.includes(term));
@@ -680,9 +691,9 @@ function trainCoord(t) {
     next = loopArr[(idx + dir + loopArr.length) % loopArr.length];
     prev = loopArr[(idx - dir + loopArr.length) % loopArr.length];
   } else {
-    const d = distMap(state.line, term);
-    if (d && d[cur] != null && graph[cur]) {
-      for (const nb of graph[cur]) {
+    const d = distMap(ln, term);
+    if (d && d[cur] != null && g[cur]) {
+      for (const nb of g[cur]) {
         if (d[nb] == null) continue;
         if (d[nb] < d[cur] && !next) next = nb;
         if (d[nb] > d[cur] && !prev) prev = nb;
@@ -708,12 +719,12 @@ function trainCoord(t) {
 /* ════════════════ 공통 마크업 ════════════════ */
 function isExpress(t) { return t.directAt === "1" || t.directAt === "7"; }
 function trainPinHtml(t) {
-  return `<div class="train-pin${isExpress(t) ? " express" : ""}" style="width:20px;height:20px">
+  return `<div class="train-pin${isExpress(t) ? " express" : ""}" style="width:20px;height:20px;background:${colorOfTrain(t)}">
     <svg viewBox="0 0 24 24" fill="#fff"><path d="M12 2C8 2 4 2.5 4 6v9.5C4 17.43 5.57 19 7.5 19L6 20.5V21h2.23l2-2h3.54l2 2H18v-.5L16.5 19c1.93 0 3.5-1.57 3.5-3.5V6c0-3.5-4-4-8-4zM7.5 17c-.83 0-1.5-.67-1.5-1.5S6.67 14 7.5 14s1.5.67 1.5 1.5S8.33 17 7.5 17zm3.5-6H6V6h5v5zm5.5 6c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm1.5-6h-5V6h5v5z"/></svg>
   </div>`;
 }
 function popupHtml(t) {
-  return `<div class="pp-line">${state.line}${isExpress(t) ? " · 급행" : ""}${t.lstcarAt === "1" ? " · 막차" : ""}</div>
+  return `<div class="pp-line">${lineOfTrain(t)}${isExpress(t) ? " · 급행" : ""}${t.lstcarAt === "1" ? " · 막차" : ""}</div>
     <div class="pp-title">${t.statnNm} ${STATUS_LABEL[String(t.trainSttus)] || ""}</div>
     <div class="pp-meta">${t.statnTnm}행 · 열차 ${t.trainNo}</div>`;
 }
@@ -864,7 +875,7 @@ const googleAdapter = {
     }
   },
   upsertTrain(no, pos, t) {
-    const lineColor = LINES[state.line].color;
+    const lineColor = colorOfTrain(t);
     const icon = isExpress(t)
       ? { path: "M -1,-1 L 1,-1 L 1,1 L -1,1 Z", scale: 8, fillColor: lineColor, fillOpacity: 1, strokeColor: "#fff", strokeWeight: 2 }
       : { path: google.maps.SymbolPath.CIRCLE, scale: 8.5, fillColor: lineColor, fillOpacity: 1, strokeColor: "#fff", strokeWeight: 2 };
@@ -1012,6 +1023,15 @@ let adapter = basicAdapter;
 /* ════════════════ 그리기 ════════════════ */
 function drawLine(lineName) {
   adapter.clearLine();
+  if (lineName === "ALL") {
+    document.documentElement.style.setProperty("--line", ALL_VIEW.color);
+    for (const def of Object.values(LINES)) {
+      for (const seg of def.segments) {
+        adapter.addPolyline(seg.map(n => STN[n]).filter(Boolean), def.color);
+      }
+    }
+    return;
+  }
   const L_ = LINES[lineName];
   document.documentElement.style.setProperty("--line", L_.color);
   const drawn = new Set();
@@ -1049,10 +1069,10 @@ function renderList() {
     return;
   }
   list.innerHTML = filtered.map(t => `<div class="train-item" data-no="${t.trainNo}">
-      <div class="t-marker${isExpress(t) ? " express" : ""}">${isExpress(t) ? "急" : "🚇"}</div>
+      <div class="t-marker${isExpress(t) ? " express" : ""}" style="background:${colorOfTrain(t)}">${isExpress(t) ? "急" : "🚇"}</div>
       <div class="t-info">
         <div class="t-top"><span class="t-station">${t.statnNm}</span><span class="t-status">${STATUS_LABEL[String(t.trainSttus)] || ""}</span></div>
-        <div class="t-sub">${t.statnTnm}행 · ${t.trainNo}${isExpress(t) ? ' <span class="badge express">급행</span>' : ""}${t.lstcarAt === "1" ? ' <span class="badge">막차</span>' : ""}</div>
+        <div class="t-sub">${state.line === "ALL" ? lineOfTrain(t) + " · " : ""}${t.statnTnm}행 · ${t.trainNo}${isExpress(t) ? ' <span class="badge express">급행</span>' : ""}${t.lstcarAt === "1" ? ' <span class="badge">막차</span>' : ""}</div>
       </div>
     </div>`).join("");
   list.querySelectorAll(".train-item").forEach(el =>
@@ -1071,13 +1091,25 @@ async function tryFetch(url) {
   return data;
 }
 
+async function directFetchAll() {
+  const results = await Promise.allSettled(Object.keys(LINES).map(ln =>
+    tryFetch(`https://swopenapi.seoul.go.kr/api/subway/${encodeURIComponent(state.apiKey)}/json/realtimePosition/0/200/${encodeURIComponent(ln)}`)
+  ));
+  const merged = [];
+  for (const r of results) if (r.status === "fulfilled" && Array.isArray(r.value.realtimePositionList)) merged.push(...r.value.realtimePositionList);
+  if (!merged.length) throw new Error("전 노선 직접 호출 실패");
+  return { realtimePositionList: merged };
+}
+
 async function fetchLive() {
   /* 호출 경로 후보: 프록시(배포 환경) 우선, 직접 호출(키 입력 시) 폴백 */
   const sources = [];
   if (location.protocol !== "file:")
     sources.push({ name: "프록시", url: `/api/position?line=${encodeURIComponent(state.line)}` });
-  if (state.apiKey)
-    sources.push({ name: "직접", url: `https://swopenapi.seoul.go.kr/api/subway/${encodeURIComponent(state.apiKey)}/json/realtimePosition/0/200/${encodeURIComponent(state.line)}` });
+  if (state.apiKey) {
+    if (state.line === "ALL") sources.push({ name: "직접", runAll: true });
+    else sources.push({ name: "직접", url: `https://swopenapi.seoul.go.kr/api/subway/${encodeURIComponent(state.apiKey)}/json/realtimePosition/0/200/${encodeURIComponent(state.line)}` });
+  }
   if (!sources.length) { toast("인증키를 입력하거나 프록시가 있는 배포 환경에서 실행해 주세요."); return; }
   if (state.dataPath) sources.sort((a, b) => (a.name === state.dataPath ? -1 : 0) - (b.name === state.dataPath ? -1 : 0));
 
@@ -1087,7 +1119,7 @@ async function fetchLive() {
   let data = null, used = null;
   for (const src of sources) {
     try {
-      data = await tryFetch(src.url);
+      data = src.runAll ? await directFetchAll() : await tryFetch(src.url);
       used = src;
       break;
     } catch (e) {
@@ -1118,46 +1150,52 @@ async function fetchLive() {
 
 /* ════════════════ 모의 데이터 ════════════════ */
 let mockTrains = [];
-function mockInit() {
-  mockTrains = [];
-  const L_ = LINES[state.line];
+function spawnMock(lineName, count) {
+  const L_ = LINES[lineName];
   const allStations = [...new Set(L_.segments.flat())];
   const termini = L_.loop
     ? L_.segments.slice(1).flatMap(s => [s[0], s[s.length - 1]]).concat(["내선순환", "외선순환"])
     : L_.segments.flatMap(s => [s[0], s[s.length - 1]]);
-  const n = 10 + Math.floor(Math.random() * 5);
-  for (let i = 0; i < n; i++) {
+  for (let i = 0; i < count; i++) {
     const stn = allStations[Math.floor(Math.random() * allStations.length)];
     let term = termini[Math.floor(Math.random() * termini.length)];
     let loopDir = null;
     if (term === "내선순환") { loopDir = "0"; term = stn; }
     if (term === "외선순환") { loopDir = "1"; term = stn; }
     mockTrains.push({
-      trainNo: state.line[0] + String(1000 + Math.floor(Math.random() * 900)),
+      subwayNm: lineName,
+      trainNo: lineName[0] + String(1000 + Math.floor(Math.random() * 900)),
       statnNm: stn, statnTnm: term,
       trainSttus: String(Math.floor(Math.random() * 3)),
       updnLine: loopDir || String(Math.floor(Math.random() * 2)),
-      directAt: state.line === "9호선" && Math.random() < 0.3 ? "1" : "0",
+      directAt: lineName === "9호선" && Math.random() < 0.3 ? "1" : "0",
       lstcarAt: "0", _loop: loopDir !== null
     });
   }
+}
+function mockInit() {
+  mockTrains = [];
+  if (state.line === "ALL") for (const ln of Object.keys(LINES)) spawnMock(ln, 4);
+  else spawnMock(state.line, 10 + Math.floor(Math.random() * 5));
 }
 function mockStep() {
   for (const t of mockTrains) {
     const s = Number(t.trainSttus);
     if (s === 1) { t.trainSttus = "2"; continue; }
+    const ln = lineOfTrain(t);
+    const g = graphOf(ln);
     const cur = resolve(t.statnNm);
     let next = null;
-    if (t._loop && LINES[state.line].loop) {
-      const arr = LINES[state.line].segments[0].slice(0, -1);
+    if (t._loop && LINES[ln].loop) {
+      const arr = LINES[ln].segments[0].slice(0, -1);
       const idx = arr.indexOf(cur);
       if (idx >= 0) next = arr[(idx + (t.updnLine === "0" ? 1 : -1) + arr.length) % arr.length];
     } else {
-      const d = distMap(state.line, resolve(t.statnTnm));
-      if (d && cur && d[cur] > 0 && graph[cur]) for (const nb of graph[cur]) if (d[nb] != null && d[nb] < d[cur]) { next = nb; break; }
+      const d = distMap(ln, resolve(t.statnTnm));
+      if (d && cur && d[cur] > 0 && g[cur]) for (const nb of g[cur]) if (d[nb] != null && d[nb] < d[cur]) { next = nb; break; }
     }
     if (!next) {
-      const L_ = LINES[state.line];
+      const L_ = LINES[ln];
       const termini = L_.segments.flatMap(sg => [sg[0], sg[sg.length - 1]]).filter(x => x !== cur);
       t.statnTnm = termini[Math.floor(Math.random() * termini.length)];
       t.trainSttus = "1";
@@ -1175,7 +1213,9 @@ function mockStep() {
 function refresh() { state.mode === "live" ? fetchLive() : mockStep(); }
 function restartTimer() {
   clearInterval(state.timer);
-  state.timer = setInterval(refresh, state.mode === "mock" ? Math.min(state.intervalSec, 5) * 1000 : state.intervalSec * 1000);
+  let sec = state.mode === "mock" ? Math.min(state.intervalSec, 5) : state.intervalSec;
+  if (state.mode === "live" && state.line === "ALL") sec = Math.max(sec, 60); /* 전체 모드 호출량 보호 */
+  state.timer = setInterval(refresh, sec * 1000);
 }
 
 /* ════════════════ UI ════════════════ */
@@ -1192,15 +1232,14 @@ function toast(msg) {
 }
 function selectLine(name) {
   state.line = name;
-  graph = buildGraph(name);
-  for (const k in distCache) delete distCache[k];
   adapter.clearTrains();
   state.trains = [];
   drawLine(name);
-  adapter.setView(LINES[name].center, LINES[name].zoom);
+  const v = viewOf(name);
+  adapter.setView(v.center, v.zoom);
   document.querySelectorAll("#lineChips .chip").forEach(c => c.classList.toggle("on", c.dataset.line === name));
-  document.getElementById("panelTitle").textContent = name + " 운행 열차";
-  const isLoop = !!LINES[name].loop;
+  document.getElementById("panelTitle").textContent = name === "ALL" ? "전체 노선 운행 열차" : name + " 운행 열차";
+  const isLoop = name !== "ALL" && !!LINES[name].loop;
   document.getElementById("tabUp").textContent = isLoop ? "내선" : "상행";
   document.getElementById("tabDown").textContent = isLoop ? "외선" : "하행";
   if (state.mode === "mock") mockInit();
@@ -1226,7 +1265,7 @@ async function setProvider(p) {
     document.getElementById("map").innerHTML = "";
     state.mapProvider = p;
     adapter = next;
-    adapter.init(LINES[state.line].center, LINES[state.line].zoom);
+    adapter.init(viewOf(state.line).center, viewOf(state.line).zoom);
     drawLine(state.line);
     renderTrains();
     syncMapSeg();
@@ -1238,7 +1277,7 @@ async function setProvider(p) {
       document.getElementById("map").innerHTML = "";
       state.mapProvider = "basic";
       adapter = ADAPTERS.basic;
-      adapter.init(LINES[state.line].center, LINES[state.line].zoom);
+      adapter.init(viewOf(state.line).center, viewOf(state.line).zoom);
       drawLine(state.line);
       renderTrains();
       syncMapSeg();
@@ -1248,6 +1287,14 @@ async function setProvider(p) {
 
 /* 노선 칩 */
 const chipsEl = document.getElementById("lineChips");
+{
+  const b = document.createElement("button");
+  b.className = "chip"; b.dataset.line = "ALL";
+  b.style.setProperty("--c", ALL_VIEW.color);
+  b.innerHTML = `<span class="swatch"></span>전체`;
+  b.addEventListener("click", () => selectLine("ALL"));
+  chipsEl.appendChild(b);
+}
 for (const [name, def] of Object.entries(LINES)) {
   const b = document.createElement("button");
   b.className = "chip"; b.dataset.line = name;
@@ -1330,8 +1377,11 @@ document.getElementById("panelHead").addEventListener("click", () => {
 /* 시작 */
 document.querySelectorAll("#modeSeg button").forEach(b => b.classList.toggle("on", b.dataset.mode === state.mode));
 syncKeyField();
-adapter.init(LINES[state.line].center, LINES[state.line].zoom);
+adapter.init(viewOf(state.line).center, viewOf(state.line).zoom);
 selectLine(state.line);
+
+/* 네이버 지도 자동 시작 (진단으로 검증됨, 실패 시 기본 지도 자동 복구) */
+if (DEFAULT_NAVER_CLIENT_ID) setProvider("naver");
 
 /* 배포 환경 프록시 감지: 키가 없어도 /api/position 이 살아 있으면 실시간으로 자동 전환 */
 (async () => {
