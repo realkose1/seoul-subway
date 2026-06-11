@@ -1192,11 +1192,21 @@ function renderTrains() {
     if (!r) continue;
     seen.add(t.trainNo);
     const st = animState.get(t.trainNo);
-    const startPos = st ? st.cur : r.pos.slice();
-    adapter.upsertTrain(t.trainNo, startPos, t, r.heading);
+    let startPos = st ? st.cur.slice() : r.pos.slice();
+    let heading = r.heading;
+    const jump = distM(startPos, r.goal);
+    if (jump > 1200) {
+      /* 여러 역을 건너뛴 보정: 직선으로 가로지르면 노선을 벗어나므로 즉시 재배치 */
+      startPos = r.pos.slice();
+      adapter.moveTrain(t.trainNo, startPos);
+    } else if (jump > 30) {
+      /* 움직이는 동안의 방향은 실제 이동 벡터 기준 (노선과 항상 일치) */
+      heading = bearingDeg(startPos, r.goal);
+    }
+    adapter.upsertTrain(t.trainNo, startPos, t, heading);
     const d = distM(startPos, r.goal);
     const speed = Math.min(28, Math.max(3, d / dur)); /* m/s, 약 10~100km/h */
-    animState.set(t.trainNo, { no: t.trainNo, cur: startPos.slice(), goal: r.goal.slice(), speed, heading: r.heading, train: t });
+    animState.set(t.trainNo, { no: t.trainNo, cur: startPos.slice(), goal: r.goal.slice(), speed, heading, train: t });
   }
   adapter.prune(seen);
   for (const no of [...animState.keys()]) if (!seen.has(no)) animState.delete(no);
