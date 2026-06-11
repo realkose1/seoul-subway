@@ -893,14 +893,21 @@ const naverAdapter = {
   async ensure() {
     if (window.naver && window.naver.maps && !window.__naverAuthFailed) return true;
     if (!state.naverId) { toast("네이버 지도 클라이언트 ID를 먼저 입력해 주세요."); return false; }
+    /* 인증 실패가 뒤늦게 와도 빈 지도에 갇히지 않도록 자동 복귀 */
+    window.navermap_authFailure = () => {
+      window.__naverAuthFailed = true;
+      if (state.mapProvider === "naver") {
+        toast("네이버 지도 인증 실패. 기본 지도로 복귀합니다. NCP 콘솔의 Web 서비스 URL에 현재 사이트 주소를 등록해 주세요.");
+        setProvider("basic");
+      }
+    };
     /* 구형(AI·NAVER API: ncpClientId)과 신형(NCP Maps: ncpKeyId) 키를 모두 지원 */
     for (const param of ["ncpClientId", "ncpKeyId"]) {
       window.__naverAuthFailed = false;
-      window.navermap_authFailure = () => { window.__naverAuthFailed = true; };
       try {
         await loadScript(`https://oapi.map.naver.com/openapi/v3/maps.js?${param}=${encodeURIComponent(state.naverId)}`);
       } catch (e) { continue; }
-      await new Promise(r => setTimeout(r, 500)); /* 인증 콜백 대기 */
+      await new Promise(r => setTimeout(r, 1000)); /* 인증 콜백 대기 */
       if (window.naver && window.naver.maps && !window.__naverAuthFailed) return true;
     }
     toast("네이버 지도 인증에 실패했습니다. 콘솔의 Web 서비스 URL에 현재 주소가 등록되어 있는지 확인해 주세요.");
