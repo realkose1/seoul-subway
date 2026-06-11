@@ -30,7 +30,7 @@
     font-variant-numeric: tabular-nums;
     -webkit-font-smoothing: antialiased;
   }
-  #map { position: absolute; inset: 0; background: var(--bg); }
+  .maplayer { position: absolute; inset: 0; background: var(--bg); }
   .leaflet-container { background: var(--bg); font-family: var(--font); }
   .leaflet-control-attribution { background: rgba(13,14,16,.6) !important; color: var(--faint) !important; font-size: 10px; }
   .leaflet-control-attribution a { color: var(--muted) !important; }
@@ -331,7 +331,9 @@
 </style>
 </head>
 <body>
-<div id="map"></div>
+<div id="map-basic" class="maplayer"></div>
+<div id="map-naver" class="maplayer" style="display:none"></div>
+<div id="map-google" class="maplayer" style="display:none"></div>
 
 <div class="topbar">
   <div class="brand-card">
@@ -741,11 +743,13 @@ function loadScript(src) {
 
 /* ════════════════ 지도 어댑터: 기본(Leaflet) ════════════════ */
 const basicAdapter = {
+  containerId: "map-basic",
   map: null, lineLayer: null, stationLayer: null, labelLayer: null, trainLayer: null,
   markers: new Map(),
   async ensure() { return true; },
+  resize() { if (this.map) this.map.invalidateSize(); },
   init(center, zoom) {
-    this.map = L.map("map", { zoomControl: true }).setView(center, zoom);
+    this.map = L.map("map-basic", { zoomControl: true }).setView(center, zoom);
     this.map.zoomControl.setPosition("bottomleft");
     L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
       attribution: "&copy; OpenStreetMap &copy; CARTO", subdomains: "abcd", maxZoom: 19
@@ -813,7 +817,9 @@ const GOOGLE_DARK = [
   { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#51565e" }] }
 ];
 const googleAdapter = {
+  containerId: "map-google",
   map: null, shapes: [], stations: [], markers: new Map(), info: null, labelsOn: false,
+  resize() { if (this.map) google.maps.event.trigger(this.map, "resize"); },
   async ensure() {
     if (window.google && window.google.maps) return true;
     if (!state.googleKey) { toast("구글 지도 API 키를 먼저 입력해 주세요."); return false; }
@@ -828,7 +834,7 @@ const googleAdapter = {
     } catch (e) { toast("구글 지도를 불러오지 못했습니다: " + e.message); return false; }
   },
   init(center, zoom) {
-    this.map = new google.maps.Map(document.getElementById("map"), {
+    this.map = new google.maps.Map(document.getElementById("map-google"), {
       center: { lat: center[0], lng: center[1] }, zoom,
       styles: GOOGLE_DARK, backgroundColor: "#0d0e10",
       disableDefaultUI: true, zoomControl: true,
@@ -903,7 +909,9 @@ const googleAdapter = {
 
 /* ════════════════ 지도 어댑터: 네이버 ════════════════ */
 const naverAdapter = {
+  containerId: "map-naver",
   map: null, shapes: [], stations: [], labels: [], markers: new Map(), info: null, labelsOn: false,
+  resize() { if (this.map) naver.maps.Event.trigger(this.map, "resize"); },
   async ensure() {
     if (window.naver && window.naver.maps && !window.__naverAuthFailed) return true;
     if (!state.naverId) { toast("네이버 지도 클라이언트 ID를 먼저 입력해 주세요."); return false; }
@@ -929,7 +937,7 @@ const naverAdapter = {
     return false;
   },
   init(center, zoom) {
-    this.map = new naver.maps.Map("map", {
+    this.map = new naver.maps.Map("map-naver", {
       center: new naver.maps.LatLng(center[0], center[1]), zoom,
       mapDataControl: false, scaleControl: false,
       zoomControl: true, zoomControlOptions: { position: naver.maps.Position.LEFT_BOTTOM }
@@ -1250,12 +1258,9 @@ function selectLine(name) {
   restartTimer();
 }
 
-/* 지도 컨테이너를 깨끗한 새 div로 교체 (이전 지도 라이브러리의 잔여 클래스/스타일 제거) */
-function freshMapContainer() {
-  const old = document.getElementById("map");
-  const fresh = document.createElement("div");
-  fresh.id = "map";
-  old.replaceWith(fresh);
+/* 지도 레이어 표시 전환 (지도는 재생성하지 않고 상시 유지) */
+function showLayer(id) {
+  document.querySelectorAll(".maplayer").forEach(el => { el.style.display = el.id === id ? "block" : "none"; });
 }
 
 /* 지도 제공자 전환 */
@@ -1272,23 +1277,27 @@ async function setProvider(p) {
   const ok = await next.ensure();
   if (!ok) { syncMapSeg(); return; } /* 키 미입력 또는 로드 실패: 현재 지도 유지 */
   try {
-    adapter.destroy();
-    freshMapContainer();
+    const prev = adapter;
+    showLayer(next.containerId);
     state.mapProvider = p;
     adapter = next;
-    adapter.init(viewOf(state.line).center, viewOf(state.line).zoom);
+    if (adapter.map) adapter.resize();
+    else adapter.init(viewOf(state.line).center, viewOf(state.line).zoom);
+    if (prev !== adapter && prev.map) { prev.clearLine(); prev.clearTrains(); }
     drawLine(state.line);
     renderTrains();
+    adapter.setView(viewOf(state.line).center, viewOf(state.line).zoom);
     syncMapSeg();
     toast({ basic: "기본 지도로 전환했습니다.", google: "구글 지도로 전환했습니다.", naver: "네이버 지도로 전환했습니다." }[p]);
   } catch (e) {
     console.error("지도 전환 실패:", e);
     if (p !== "basic") {
       toast(`지도 전환 중 오류(${e.message}). 기본 지도로 복구합니다.`);
-      freshMapContainer();
+      showLayer("map-basic");
       state.mapProvider = "basic";
       adapter = ADAPTERS.basic;
-      adapter.init(viewOf(state.line).center, viewOf(state.line).zoom);
+      if (adapter.map) adapter.resize();
+      else adapter.init(viewOf(state.line).center, viewOf(state.line).zoom);
       drawLine(state.line);
       renderTrains();
       syncMapSeg();
