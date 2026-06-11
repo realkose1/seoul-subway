@@ -339,6 +339,7 @@
     border-radius: 11px;
     padding: 11px 18px;
     font-size: 12.5px;
+    width: max-content;
     max-width: calc(100vw - 40px);
     transition: transform .3s ease;
     text-align: center;
@@ -1614,6 +1615,7 @@ for (const [name, def] of Object.entries(LINES)) {
 const settingsPanel = document.getElementById("settingsPanel");
 document.getElementById("settingsBtn").addEventListener("click", () => settingsPanel.classList.toggle("open"));
 document.getElementById("mapSeg").addEventListener("click", e => {
+  if (window.innerWidth < 768) settingsPanel.classList.remove("open");
   const btn = e.target.closest("button"); if (!btn) return;
   setProvider(btn.dataset.map);
 });
