@@ -938,9 +938,7 @@ const naverAdapter = {
   },
   init(center, zoom) {
     this.map = new naver.maps.Map("map-naver", {
-      center: new naver.maps.LatLng(center[0], center[1]), zoom,
-      mapDataControl: false, scaleControl: false,
-      zoomControl: true, zoomControlOptions: { position: naver.maps.Position.LEFT_BOTTOM }
+      center: new naver.maps.LatLng(center[0], center[1]), zoom
     });
     this.info = new naver.maps.InfoWindow({
       content: "", borderWidth: 1, borderColor: "rgba(255,255,255,.15)",
@@ -954,7 +952,7 @@ const naverAdapter = {
     if (this.map) { this.map.destroy(); this.map = null; }
     this.shapes = []; this.stations = []; this.labels = []; this.markers.clear();
   },
-  setView(c, z) { this.map.morph(new naver.maps.LatLng(c[0], c[1]), z); },
+  setView(c, z) { this.map.setCenter(new naver.maps.LatLng(c[0], c[1])); this.map.setZoom(z); },
   clearLine() {
     this.shapes.forEach(s => s.setMap(null)); this.shapes = [];
     this.stations.forEach(s => s.setMap(null)); this.stations = [];
@@ -1021,7 +1019,8 @@ const naverAdapter = {
   focusTrain(no) {
     const m = this.markers.get(no);
     if (m) {
-      this.map.morph(m.getPosition(), Math.max(this.map.getZoom(), 13));
+      this.map.setCenter(m.getPosition());
+      this.map.setZoom(Math.max(this.map.getZoom(), 13));
       this.info.setContent(`<div class="naver-pp">${m._pp}</div>`);
       this.info.open(this.map, m);
     }

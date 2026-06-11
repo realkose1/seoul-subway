@@ -31,6 +31,11 @@
   <div id="resetwrap"><div id="navermap2" style="width:100%;height:240px;border-radius:8px;margin-top:10px;background:#222"></div></div>
 </div>
 <style>#resetwrap, #resetwrap * { margin: 0; padding: 0; box-sizing: border-box; }</style>
+<div class="test">
+  <div class="name">9. 네이버 지도 + 앱 동작 재현 (옵션·노선·마커·이동)<span class="wait" id="t9s">대기</span></div>
+  <div class="detail">앱이 하는 모든 동작을 그대로 수행합니다. 여기가 검다면 범인은 이 중에 있습니다.</div>
+  <div id="navermap3" style="width:100%;height:240px;border-radius:8px;margin-top:10px;background:#222"></div>
+</div>
 <script>
 document.getElementById("env").textContent = location.href + " · " + navigator.userAgent;
 const tests = [
@@ -104,6 +109,25 @@ tests.forEach(t => {
       new naver.maps.Map("navermap2", { center: new naver.maps.LatLng(37.5665, 126.9780), zoom: 12 });
       t8.textContent = "지도 생성됨 (박스 확인)"; t8.className = "ok";
     } catch (e) { t8.textContent = "생성 실패: " + e.message; t8.className = "fail"; }
+    const t9 = document.getElementById("t9s");
+    try {
+      const m3 = new naver.maps.Map("navermap3", {
+        center: new naver.maps.LatLng(37.5400, 126.9860), zoom: 11,
+        mapDataControl: false, scaleControl: false,
+        zoomControl: true, zoomControlOptions: { position: naver.maps.Position.LEFT_BOTTOM }
+      });
+      new naver.maps.Polyline({ map: m3, path: [
+        new naver.maps.LatLng(37.5647, 126.9771), new naver.maps.LatLng(37.5660, 126.9826),
+        new naver.maps.LatLng(37.5663, 126.9919), new naver.maps.LatLng(37.5651, 127.0079),
+        new naver.maps.LatLng(37.5615, 127.0377), new naver.maps.LatLng(37.5446, 127.0560)
+      ], strokeColor: "#00A84D", strokeWeight: 4, strokeOpacity: 0.85, strokeLineJoin: "round" });
+      for (let i = 0; i < 5; i++) {
+        new naver.maps.Marker({ map: m3, position: new naver.maps.LatLng(37.55 + i * 0.004, 126.98 + i * 0.01),
+          icon: { content: '<div style="width:20px;height:20px;border-radius:50%;background:#00A84D;border:2px solid #fff"></div>', anchor: new naver.maps.Point(10, 10) } });
+      }
+      setTimeout(() => { try { m3.morph(new naver.maps.LatLng(37.5400, 126.9860), 11); } catch (e) {} }, 800);
+      t9.textContent = "전부 수행됨 (박스 확인)"; t9.className = "ok";
+    } catch (e) { t9.textContent = "실패: " + e.message; t9.className = "fail"; }
   } else { t7.textContent = "스크립트 없음"; t7.className = "fail"; document.getElementById("t8s").textContent = "스크립트 없음"; }
   let verdict;
   if (results.t1 && results.t4) verdict = "페이지 내부 요청이 모두 정상입니다. 본 앱이 안 된다면 캐시 문제일 수 있으니 강력 새로고침(Ctrl+Shift+R)을 해보세요.";
