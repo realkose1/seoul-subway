@@ -31,6 +31,10 @@ python3 -m http.server 8000
 - 구글: Google Cloud Console에서 Maps JavaScript API 키 발급 후 `config.js` 에 입력
 - 네이버: 네이버 클라우드 플랫폼에서 Maps 이용 신청 후 클라이언트 ID 발급. 콘솔의 Web 서비스 URL에 `http://localhost:8000` 을 등록해야 인증이 통과됩니다.
 
+## Vercel 배포
+
+이 레포를 Vercel에 연결하면 `api/position.js` 가 서버리스 프록시로 자동 배포됩니다. Vercel 대시보드 → Settings → Environment Variables 에 `SUBWAY_API_KEY` 를 등록하고 재배포하면, 방문자는 키 입력 없이 바로 실시간 위치를 볼 수 있습니다. 키는 서버에만 존재하고 클라이언트에 노출되지 않습니다.
+
 ## 참고
 
 - 열차 위치는 역 단위 상태를 보간한 추정값으로, 실제 위치와 차이가 있을 수 있습니다.
