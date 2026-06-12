@@ -196,7 +196,7 @@
     position: absolute; z-index: 1100;
     left: 50%; transform: translateX(-50%);
     bottom: 20px;
-    width: min(360px, calc(100vw - 28px));
+    width: min(420px, calc(100vw - 28px));
     max-height: 46vh;
     background: var(--panel);
     backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
@@ -209,13 +209,20 @@
   .sc-btn { background: none; border: none; cursor: pointer; color: var(--muted); font-size: 14px; padding: 4px 6px; font-family: var(--font); }
   .sc-btn:hover { color: var(--text); }
   .sc-body { overflow-y: auto; padding: 0 8px 10px; }
-  .sc-row { display: flex; align-items: center; gap: 9px; padding: 8px; border-radius: 10px; }
+  .sc-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 6px; padding: 0 4px; }
+  .sc-col { min-width: 0; }
+  .sc-col + .sc-col { border-left: 1px solid rgba(255,255,255,.07); padding-left: 8px; }
+  .sc-colhead {
+    font-size: 11px; font-weight: 700; color: var(--muted);
+    padding: 2px 4px 7px; letter-spacing: .02em;
+  }
+  .sc-row { display: flex; align-items: flex-start; gap: 8px; padding: 7px 4px; }
   .sc-row + .sc-row { border-top: 1px solid rgba(255,255,255,.05); }
-  .sc-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .sc-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; margin-top: 4px; }
   .sc-main { flex: 1; min-width: 0; }
-  .sc-eta { font-size: 13px; font-weight: 700; }
+  .sc-eta { font-size: 13px; font-weight: 700; color: #f87171; }
   .sc-sub { font-size: 11.5px; color: var(--muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .sc-dir { font-size: 11px; font-weight: 700; color: var(--muted); flex: none; }
+  .sc-empty.small { padding: 10px 4px; text-align: left; font-size: 12px; }
   .sc-empty { padding: 18px; text-align: center; color: var(--muted); font-size: 12.5px; }
   @media (max-width: 767px) { .station-card { bottom: 66px; } }
 
@@ -1772,26 +1779,36 @@ async function fetchArrival(name) {
   addUsage(1);
   return list || [];
 }
+function arrivalRowHtml(a) {
+  return `
+    <div class="sc-row">
+      <span class="sc-dot" style="background:${colorOfArrival(a)}"></span>
+      <div class="sc-main">
+        <div class="sc-eta">${etaText(a)}</div>
+        <div class="sc-sub">${lineNameOfArrival(a)} · ${(a.trainLineNm || a.bstatnNm + "행").split(" - ")[0]}${a.btrainSttus === "급행" ? " · 급행" : ""}</div>
+      </div>
+    </div>`;
+}
+function arrivalColHtml(items, fallback) {
+  const label = items.length ? [...new Set(items.map(a => a.updnLine).filter(Boolean))].join(" · ") || fallback : fallback;
+  const rows = items.slice(0, 5).map(arrivalRowHtml).join("");
+  return `<div class="sc-col">
+    <div class="sc-colhead">${label}</div>
+    ${rows || `<div class="sc-empty small">예정 없음</div>`}
+  </div>`;
+}
 function renderArrival(list) {
   const body = document.getElementById("scBody");
-  if (!list.length) {
+  const valid = list
+    .filter(a => lineNameOfArrival(a))
+    .sort((x, y) => (Number(x.barvlDt) || 9999) - (Number(y.barvlDt) || 9999));
+  if (!valid.length) {
     body.innerHTML = `<div class="sc-empty">도착 예정 정보가 없습니다.<br>운행 시간이 아니거나 데이터가 비어 있을 수 있습니다.</div>`;
     return;
   }
-  const rows = list
-    .filter(a => lineNameOfArrival(a))
-    .sort((x, y) => (Number(x.barvlDt) || 9999) - (Number(y.barvlDt) || 9999))
-    .slice(0, 10)
-    .map(a => `
-      <div class="sc-row">
-        <span class="sc-dot" style="background:${colorOfArrival(a)}"></span>
-        <div class="sc-main">
-          <div class="sc-eta">${etaText(a)}</div>
-          <div class="sc-sub">${lineNameOfArrival(a)} · ${(a.trainLineNm || a.bstatnNm + "행").split(" - ")[0]}${a.btrainSttus === "급행" ? " · 급행" : ""}</div>
-        </div>
-        <span class="sc-dir">${a.updnLine || ""}</span>
-      </div>`).join("");
-  body.innerHTML = rows || `<div class="sc-empty">도착 예정 정보가 없습니다.</div>`;
+  const up = valid.filter(a => a.updnLine === "상행" || a.updnLine === "내선");
+  const down = valid.filter(a => a.updnLine === "하행" || a.updnLine === "외선");
+  body.innerHTML = `<div class="sc-cols">${arrivalColHtml(up, "상행")}${arrivalColHtml(down, "하행")}</div>`;
 }
 async function openStationCard(name) {
   scStation = name;
