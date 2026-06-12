@@ -1,7 +1,7 @@
 /* Vercel 서버리스 프록시: 인증키를 서버에만 두고 실시간 열차 위치를 중계합니다.
    Vercel 대시보드 → Settings → Environment Variables 에 SUBWAY_API_KEY 등록 필요 */
 
-const ALLOWED = new Set(["1호선", "2호선", "3호선", "4호선", "5호선", "6호선", "7호선", "8호선", "9호선"]);
+const ALLOWED = new Set(["1호선", "2호선", "3호선", "4호선", "5호선", "6호선", "7호선", "8호선", "9호선", "수인분당선", "신분당선", "경강선"]);
 
 async function callUpstream(scheme, key, line) {
   const url = `${scheme}://swopenapi.seoul.go.kr/api/subway/${key}/json/realtimePosition/0/200/${encodeURIComponent(line)}`;
