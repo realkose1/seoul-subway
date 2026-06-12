@@ -1800,7 +1800,7 @@ function etaText(a) {
   if (sec === 99998) return a.arvlMsg2 || "정보 없음";
   if (sec <= 10) return "지금 도착";
   const m = Math.floor(sec / 60), s = sec % 60;
-  const t = m > 0 ? `${m}분${s ? " " + s + "초" : ""} 후` : `${s}초 후`;
+  const t = m > 0 ? `${m}분${s ? " " + s + "초" : ""} 후 도착` : `${s}초 후 도착`;
   return real > 0 ? t : "약 " + t;
 }
 async function fetchArrival(name) {
