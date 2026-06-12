@@ -192,6 +192,33 @@
       border-radius: var(--radius);
     }
   }
+  .station-card {
+    position: absolute; z-index: 1100;
+    left: 50%; transform: translateX(-50%);
+    bottom: 20px;
+    width: min(360px, calc(100vw - 28px));
+    max-height: 46vh;
+    background: var(--panel);
+    backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--border); border-radius: 16px;
+    display: none; flex-direction: column; overflow: hidden;
+  }
+  .station-card.open { display: flex; }
+  .sc-head { display: flex; align-items: center; gap: 8px; padding: 13px 14px 9px; }
+  .sc-head h3 { font-size: 14px; font-weight: 700; flex: 1; }
+  .sc-btn { background: none; border: none; cursor: pointer; color: var(--muted); font-size: 14px; padding: 4px 6px; font-family: var(--font); }
+  .sc-btn:hover { color: var(--text); }
+  .sc-body { overflow-y: auto; padding: 0 8px 10px; }
+  .sc-row { display: flex; align-items: center; gap: 9px; padding: 8px; border-radius: 10px; }
+  .sc-row + .sc-row { border-top: 1px solid rgba(255,255,255,.05); }
+  .sc-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .sc-main { flex: 1; min-width: 0; }
+  .sc-eta { font-size: 13px; font-weight: 700; }
+  .sc-sub { font-size: 11.5px; color: var(--muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sc-dir { font-size: 11px; font-weight: 700; color: var(--muted); flex: none; }
+  .sc-empty { padding: 18px; text-align: center; color: var(--muted); font-size: 12.5px; }
+  @media (max-width: 767px) { .station-card { bottom: 66px; } }
+
   .list-fab { display: none; }
   @media (max-width: 767px) {
     .panel {
@@ -420,6 +447,15 @@
   <div class="panel-body" id="trainList">
     <div class="empty">데이터를 불러오는 중...</div>
   </div>
+</div>
+
+<div class="station-card" id="stationCard">
+  <div class="sc-head">
+    <h3 id="scTitle">역 도착 정보</h3>
+    <button class="sc-btn" id="scRefresh">새로고침</button>
+    <button class="sc-btn" id="scClose">&#10005;</button>
+  </div>
+  <div class="sc-body" id="scBody"></div>
 </div>
 
 <button class="list-fab" id="listFab">운행 열차</button>
@@ -842,6 +878,7 @@ const basicAdapter = {
   resize() { if (this.map) this.map.invalidateSize(); },
   init(center, zoom) {
     this.map = L.map("map-basic", { zoomControl: true }).setView(center, zoom);
+    this.map.on("click", e => onMapClick([e.latlng.lat, e.latlng.lng]));
     this.map.zoomControl.setPosition("bottomleft");
     L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
       attribution: "&copy; OpenStreetMap &copy; CARTO", subdomains: "abcd", maxZoom: 19
@@ -942,6 +979,7 @@ const googleAdapter = {
     });
     this.info = new google.maps.InfoWindow();
     this.map.addListener("zoom_changed", () => { this.syncLabels(); scheduleReIcon(); });
+    this.map.addListener("click", e => onMapClick([e.latLng.lat(), e.latLng.lng()]));
   },
   destroy() { this.shapes = []; this.stations = []; this.markers.clear(); this.map = null; },
   setView(c, z) { this.map.panTo({ lat: c[0], lng: c[1] }); this.map.setZoom(z); },
@@ -1060,6 +1098,7 @@ const naverAdapter = {
       anchorColor: "#141518", pixelOffset: new naver.maps.Point(0, -8)
     });
     naver.maps.Event.addListener(this.map, "zoom_changed", () => { this.syncLabels(); scheduleReIcon(); });
+    naver.maps.Event.addListener(this.map, "click", e => onMapClick([e.coord.lat(), e.coord.lng()]));
     setTimeout(() => { if (this.map) naver.maps.Event.trigger(this.map, "resize"); }, 300);
   },
   destroy() {
@@ -1684,6 +1723,102 @@ function togglePanel() {
   document.getElementById("panelMin").innerHTML = p.classList.contains("min") ? "&#9652;" : "&#9662;";
 }
 document.getElementById("panelHead").addEventListener("click", togglePanel);
+
+/* ════════════════ 역 도착 정보 ════════════════ */
+const SUBWAY_ID = {
+  1001: "1호선", 1002: "2호선", 1003: "3호선", 1004: "4호선", 1005: "5호선",
+  1006: "6호선", 1007: "7호선", 1008: "8호선", 1009: "9호선",
+  1063: "경의중앙선", 1065: "공항철도", 1067: "경춘선", 1075: "수인분당선",
+  1077: "신분당선", 1081: "경강선", 1092: "우이신설선", 1093: "서해선", 1094: "신림선"
+};
+const EXTRA_LINE_COLOR = {
+  "경의중앙선": "#77C4A3", "공항철도": "#0090D2", "경춘선": "#178C72", "수인분당선": "#FABE00",
+  "신분당선": "#D4003B", "경강선": "#003DA5", "우이신설선": "#B7C452", "서해선": "#8FC31F", "신림선": "#6789CA"
+};
+let scStation = null;
+function lineNameOfArrival(a) { return SUBWAY_ID[Number(a.subwayId)] || ""; }
+function colorOfArrival(a) {
+  const nm = lineNameOfArrival(a);
+  return (LINES[nm] && LINES[nm].color) || EXTRA_LINE_COLOR[nm] || "#8a8d93";
+}
+function etaText(a) {
+  const sec = Number(a.barvlDt) || 0;
+  if (sec > 0) {
+    const m = Math.floor(sec / 60), s = sec % 60;
+    return m > 0 ? `${m}분 ${s ? s + "초" : ""} 후`.trim() : `${s}초 후`;
+  }
+  return (a.arvlMsg2 || "정보 없음").replace(/\[(\d+)\]번째 전역/, "$1정거장 전");
+}
+async function fetchArrival(name) {
+  const tryOnce = async (stn) => {
+    let data = null;
+    if (location.protocol !== "file:") {
+      try { data = await tryFetch(`/api/arrival?station=${encodeURIComponent(stn)}`); } catch (e) { data = null; }
+    }
+    if (!data && state.apiKey) {
+      data = await tryFetch(`https://swopenapi.seoul.go.kr/api/subway/${encodeURIComponent(state.apiKey)}/json/realtimeStationArrival/0/40/${encodeURIComponent(stn)}`);
+    }
+    return data;
+  };
+  let data = await tryOnce(name);
+  let list = data && data.realtimeArrivalList;
+  /* 도착정보 API는 일부 역명이 다르다 (예: 서울 → 서울역) */
+  if ((!list || !list.length) && !name.endsWith("역")) {
+    try {
+      const d2 = await tryOnce(name + "역");
+      if (d2 && d2.realtimeArrivalList && d2.realtimeArrivalList.length) { data = d2; list = d2.realtimeArrivalList; }
+    } catch (e) {}
+  }
+  addUsage(1);
+  return list || [];
+}
+function renderArrival(list) {
+  const body = document.getElementById("scBody");
+  if (!list.length) {
+    body.innerHTML = `<div class="sc-empty">도착 예정 정보가 없습니다.<br>운행 시간이 아니거나 데이터가 비어 있을 수 있습니다.</div>`;
+    return;
+  }
+  const rows = list
+    .filter(a => lineNameOfArrival(a))
+    .sort((x, y) => (Number(x.barvlDt) || 9999) - (Number(y.barvlDt) || 9999))
+    .slice(0, 10)
+    .map(a => `
+      <div class="sc-row">
+        <span class="sc-dot" style="background:${colorOfArrival(a)}"></span>
+        <div class="sc-main">
+          <div class="sc-eta">${etaText(a)}</div>
+          <div class="sc-sub">${lineNameOfArrival(a)} · ${(a.trainLineNm || a.bstatnNm + "행").split(" - ")[0]}${a.btrainSttus === "급행" ? " · 급행" : ""}</div>
+        </div>
+        <span class="sc-dir">${a.updnLine || ""}</span>
+      </div>`).join("");
+  body.innerHTML = rows || `<div class="sc-empty">도착 예정 정보가 없습니다.</div>`;
+}
+async function openStationCard(name) {
+  scStation = name;
+  document.getElementById("scTitle").textContent = name;
+  document.getElementById("scBody").innerHTML = `<div class="sc-empty">불러오는 중...</div>`;
+  document.getElementById("stationCard").classList.add("open");
+  try { renderArrival(await fetchArrival(name)); }
+  catch (e) { document.getElementById("scBody").innerHTML = `<div class="sc-empty">도착 정보를 가져오지 못했습니다.<br>${e.message}</div>`; }
+}
+document.getElementById("scClose").addEventListener("click", () => {
+  document.getElementById("stationCard").classList.remove("open");
+  scStation = null;
+});
+document.getElementById("scRefresh").addEventListener("click", () => { if (scStation) openStationCard(scStation); });
+/* 지도 탭: 가까운 역 인식 (전체 모드 포함 어디서나) */
+function onMapClick(pos) {
+  if (!adapter.map || !adapter.getView) return;
+  const v = adapter.getView();
+  const mpp = 156543.03392 * Math.cos(pos[0] * Math.PI / 180) / Math.pow(2, v.zoom);
+  const thresholdM = 26 * mpp; /* 화면 26px 이내 */
+  let best = null, bestD = Infinity;
+  for (const [nm, c] of Object.entries(STN)) {
+    const d = distM(pos, c);
+    if (d < bestD) { bestD = d; best = nm; }
+  }
+  if (best && bestD <= thresholdM) openStationCard(best);
+}
 
 /* 일일 호출 추정 (이 기기 기준, 자정 리셋과 동일한 날짜 키) */
 function usageKey() { const d = new Date(); return `usage_${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; }
