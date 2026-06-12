@@ -923,9 +923,9 @@ const basicAdapter = {
     const len = trainSizePx(this.map);
     const icon = L.divIcon({ className: "", iconSize: [len, len], iconAnchor: [len / 2, len / 2], html: trainPinHtml(t, heading, len) });
     let m = this.markers.get(no);
-    if (m) { m.setIcon(icon); m.getPopup().setContent(popupHtml(t)); }
+    if (m) { m.setIcon(icon); }
     else {
-      m = L.marker(pos, { icon, zIndexOffset: 1000 }).bindPopup(popupHtml(t));
+      m = L.marker(pos, { icon, zIndexOffset: 1000, interactive: false });
       this.trainLayer.addLayer(m);
       this.markers.set(no, m);
     }
@@ -943,7 +943,7 @@ const basicAdapter = {
   clearTrains() { this.trainLayer.clearLayers(); this.markers.clear(); },
   focusTrain(no) {
     const m = this.markers.get(no);
-    if (m) { this.map.flyTo(m.getLatLng(), Math.max(this.map.getZoom(), 13), { duration: 0.6 }); m.openPopup(); }
+    if (m) { this.map.flyTo(m.getLatLng(), Math.max(this.map.getZoom(), 13), { duration: 0.6 }); openTrainCardByNo(no); }
   }
 };
 
@@ -1031,11 +1031,9 @@ const googleAdapter = {
     const lineColor = colorOfTrain(t);
     const icon = { path: trainSilhouettePath(trainSizePx(this.map)), scale: 1, rotation: heading || 0, fillColor: lineColor, fillOpacity: 1, strokeColor: "#fff", strokeWeight: isExpress(t) ? 1.8 : 1.1 };
     let m = this.markers.get(no);
-    if (m) { m.setIcon(icon); m._pp = popupHtml(t); }
+    if (m) { m.setIcon(icon); }
     else {
-      m = new google.maps.Marker({ map: this.map, position: { lat: pos[0], lng: pos[1] }, icon, zIndex: 100 });
-      m._pp = popupHtml(t);
-      m.addListener("click", () => { this.info.setContent(m._pp); this.info.open({ map: this.map, anchor: m }); });
+      m = new google.maps.Marker({ map: this.map, position: { lat: pos[0], lng: pos[1] }, icon, zIndex: 100, clickable: false });
       this.markers.set(no, m);
     }
   },
@@ -1055,7 +1053,7 @@ const googleAdapter = {
     const m = this.markers.get(no);
     if (m) {
       this.map.panTo(m.getPosition()); this.map.setZoom(Math.max(this.map.getZoom(), 13));
-      this.info.setContent(m._pp); this.info.open({ map: this.map, anchor: m });
+      openTrainCardByNo(no);
     }
   }
 };
@@ -1160,16 +1158,10 @@ const naverAdapter = {
     let m = this.markers.get(no);
     if (m) {
       m.setIcon({ content: trainPinHtml(t, heading, len), anchor: new naver.maps.Point(len / 2, len / 2) });
-      m._pp = popupHtml(t);
     } else {
       m = new naver.maps.Marker({
-        map: this.map, position: ll,
+        map: this.map, position: ll, clickable: false,
         icon: { content: trainPinHtml(t, heading, len), anchor: new naver.maps.Point(len / 2, len / 2) }, zIndex: 100
-      });
-      m._pp = popupHtml(t);
-      naver.maps.Event.addListener(m, "click", () => {
-        this.info.setContent(`<div class="naver-pp">${m._pp}</div>`);
-        this.info.open(this.map, m);
       });
       this.markers.set(no, m);
     }
@@ -1191,8 +1183,7 @@ const naverAdapter = {
     if (m) {
       this.map.setCenter(m.getPosition());
       this.map.setZoom(Math.max(this.map.getZoom(), 13));
-      this.info.setContent(`<div class="naver-pp">${m._pp}</div>`);
-      this.info.open(this.map, m);
+      openTrainCardByNo(no);
     }
   }
 };
@@ -1841,18 +1832,79 @@ document.getElementById("scClose").addEventListener("click", () => {
   scStation = null;
 });
 document.getElementById("scRefresh").addEventListener("click", () => { if (scStation) openStationCard(scStation); });
-/* 지도 탭: 가까운 역 인식 (전체 모드 포함 어디서나) */
+/* 열차 상세 카드 */
+function trainDetailHtml(t) {
+  return `
+    <div class="sc-row">
+      <span class="sc-dot" style="background:${colorOfTrain(t)}"></span>
+      <div class="sc-main">
+        <div class="sc-eta" style="color:var(--text)">${t.statnNm} ${STATUS_LABEL[String(t.trainSttus)] || ""}</div>
+        <div class="sc-sub">${lineOfTrain(t)} · ${dirLabel(t)} · ${t.statnTnm}행${isExpress(t) ? " · 급행" : ""}${t.lstcarAt === "1" ? " · 막차" : ""} · 열차 ${t.trainNo}</div>
+      </div>
+    </div>`;
+}
+function openTrainCardByNo(no) {
+  const t = state.trains.find(x => x.trainNo === no);
+  if (!t) return;
+  scStation = null;
+  document.getElementById("scTitle").textContent = `${lineOfTrain(t)} ${t.statnTnm}행`;
+  document.getElementById("scBody").innerHTML = trainDetailHtml(t);
+  document.getElementById("stationCard").classList.add("open");
+}
+/* 지도 탭: 주변의 역과 열차를 수집해 하나면 바로, 겹치면 선택 레이어 */
 function onMapClick(pos) {
   if (!adapter.map || !adapter.getView) return;
   const v = adapter.getView();
   const mpp = 156543.03392 * Math.cos(pos[0] * Math.PI / 180) / Math.pow(2, v.zoom);
-  const thresholdM = 26 * mpp; /* 화면 26px 이내 */
-  let best = null, bestD = Infinity;
+  /* 역 후보 */
+  let stn = null, stnD = Infinity;
   for (const [nm, c] of Object.entries(STN)) {
     const d = distM(pos, c);
-    if (d < bestD) { bestD = d; best = nm; }
+    if (d < stnD) { stnD = d; stn = nm; }
   }
-  if (best && bestD <= thresholdM) openStationCard(best);
+  if (!(stn && stnD <= 26 * mpp)) stn = null;
+  /* 열차 후보 (탭 지점 주변, 가까운 순 최대 4대) */
+  const trainHit = Math.max(20, trainSizePx(adapter.map) * 0.55) * mpp;
+  const trains = [...animState.values()]
+    .map(st => ({ st, d: distM(pos, st.cur) }))
+    .filter(x => x.d <= trainHit)
+    .sort((a, b) => a.d - b.d)
+    .slice(0, 4)
+    .map(x => x.st.train);
+  if (!stn && !trains.length) { document.getElementById("stationCard").classList.remove("open"); scStation = null; return; }
+  if (stn && !trains.length) return openStationCard(stn);
+  if (!stn && trains.length === 1) return openTrainCardByNo(trains[0].trainNo);
+  showChooser(stn, trains);
+}
+/* 역/열차 선택 레이어 */
+function showChooser(stn, trains) {
+  scStation = null;
+  document.getElementById("scTitle").textContent = "어느 정보를 볼까요?";
+  const rows = [];
+  if (stn) rows.push(`
+    <div class="sc-row sc-pick" data-pick="stn" data-v="${stn}">
+      <span class="sc-dot" style="background:#8a8d93"></span>
+      <div class="sc-main">
+        <div class="sc-eta" style="color:var(--text)">${stn}</div>
+        <div class="sc-sub">역 · 실시간 도착 정보 보기</div>
+      </div>
+    </div>`);
+  for (const t of trains) rows.push(`
+    <div class="sc-row sc-pick" data-pick="train" data-v="${t.trainNo}">
+      <span class="sc-dot" style="background:${colorOfTrain(t)}"></span>
+      <div class="sc-main">
+        <div class="sc-eta" style="color:var(--text)">${lineOfTrain(t)} ${t.statnTnm}행</div>
+        <div class="sc-sub">열차 · ${dirLabel(t)} · ${t.statnNm} ${STATUS_LABEL[String(t.trainSttus)] || ""}${isExpress(t) ? " · 급행" : ""}</div>
+      </div>
+    </div>`);
+  document.getElementById("scBody").innerHTML = rows.join("");
+  document.getElementById("stationCard").classList.add("open");
+  document.querySelectorAll("#scBody .sc-pick").forEach(el =>
+    el.addEventListener("click", () => {
+      if (el.dataset.pick === "stn") openStationCard(el.dataset.v);
+      else openTrainCardByNo(el.dataset.v);
+    })
+  );
 }
 
 /* 일일 호출 추정 (이 기기 기준, 자정 리셋과 동일한 날짜 키) */
