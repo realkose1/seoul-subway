@@ -1304,12 +1304,8 @@ function visibleLines() {
   return (hit.length === 0 || hit.length >= 9) ? null : hit;
 }
 function currentRefreshSec() {
-  let sec = state.mode === "mock" ? Math.min(state.intervalSec, 5) : state.intervalSec;
-  if (state.mode === "live" && state.line === "ALL") {
-    const sub = visibleLines();
-    sec = Math.max(sec, sub ? 60 : 120); /* 화면 노선만 조회 시 60초, 전체 9개 조회 시 120초 */
-  }
-  return sec;
+  if (state.mode === "mock") return 5;
+  return state.line === "ALL" ? 30 : 15; /* 활용사례 승인으로 한도 해제됨 */
 }
 const animState = new Map(); /* trainNo → { cur, goal, speed, heading, train } */
 const REDUCED_MOTION = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -1593,9 +1589,7 @@ function mockStep() {
 function refresh() { state.mode === "live" ? fetchLive() : mockStep(); }
 function restartTimer() {
   clearInterval(state.timer);
-  let sec = state.mode === "mock" ? Math.min(state.intervalSec, 5) : state.intervalSec;
-  if (state.mode === "live" && state.line === "ALL") sec = Math.max(sec, 60); /* 전체 모드 호출량 보호 */
-  state.timer = setInterval(refresh, sec * 1000);
+  state.timer = setInterval(refresh, currentRefreshSec() * 1000);
 }
 
 /* ════════════════ UI ════════════════ */
@@ -1793,11 +1787,12 @@ function etaSec(a) {
   if (cd === "2" || /^(당역 ?)?출발/.test(msg)) return 99999; /* 방금 떠남 */
   return 99998; /* 추정 불가 */
 }
-function etaText(a) {
+function etaText(a, elapsed = 0) {
   const real = Number(a.barvlDt) || 0;
-  const sec = etaSec(a);
+  let sec = etaSec(a);
   if (sec === 99999) return "방금 출발";
   if (sec === 99998) return a.arvlMsg2 || "정보 없음";
+  sec = Math.max(0, Math.round(sec - elapsed));
   if (sec <= 10) return "지금 도착";
   const m = Math.floor(sec / 60), s = sec % 60;
   const t = m > 0 ? `${m}분${s ? " " + s + "초" : ""} 후 도착` : `${s}초 후 도착`;
@@ -1826,25 +1821,25 @@ async function fetchArrival(name) {
   addUsage(1);
   return list || [];
 }
-function arrivalRowHtml(a) {
+function arrivalRowHtml(a, elapsed) {
   return `
     <div class="sc-row">
       <span class="sc-dot" style="background:${colorOfArrival(a)}"></span>
       <div class="sc-main">
-        <div class="sc-eta">${etaText(a)}</div>
+        <div class="sc-eta">${etaText(a, elapsed)}</div>
         <div class="sc-sub">${lineNameOfArrival(a)} · ${(a.trainLineNm || a.bstatnNm + "행").split(" - ")[0]}${a.btrainSttus === "급행" ? " · 급행" : ""}</div>
       </div>
     </div>`;
 }
-function arrivalColHtml(items, fallback) {
+function arrivalColHtml(items, fallback, elapsed) {
   const label = items.length ? [...new Set(items.map(a => a.updnLine).filter(Boolean))].join(" · ") || fallback : fallback;
-  const rows = items.slice(0, 5).map(arrivalRowHtml).join("");
+  const rows = items.slice(0, 5).map(a => arrivalRowHtml(a, elapsed)).join("");
   return `<div class="sc-col">
     <div class="sc-colhead">${label}</div>
     ${rows || `<div class="sc-empty small">예정 없음</div>`}
   </div>`;
 }
-function renderArrival(list) {
+function renderArrival(list, elapsed = 0) {
   const body = document.getElementById("scBody");
   const valid = list
     .filter(a => lineNameOfArrival(a))
@@ -1855,19 +1850,41 @@ function renderArrival(list) {
   }
   const up = valid.filter(a => a.updnLine === "상행" || a.updnLine === "내선");
   const down = valid.filter(a => a.updnLine === "하행" || a.updnLine === "외선");
-  body.innerHTML = `<div class="sc-cols">${arrivalColHtml(up, "상행")}${arrivalColHtml(down, "하행")}</div>`;
+  body.innerHTML = `<div class="sc-cols">${arrivalColHtml(up, "상행", elapsed)}${arrivalColHtml(down, "하행", elapsed)}</div>`;
+}
+let scList = [], scFetchedAt = 0, scTimer = null, scFetching = false;
+function stopScTimer() { clearInterval(scTimer); scTimer = null; }
+function scTick() {
+  if (!scStation) { stopScTimer(); return; }
+  const elapsed = (Date.now() - scFetchedAt) / 1000;
+  renderArrival(scList, elapsed);
+  /* 20초마다 자동 재조회 */
+  if (elapsed > 20 && !scFetching) {
+    scFetching = true;
+    fetchArrival(scStation)
+      .then(l => { if (!scStation) return; scList = l; scFetchedAt = Date.now(); renderArrival(scList, 0); })
+      .catch(() => {})
+      .finally(() => { scFetching = false; });
+  }
 }
 async function openStationCard(name) {
   scStation = name;
+  stopScTimer();
   document.getElementById("scTitle").textContent = name;
   document.getElementById("scBody").innerHTML = `<div class="sc-empty">불러오는 중...</div>`;
   document.getElementById("stationCard").classList.add("open");
-  try { renderArrival(await fetchArrival(name)); }
+  try {
+    scList = await fetchArrival(name);
+    scFetchedAt = Date.now();
+    renderArrival(scList, 0);
+    scTimer = setInterval(scTick, 1000);
+  }
   catch (e) { document.getElementById("scBody").innerHTML = `<div class="sc-empty">도착 정보를 가져오지 못했습니다.<br>${e.message}</div>`; }
 }
 document.getElementById("scClose").addEventListener("click", () => {
   document.getElementById("stationCard").classList.remove("open");
   scStation = null;
+  stopScTimer();
 });
 document.getElementById("scRefresh").addEventListener("click", () => { if (scStation) openStationCard(scStation); });
 /* 열차 상세 카드 */
@@ -1885,6 +1902,7 @@ function openTrainCardByNo(no) {
   const t = state.trains.find(x => x.trainNo === no);
   if (!t) return;
   scStation = null;
+  stopScTimer();
   document.getElementById("scTitle").textContent = `${lineOfTrain(t)} ${t.statnTnm}행`;
   document.getElementById("scBody").innerHTML = trainDetailHtml(t);
   document.getElementById("stationCard").classList.add("open");
@@ -1909,7 +1927,7 @@ function onMapClick(pos) {
     .sort((a, b) => a.d - b.d)
     .slice(0, 4)
     .map(x => x.st.train);
-  if (!stn && !trains.length) { document.getElementById("stationCard").classList.remove("open"); scStation = null; return; }
+  if (!stn && !trains.length) { document.getElementById("stationCard").classList.remove("open"); scStation = null; stopScTimer(); return; }
   if (stn && !trains.length) return openStationCard(stn);
   if (!stn && trains.length === 1) return openTrainCardByNo(trains[0].trainNo);
   showChooser(stn, trains);
@@ -1917,6 +1935,7 @@ function onMapClick(pos) {
 /* 역/열차 선택 레이어 */
 function showChooser(stn, trains) {
   scStation = null;
+  stopScTimer();
   document.getElementById("scTitle").textContent = "어느 정보를 볼까요?";
   const rows = [];
   if (stn) rows.push(`
@@ -1954,7 +1973,6 @@ function addUsage(n) {
     localStorage.setItem(k, String(v));
     const el = document.getElementById("usageToday");
     if (el) el.textContent = v + " / 1,000회";
-    if (v > 800 && !state._usageWarned) { state._usageWarned = true; toast("오늘 실시간 조회가 많아 갱신이 다소 뜸해질 수 있습니다. (일일 한도 보호)"); }
   } catch (e) {}
 }
 function showUsage() {

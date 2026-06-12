@@ -16,7 +16,7 @@ async function callUpstream(scheme, key, line) {
 }
 
 module.exports = async (req, res) => {
-  res.setHeader("Cache-Control", "s-maxage=25, stale-while-revalidate=40");
+  res.setHeader("Cache-Control", "s-maxage=10, stale-while-revalidate=20");
   const key = process.env.SUBWAY_API_KEY;
 
   /* 프록시 사용 가능 여부 확인용 (상위 API 호출 없음) */
@@ -30,7 +30,7 @@ module.exports = async (req, res) => {
   if (line === "ALL" || line.includes(",")) {
     const wanted = line === "ALL" ? [...ALLOWED] : line.split(",").filter(l => ALLOWED.has(l));
     if (!wanted.length) return res.status(400).json({ code: "ERROR-PARAM", message: "지원하지 않는 노선입니다." });
-    res.setHeader("Cache-Control", wanted.length >= 7 ? "s-maxage=110, stale-while-revalidate=120" : "s-maxage=50, stale-while-revalidate=60");
+    res.setHeader("Cache-Control", wanted.length >= 7 ? "s-maxage=25, stale-while-revalidate=30" : "s-maxage=15, stale-while-revalidate=20");
     const results = await Promise.allSettled(wanted.map(async (ln) => {
       try { return await callUpstream("http", key, ln); }
       catch (e) { return await callUpstream("https", key, ln); }
