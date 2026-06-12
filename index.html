@@ -1748,13 +1748,31 @@ function colorOfArrival(a) {
   const nm = lineNameOfArrival(a);
   return (LINES[nm] && LINES[nm].color) || EXTRA_LINE_COLOR[nm] || "#8a8d93";
 }
-function etaText(a) {
+/* 남은 시간(초) 추정: 실측값이 없으면 상태 코드와 전역 수로 역산 (역 간 평균 약 2분) */
+function etaSec(a) {
   const sec = Number(a.barvlDt) || 0;
-  if (sec > 0) {
-    const m = Math.floor(sec / 60), s = sec % 60;
-    return m > 0 ? `${m}분 ${s ? s + "초" : ""} 후`.trim() : `${s}초 후`;
-  }
-  return (a.arvlMsg2 || "정보 없음").replace(/\[(\d+)\]번째 전역/, "$1정거장 전");
+  if (sec > 0) return sec;
+  const msg = a.arvlMsg2 || "";
+  const m = msg.match(/\[(\d+)\]번째 전역/);
+  if (m) return Number(m[1]) * 120;
+  const cd = String(a.arvlCd != null ? a.arvlCd : "");
+  if (cd === "1" || /^(당역 ?)?도착/.test(msg)) return 5;
+  if (cd === "0" || /^(당역 ?)?진입/.test(msg)) return 30;
+  if (cd === "5" || /전역 ?도착/.test(msg)) return 110;
+  if (cd === "3" || /전역 ?출발/.test(msg)) return 120;
+  if (cd === "4" || /전역 ?진입/.test(msg)) return 150;
+  if (cd === "2" || /^(당역 ?)?출발/.test(msg)) return 99999; /* 방금 떠남 */
+  return 99998; /* 추정 불가 */
+}
+function etaText(a) {
+  const real = Number(a.barvlDt) || 0;
+  const sec = etaSec(a);
+  if (sec === 99999) return "방금 출발";
+  if (sec === 99998) return a.arvlMsg2 || "정보 없음";
+  if (sec <= 10) return "지금 도착";
+  const m = Math.floor(sec / 60), s = sec % 60;
+  const t = m > 0 ? `${m}분${s ? " " + s + "초" : ""} 후` : `${s}초 후`;
+  return real > 0 ? t : "약 " + t;
 }
 async function fetchArrival(name) {
   const tryOnce = async (stn) => {
@@ -1801,7 +1819,7 @@ function renderArrival(list) {
   const body = document.getElementById("scBody");
   const valid = list
     .filter(a => lineNameOfArrival(a))
-    .sort((x, y) => (Number(x.barvlDt) || 9999) - (Number(y.barvlDt) || 9999));
+    .sort((x, y) => etaSec(x) - etaSec(y));
   if (!valid.length) {
     body.innerHTML = `<div class="sc-empty">도착 예정 정보가 없습니다.<br>운행 시간이 아니거나 데이터가 비어 있을 수 있습니다.</div>`;
     return;
