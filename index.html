@@ -187,7 +187,7 @@
   }
   @media (min-width: 768px) {
     .panel {
-      top: 130px; right: 14px; bottom: 14px;
+      top: 14px; right: 14px; bottom: 14px;
       width: 300px;
       border-radius: var(--radius);
     }
@@ -440,11 +440,11 @@
   </div>
 </div>
 
-<div class="panel" id="trainPanel">
+<div class="panel min" id="trainPanel">
   <div class="panel-head" id="panelHead">
     <h2 id="panelTitle">운행 중인 열차</h2>
     <span class="count" id="panelCount"></span>
-    <button class="panel-min" id="panelMin" aria-label="접기">&#9662;</button>
+    <button class="panel-min" id="panelMin" aria-label="펼치기">&#9652;</button>
   </div>
   <div class="panel-tabs" id="dirTabs">
     <button data-dir="all" class="on">전체</button>
