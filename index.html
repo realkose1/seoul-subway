@@ -1306,6 +1306,7 @@ function reIconTrains() {
 
 /* ════════════════ 그리기 ════════════════ */
 function drawLine(lineName) {
+  if (!adapter.map) return; /* 지도 기동 전: 부트 완료 후 selectLine이 다시 그린다 */
   adapter.clearLine();
   if (lineName === "ALL") {
     document.documentElement.style.setProperty("--line", ALL_VIEW.color);
@@ -1334,6 +1335,7 @@ function drawLine(lineName) {
 }
 
 function renderTrains() {
+  if (!adapter.map) return; /* 지도 기동 전 */
   const seen = new Set();
   const dur = currentRefreshSec();
   updateTrackOffset();
