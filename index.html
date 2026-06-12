@@ -223,6 +223,14 @@
   .sc-eta { font-size: 13px; font-weight: 700; color: #f87171; }
   .sc-sub { font-size: 11.5px; color: var(--muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .sc-empty.small { padding: 10px 4px; text-align: left; font-size: 12px; }
+  .sc-follow {
+    margin: 6px 8px 8px; padding: 10px;
+    background: rgba(255,255,255,.08);
+    border: 1px solid var(--border); border-radius: 10px;
+    color: var(--text); font-family: var(--font); font-size: 12.5px; font-weight: 700;
+    cursor: pointer;
+  }
+  .sc-follow.on { background: #2f6fed; border-color: #2f6fed; }
   .sc-empty { padding: 18px; text-align: center; color: var(--muted); font-size: 12.5px; }
   @media (max-width: 767px) { .station-card { bottom: 66px; } }
 
@@ -459,6 +467,7 @@
 <div class="station-card" id="stationCard">
   <div class="sc-head">
     <h3 id="scTitle">역 도착 정보</h3>
+    <button class="sc-btn" id="scFav" aria-label="즐겨찾기">&#9734;</button>
     <button class="sc-btn" id="scRefresh">새로고침</button>
     <button class="sc-btn" id="scClose">&#10005;</button>
   </div>
@@ -752,6 +761,64 @@ LINES["경강선"] = {
   segments: [["판교","성남","이매","삼동","경기광주","초월","곤지암","신둔도예촌","이천","부발","세종대왕릉","여주"]]
 };
 
+/* ── 노선 곡선화: 역 좌표 기반 스플라인 보간 ── */
+const CURVES = {};
+function catmullRom(p0, p1, p2, p3, t) {
+  const t2 = t * t, t3 = t2 * t;
+  return [
+    0.5 * (2 * p1[0] + (-p0[0] + p2[0]) * t + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3),
+    0.5 * (2 * p1[1] + (-p0[1] + p2[1]) * t + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3)
+  ];
+}
+function lineCurves(ln) {
+  if (CURVES[ln]) return CURVES[ln];
+  const map = new Map();
+  for (const seg of LINES[ln].segments) {
+    const pts = seg.map(n => STN[n]);
+    for (let i = 0; i < seg.length - 1; i++) {
+      if (!pts[i] || !pts[i + 1]) continue;
+      const p0 = pts[i - 1] || pts[i], p3 = pts[i + 2] || pts[i + 1];
+      const mids = [];
+      for (let k = 1; k <= 5; k++) mids.push(catmullRom(p0, pts[i], pts[i + 1], p3, k / 6));
+      map.set(seg[i] + "|" + seg[i + 1], mids);
+    }
+  }
+  return (CURVES[ln] = map);
+}
+function curveMids(ln, a, b) {
+  const m = lineCurves(ln).get(a + "|" + b);
+  if (m) return m;
+  const r = lineCurves(ln).get(b + "|" + a);
+  return r ? [...r].slice().reverse() : [];
+}
+/* 곡선을 따라 a→b 구간의 비율 f 지점 좌표 */
+function curveLerp(ln, a, b, f) {
+  const pts = [STN[a], ...curveMids(ln, a, b), STN[b]];
+  let total = 0;
+  const d = [];
+  for (let i = 0; i < pts.length - 1; i++) { d.push(distM(pts[i], pts[i + 1])); total += d[i]; }
+  let target = total * Math.max(0, Math.min(1, f)), acc = 0;
+  for (let i = 0; i < d.length; i++) {
+    if (acc + d[i] >= target) return lerp(pts[i], pts[i + 1], d[i] ? (target - acc) / d[i] : 0);
+    acc += d[i];
+  }
+  return pts[pts.length - 1].slice();
+}
+/* a→b 곡선 중간점 중 비율 f 이전 것들만 */
+function curveMidsUntil(ln, a, b, f) {
+  const mids = curveMids(ln, a, b);
+  const n = Math.floor(f * (mids.length + 1));
+  return mids.slice(0, Math.max(0, Math.min(mids.length, n)));
+}
+function smoothSeg(ln, seg) {
+  const out = [];
+  for (let i = 0; i < seg.length; i++) {
+    if (STN[seg[i]]) out.push(STN[seg[i]]);
+    if (i < seg.length - 1 && STN[seg[i]] && STN[seg[i + 1]]) out.push(...curveMids(ln, seg[i], seg[i + 1]));
+  }
+  return out;
+}
+
 const GRAPHS = {};
 function graphOf(lineName) { return GRAPHS[lineName] || (GRAPHS[lineName] = buildGraph(lineName)); }
 const ALL_VIEW = { center: [37.5400, 126.9860], zoom: 11, color: "#8a8d93" };
@@ -831,9 +898,9 @@ function trainCoord(t) {
   const C = STN[cur];
   const s = String(t.trainSttus);
   let pos = C, goal = C, hFrom = null, hTo = null;
-  if (s === "0" && prev) { pos = lerp(STN[prev], C, 0.78); goal = C; hFrom = prev; hTo = cur; }
-  else if (s === "3" && prev) { pos = lerp(STN[prev], C, 0.5); goal = lerp(STN[prev], C, 0.92); hFrom = prev; hTo = cur; }
-  else if (s === "2" && next) { pos = lerp(C, STN[next], 0.22); goal = lerp(C, STN[next], 0.9); hFrom = cur; hTo = next; }
+  if (s === "0" && prev) { pos = curveLerp(ln, prev, cur, 0.78); goal = C; hFrom = prev; hTo = cur; }
+  else if (s === "3" && prev) { pos = curveLerp(ln, prev, cur, 0.5); goal = curveLerp(ln, prev, cur, 0.92); hFrom = prev; hTo = cur; }
+  else if (s === "2" && next) { pos = curveLerp(ln, cur, next, 0.22); goal = curveLerp(ln, cur, next, 0.9); hFrom = cur; hTo = next; }
   else { /* 도착: 정차 */ if (next) { hFrom = cur; hTo = next; } else if (prev) { hFrom = prev; hTo = cur; } }
   const heading = hFrom && hTo ? bearingDeg(STN[hFrom], STN[hTo]) : 0;
   return { pos, goal, heading, anchor: hTo || cur };
@@ -924,6 +991,7 @@ const basicAdapter = {
   init(center, zoom) {
     this.map = L.map("map-basic", { zoomControl: true }).setView(center, zoom);
     this.map.on("click", e => onMapClick([e.latlng.lat, e.latlng.lng]));
+    this.map.on("dragstart", () => stopFollow());
     this.map.zoomControl.setPosition("bottomleft");
     L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
       attribution: "&copy; OpenStreetMap &copy; CARTO", subdomains: "abcd", maxZoom: 19
@@ -1025,6 +1093,7 @@ const googleAdapter = {
     this.info = new google.maps.InfoWindow();
     this.map.addListener("zoom_changed", () => { this.syncLabels(); scheduleReIcon(); });
     this.map.addListener("click", e => onMapClick([e.latLng.lat(), e.latLng.lng()]));
+    this.map.addListener("dragstart", () => stopFollow());
   },
   destroy() { this.shapes = []; this.stations = []; this.markers.clear(); this.map = null; },
   setView(c, z) { this.map.panTo({ lat: c[0], lng: c[1] }); this.map.setZoom(z); },
@@ -1142,6 +1211,7 @@ const naverAdapter = {
     });
     naver.maps.Event.addListener(this.map, "zoom_changed", () => { this.syncLabels(); scheduleReIcon(); });
     naver.maps.Event.addListener(this.map, "click", e => onMapClick([e.coord.lat(), e.coord.lng()]));
+    naver.maps.Event.addListener(this.map, "dragstart", () => stopFollow());
     setTimeout(() => { if (this.map) naver.maps.Event.trigger(this.map, "resize"); }, 300);
   },
   destroy() {
@@ -1346,6 +1416,16 @@ setInterval(() => {
     }
     if (moved) adapter.moveTrain(st.no, offsetLeft(st.cur, st.heading, trackOffM));
   }
+  /* 추적 모드: 따라가는 열차로 시점 이동 */
+  if (state.followNo) {
+    const st = animState.get(state.followNo);
+    if (!st) stopFollow();
+    else if (!window.__lastFollowPan || performance.now() - window.__lastFollowPan > 400) {
+      window.__lastFollowPan = performance.now();
+      const v = adapter.getView();
+      adapter.setView(offsetLeft(st.cur, st.heading, trackOffM), v.zoom);
+    }
+  }
 }, 120);
 let reIconTimer;
 function scheduleReIcon() { clearTimeout(reIconTimer); reIconTimer = setTimeout(reIconTrains, 160); }
@@ -1362,9 +1442,9 @@ function drawLine(lineName) {
   adapter.clearLine();
   if (lineName === "ALL") {
     document.documentElement.style.setProperty("--line", ALL_VIEW.color);
-    for (const def of Object.values(LINES)) {
+    for (const [nm, def] of Object.entries(LINES)) {
       for (const seg of def.segments) {
-        adapter.addPolyline(seg.map(n => STN[n]).filter(Boolean), def.color);
+        adapter.addPolyline(smoothSeg(nm, seg), def.color);
       }
     }
     return;
@@ -1377,7 +1457,7 @@ function drawLine(lineName) {
     if (!L_.loop || seg !== L_.segments[0]) { termini.add(seg[0]); termini.add(seg[seg.length - 1]); }
   }
   for (const seg of L_.segments) {
-    adapter.addPolyline(seg.map(n => STN[n]).filter(Boolean), L_.color);
+    adapter.addPolyline(smoothSeg(lineName, seg), L_.color);
     for (const n of seg) {
       if (drawn.has(n) || !STN[n]) continue;
       drawn.add(n);
@@ -1402,7 +1482,17 @@ function renderTrains() {
       const sp = stationPath(lineOfTrain(t), st.anchor, r.anchor);
       if (sp && sp.length <= 4) {
         route = [];
-        for (let i = 0; i < sp.length - 1; i++) { const c = STN[sp[i]]; if (c) route.push(c.slice()); }
+        for (let i = 0; i < sp.length - 1; i++) {
+          const c = STN[sp[i]]; if (!c) continue;
+          route.push(c.slice());
+          if (i < sp.length - 2) route.push(...curveMids(lineOfTrain(t), sp[i], sp[i + 1]).map(p => p.slice()));
+          else {
+            /* 마지막 구간: goal 직전까지의 곡선 중간점 */
+            const segLen = distM(STN[sp[i]], STN[sp[i + 1]] || r.goal) || 1;
+            const f = Math.min(1, distM(STN[sp[i]], r.goal) / segLen);
+            if (STN[sp[i + 1]]) route.push(...curveMidsUntil(lineOfTrain(t), sp[i], sp[i + 1], f).map(p => p.slice()));
+          }
+        }
         route.push(r.goal.slice());
       }
     }
@@ -1606,6 +1696,7 @@ function toast(msg) {
 }
 function selectLine(name) {
   state.line = name;
+  stopFollow();
   adapter.clearTrains();
   animState.clear();
   state.trains = [];
@@ -1873,6 +1964,7 @@ async function openStationCard(name) {
   document.getElementById("scTitle").textContent = name;
   document.getElementById("scBody").innerHTML = `<div class="sc-empty">불러오는 중...</div>`;
   document.getElementById("stationCard").classList.add("open");
+  syncFavBtn();
   try {
     scList = await fetchArrival(name);
     scFetchedAt = Date.now();
@@ -1887,6 +1979,23 @@ document.getElementById("scClose").addEventListener("click", () => {
   stopScTimer();
 });
 document.getElementById("scRefresh").addEventListener("click", () => { if (scStation) openStationCard(scStation); });
+/* 즐겨찾는 역: 별을 켜두면 다음 접속 때 자동으로 도착 카드가 열린다 */
+function favList() { try { return JSON.parse(localStorage.getItem("favStations") || "[]"); } catch (e) { return []; } }
+function syncFavBtn() {
+  const b = document.getElementById("scFav");
+  b.style.display = scStation ? "" : "none";
+  b.innerHTML = scStation && favList().includes(scStation) ? "&#9733;" : "&#9734;";
+  b.style.color = scStation && favList().includes(scStation) ? "#fbbf24" : "";
+}
+document.getElementById("scFav").addEventListener("click", () => {
+  if (!scStation) return;
+  let f = favList();
+  if (f.includes(scStation)) f = f.filter(x => x !== scStation);
+  else f = [scStation, ...f].slice(0, 5);
+  try { localStorage.setItem("favStations", JSON.stringify(f)); } catch (e) {}
+  syncFavBtn();
+  toast(favList().includes(scStation) ? `${scStation}역을 즐겨찾기에 추가했습니다. 접속하면 자동으로 열립니다.` : `${scStation}역 즐겨찾기를 해제했습니다.`);
+});
 /* 열차 상세 카드 */
 function trainDetailHtml(t) {
   return `
@@ -1903,9 +2012,28 @@ function openTrainCardByNo(no) {
   if (!t) return;
   scStation = null;
   stopScTimer();
+  syncFavBtn();
   document.getElementById("scTitle").textContent = `${lineOfTrain(t)} ${t.statnTnm}행`;
-  document.getElementById("scBody").innerHTML = trainDetailHtml(t);
+  const following = state.followNo === no;
+  document.getElementById("scBody").innerHTML = trainDetailHtml(t) +
+    `<button class="sc-follow${following ? " on" : ""}" id="scFollow">${following ? "따라가기 해제" : "이 열차 따라가기"}</button>`;
   document.getElementById("stationCard").classList.add("open");
+  document.getElementById("scFollow").addEventListener("click", () => {
+    if (state.followNo === no) stopFollow();
+    else {
+      state.followNo = no;
+      const st = animState.get(no);
+      if (st) adapter.setView(offsetLeft(st.cur, st.heading, trackOffM), Math.max(adapter.getView().zoom, 14));
+      toast("열차를 따라갑니다. 지도를 드래그하면 해제됩니다.");
+    }
+    openTrainCardByNo(no);
+  });
+}
+function stopFollow() {
+  if (!state.followNo) return;
+  state.followNo = null;
+  const btn = document.getElementById("scFollow");
+  if (btn) { btn.classList.remove("on"); btn.textContent = "이 열차 따라가기"; }
 }
 /* 지도 탭: 주변의 역과 열차를 수집해 하나면 바로, 겹치면 선택 레이어 */
 function onMapClick(pos) {
@@ -2003,6 +2131,8 @@ syncKeyField();
 adapter.init(viewOf(state.line).center, viewOf(state.line).zoom);
 selectLine(state.line);
 showUsage();
+/* 즐겨찾는 역이 있으면 자동으로 도착 카드 열기 */
+setTimeout(() => { const f = favList(); if (f[0]) openStationCard(f[0]); }, 800);
 
 /* 네이버 지도 자동 시작 (진단으로 검증됨, 실패 시 기본 지도 자동 복구) */
 if (DEFAULT_NAVER_CLIENT_ID) setProvider("naver");
