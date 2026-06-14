@@ -232,6 +232,25 @@
   .sc-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 6px; padding: 0 4px; }
   .sc-col { min-width: 0; }
   .sc-col + .sc-col { border-left: 1px solid rgba(255,255,255,.07); padding-left: 8px; }
+  .sc-tt-btn { width: 100%; margin-top: 8px; padding: 7px; background: rgba(255,255,255,.06); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-family: var(--font); font-size: 11.5px; font-weight: 600; cursor: pointer; }
+  .sc-tt-btn:hover { background: rgba(255,255,255,.12); }
+  .tt-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 4px 8px; }
+  .sc-back { background: none; border: none; color: var(--muted); font-family: var(--font); font-size: 12.5px; font-weight: 600; cursor: pointer; padding: 4px 2px; }
+  .sc-back:hover { color: var(--text); }
+  .tt-weeks { display: flex; gap: 3px; background: rgba(255,255,255,.05); border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
+  .tt-weeks button { background: none; border: none; border-radius: 6px; color: var(--muted); font-family: var(--font); font-size: 11px; font-weight: 600; padding: 4px 7px; cursor: pointer; }
+  .tt-weeks button.on { background: var(--line); color: #fff; }
+  .tt-dir { font-size: 11px; color: var(--muted); padding: 0 4px 6px; }
+  .tt-sec { padding: 0 4px; }
+  .tt-line { font-size: 12px; font-weight: 700; padding: 6px 0 4px; display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+  .tt-meta { font-size: 10.5px; color: var(--muted); font-weight: 500; }
+  .tt-list { max-height: 30vh; overflow-y: auto; }
+  .tt-row { display: flex; align-items: center; gap: 8px; padding: 5px 4px; font-size: 12.5px; border-top: 1px solid rgba(255,255,255,.05); }
+  .tt-row.next { background: rgba(255,255,255,.07); border-radius: 6px; border-top-color: transparent; }
+  .tt-time { font-weight: 700; font-variant-numeric: tabular-nums; width: 44px; flex: none; }
+  .tt-dest { flex: 1; min-width: 0; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tt-row.next .tt-dest { color: var(--text); }
+  .tt-tag { font-size: 10px; font-weight: 700; color: var(--line); flex: none; }
   .sc-colhead {
     font-size: 11px; font-weight: 700; color: var(--muted);
     padding: 2px 4px 7px; letter-spacing: .02em;
@@ -1781,12 +1800,13 @@ function arrivalRowHtml(a, elapsed) {
       </div>
     </div>`;
 }
-function arrivalColHtml(items, fallback, elapsed) {
+function arrivalColHtml(items, fallback, elapsed, inout) {
   const label = items.length ? [...new Set(items.map(a => a.updnLine).filter(Boolean))].join(" · ") || fallback : fallback;
   const rows = items.slice(0, 5).map(a => arrivalRowHtml(a, elapsed)).join("");
   return `<div class="sc-col">
     <div class="sc-colhead">${label}</div>
     ${rows || `<div class="sc-empty small">예정 없음</div>`}
+    <button class="sc-tt-btn" data-inout="${inout}">시간표 보기</button>
   </div>`;
 }
 function renderArrival(list, elapsed = 0) {
@@ -1794,18 +1814,16 @@ function renderArrival(list, elapsed = 0) {
   const valid = list
     .filter(a => lineNameOfArrival(a))
     .sort((x, y) => etaSec(x) - etaSec(y));
-  if (!valid.length) {
-    body.innerHTML = `<div class="sc-empty">도착 예정 정보가 없습니다.<br>운행 시간이 아니거나 데이터가 비어 있을 수 있습니다.</div>`;
-    return;
-  }
   const up = valid.filter(a => a.updnLine === "상행" || a.updnLine === "내선");
   const down = valid.filter(a => a.updnLine === "하행" || a.updnLine === "외선");
-  body.innerHTML = `<div class="sc-cols">${arrivalColHtml(up, "상행", elapsed)}${arrivalColHtml(down, "하행", elapsed)}</div>`;
+  body.innerHTML = `<div class="sc-cols">${arrivalColHtml(up, "상행", elapsed, "1")}${arrivalColHtml(down, "하행", elapsed, "2")}</div>`;
+  body.querySelectorAll(".sc-tt-btn").forEach(b => b.addEventListener("click", () => openTimetable(scStation, b.dataset.inout)));
 }
-let scList = [], scFetchedAt = 0, scTimer = null, scFetching = false;
+let scList = [], scFetchedAt = 0, scTimer = null, scFetching = false, scMode = "arrival", ttCtx = null;
 function stopScTimer() { clearInterval(scTimer); scTimer = null; }
 function scTick() {
   if (!scStation) { stopScTimer(); return; }
+  if (scMode !== "arrival") return; /* 시간표 보는 중엔 도착정보로 덮어쓰지 않음 */
   const elapsed = (Date.now() - scFetchedAt) / 1000;
   renderArrival(scList, elapsed);
   /* 20초마다 자동 재조회 */
@@ -1819,6 +1837,7 @@ function scTick() {
 }
 async function openStationCard(name) {
   scStation = name;
+  scMode = "arrival";
   stopScTimer();
   document.getElementById("scTitle").textContent = name;
   document.getElementById("scBody").innerHTML = `<div class="sc-empty">불러오는 중...</div>`;
@@ -1835,15 +1854,82 @@ async function openStationCard(name) {
 document.getElementById("scClose").addEventListener("click", () => {
   document.getElementById("stationCard").classList.remove("open");
   scStation = null;
+  scMode = "arrival";
   stopScTimer();
 });
 document.getElementById("scRefresh").addEventListener("click", () => {
-  if (!scStation) return;
   const btn = document.getElementById("scRefresh");
   if (btn.classList.contains("spinning")) return;
+  let p = null;
+  if (scMode === "timetable" && ttCtx) p = openTimetable(ttCtx.name, ttCtx.inout, ttCtx.week);
+  else if (scStation) p = openStationCard(scStation);
+  else return;
   btn.classList.add("spinning");
-  Promise.resolve(openStationCard(scStation)).finally(() => setTimeout(() => btn.classList.remove("spinning"), 450));
+  Promise.resolve(p).finally(() => setTimeout(() => btn.classList.remove("spinning"), 450));
 });
+
+/* ════════════════ 역 시간표 ════════════════ */
+const WEEK_LABEL = { "1": "평일", "2": "토요일", "3": "일·공휴일" };
+function weekTagToday() { const d = new Date().getDay(); return d === 0 ? "3" : d === 6 ? "2" : "1"; }
+function nowHHMM() { const d = new Date(); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); }
+async function openTimetable(name, inout, week) {
+  if (!name) return;
+  scMode = "timetable";
+  stopScTimer();
+  week = week || (ttCtx && ttCtx.name === name && ttCtx.week) || weekTagToday();
+  ttCtx = { name, inout, week };
+  document.getElementById("scTitle").textContent = name + " 시간표";
+  document.getElementById("scBody").innerHTML = `<div class="sc-empty">시간표 불러오는 중...</div>`;
+  document.getElementById("stationCard").classList.add("open");
+  try {
+    const r = await fetch(`/api/timetable?name=${encodeURIComponent(name)}&week=${week}&inout=${inout}`);
+    const data = await r.json();
+    if (!r.ok || data.code) throw new Error(data.message || "시간표 오류");
+    renderTimetable(data);
+  } catch (e) {
+    document.getElementById("scBody").innerHTML =
+      `<div class="tt-head"><button class="sc-back" id="ttBack">← 도착 정보</button></div>
+       <div class="sc-empty">시간표를 가져오지 못했습니다.<br>${e.message}</div>`;
+    wireTtControls();
+  }
+}
+function renderTimetable(data) {
+  const body = document.getElementById("scBody");
+  const week = data.week, inout = data.inout;
+  const dirText = inout === "1" ? "상행 · 내선" : "하행 · 외선";
+  const now = nowHHMM(), isToday = week === weekTagToday();
+  const sections = (data.lines || []).map(ln => {
+    const trains = ln.trains || [];
+    if (!trains.length) return `<div class="tt-sec"><div class="tt-line">${ln.lineNum}</div><div class="sc-empty small">이 방향 시간표가 없습니다.</div></div>`;
+    const first = trains[0].left, last = trains[trains.length - 1].left;
+    const nextIdx = isToday ? trains.findIndex(t => t.left >= now) : -1;
+    const rows = trains.map((t, i) => `<div class="tt-row${i === nextIdx ? " next" : ""}">
+        <span class="tt-time">${t.left}</span>
+        <span class="tt-dest">${t.dest}행${t.express ? ' <span class="badge express">급행</span>' : ""}</span>
+        ${i === nextIdx ? '<span class="tt-tag">다음</span>' : ""}
+      </div>`).join("");
+    return `<div class="tt-sec">
+      <div class="tt-line">${ln.lineNum}<span class="tt-meta">첫차 ${first} · 막차 ${last}</span></div>
+      <div class="tt-list">${rows}</div>
+    </div>`;
+  }).join("") || `<div class="sc-empty">시간표 정보가 없습니다.</div>`;
+  body.innerHTML = `
+    <div class="tt-head">
+      <button class="sc-back" id="ttBack">← 도착 정보</button>
+      <div class="tt-weeks">${["1", "2", "3"].map(w => `<button data-w="${w}" class="${w === week ? "on" : ""}">${WEEK_LABEL[w]}</button>`).join("")}</div>
+    </div>
+    <div class="tt-dir">${dirText}</div>
+    ${sections}`;
+  wireTtControls();
+  const nx = body.querySelector(".tt-row.next");
+  if (nx) nx.scrollIntoView({ block: "center" });
+}
+function wireTtControls() {
+  const back = document.getElementById("ttBack");
+  if (back) back.addEventListener("click", () => { if (ttCtx) openStationCard(ttCtx.name); });
+  document.querySelectorAll(".tt-weeks button").forEach(b =>
+    b.addEventListener("click", () => { if (ttCtx) openTimetable(ttCtx.name, ttCtx.inout, b.dataset.w); }));
+}
 /* 즐겨찾는 역: 별을 켜두면 다음 접속 때 자동으로 도착 카드가 열린다 */
 function favList() { try { return JSON.parse(localStorage.getItem("favStations") || "[]"); } catch (e) { return []; } }
 function syncFavBtn() {
