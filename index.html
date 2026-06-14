@@ -226,6 +226,8 @@
   .sc-head h3 { font-size: 14px; font-weight: 700; flex: 1; }
   .sc-btn { background: none; border: none; cursor: pointer; color: var(--muted); font-size: 14px; padding: 4px 6px; font-family: var(--font); }
   .sc-btn:hover { color: var(--text); }
+  #scRefresh { display: inline-flex; align-items: center; }
+  #scRefresh.spinning svg { animation: spin .7s linear infinite; }
   .sc-body { overflow-y: auto; padding: 0 8px 10px; }
   .sc-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 6px; padding: 0 4px; }
   .sc-col { min-width: 0; }
@@ -457,7 +459,7 @@
   <div class="sc-head">
     <h3 id="scTitle">역 도착 정보</h3>
     <button class="sc-btn" id="scFav" aria-label="즐겨찾기">&#9734;</button>
-    <button class="sc-btn" id="scRefresh">새로고침</button>
+    <button class="sc-btn" id="scRefresh" aria-label="새로고침" title="새로고침"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
     <button class="sc-btn" id="scClose">&#10005;</button>
   </div>
   <div class="sc-body" id="scBody"></div>
@@ -1835,7 +1837,13 @@ document.getElementById("scClose").addEventListener("click", () => {
   scStation = null;
   stopScTimer();
 });
-document.getElementById("scRefresh").addEventListener("click", () => { if (scStation) openStationCard(scStation); });
+document.getElementById("scRefresh").addEventListener("click", () => {
+  if (!scStation) return;
+  const btn = document.getElementById("scRefresh");
+  if (btn.classList.contains("spinning")) return;
+  btn.classList.add("spinning");
+  Promise.resolve(openStationCard(scStation)).finally(() => setTimeout(() => btn.classList.remove("spinning"), 450));
+});
 /* 즐겨찾는 역: 별을 켜두면 다음 접속 때 자동으로 도착 카드가 열린다 */
 function favList() { try { return JSON.parse(localStorage.getItem("favStations") || "[]"); } catch (e) { return []; } }
 function syncFavBtn() {
