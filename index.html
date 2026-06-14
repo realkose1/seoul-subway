@@ -1449,6 +1449,20 @@ function idleGate() {
   return true;
 }
 
+/* 오래 미갱신된 열차 숨김: 가장 최근 수신 시각 기준 일정 시간을 넘으면 정차/운행종료로 보고 제외한다.
+   (실시간 API는 종착·회차역에 정차한 열차의 수신 시각이 멈춰, 안 거르면 마커가 한곳에 박혀 보인다) */
+const STALE_TRAIN_MS = 3 * 60 * 1000;
+function recptMs(s) {
+  const m = s && String(s).match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : null;
+}
+function dropStaleTrains(list) {
+  let ref = 0;
+  for (const t of list) { const r = recptMs(t.recptnDt); if (r && r > ref) ref = r; }
+  if (!ref) return list; /* 수신 시각 정보 없음(모의 데이터 등): 그대로 둔다 */
+  return list.filter(t => { const r = recptMs(t.recptnDt); return r == null || ref - r <= STALE_TRAIN_MS; });
+}
+
 async function fetchLive() {
   if (!idleGate()) return;
   lastLiveFetch = Date.now();
@@ -1488,7 +1502,7 @@ async function fetchLive() {
   state.calls++;
   addUsage(upstreamCost);
   state.dataPath = used.name;
-  state.trains = data.realtimePositionList || [];
+  state.trains = dropStaleTrains(data.realtimePositionList || []);
   /* 2단계: 표시 (렌더링 오류는 별도로 보고한다) */
   try {
     renderTrains();
