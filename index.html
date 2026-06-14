@@ -1440,8 +1440,8 @@ function renderList() {
 }
 
 /* ════════════════ 실시간 API ════════════════ */
-async function tryFetch(url) {
-  const res = await fetch(url);
+async function tryFetch(url, opts) {
+  const res = await fetch(url, opts || {});
   let data;
   try { data = await res.json(); }
   catch { throw new Error(`응답 해석 실패 (HTTP ${res.status})`); }
@@ -1453,9 +1453,9 @@ async function tryFetch(url) {
   return data;
 }
 
-async function directFetchAll(lines) {
+async function directFetchAll(lines, opts) {
   const results = await Promise.allSettled((lines || Object.keys(LINES)).map(ln =>
-    tryFetch(`https://swopenapi.seoul.go.kr/api/subway/${encodeURIComponent(state.apiKey)}/json/realtimePosition/0/200/${encodeURIComponent(ln)}`)
+    tryFetch(`https://swopenapi.seoul.go.kr/api/subway/${encodeURIComponent(state.apiKey)}/json/realtimePosition/0/200/${encodeURIComponent(ln)}`, opts)
   ));
   const merged = [];
   for (const r of results) if (r.status === "fulfilled" && Array.isArray(r.value.realtimePositionList)) merged.push(...r.value.realtimePositionList);
@@ -1484,8 +1484,8 @@ function dropStaleTrains(list) {
   return list.filter(t => { const r = recptMs(t.recptnDt); return r == null || ref - r <= STALE_TRAIN_MS; });
 }
 
-async function fetchLive() {
-  if (!idleGate()) return;
+async function fetchLive(force) {
+  if (!force && !idleGate()) return;
   lastLiveFetch = Date.now();
   /* 호출 경로 후보: 프록시(배포 환경) 우선, 직접 호출(키 입력 시) 폴백 */
   const sub = state.line === "ALL" ? visibleLines() : null;
@@ -1493,7 +1493,7 @@ async function fetchLive() {
   const upstreamCost = state.line === "ALL" ? (sub ? sub.length : Object.keys(LINES).length) : 1;
   const sources = [];
   if (location.protocol !== "file:")
-    sources.push({ name: "프록시", url: `/api/position?line=${encodeURIComponent(lineParam)}` });
+    sources.push({ name: "프록시", url: `/api/position?line=${encodeURIComponent(lineParam)}${force ? "&fresh=" + Date.now() : ""}` });
   if (state.apiKey) {
     if (state.line === "ALL") sources.push({ name: "직접", runAll: true, lines: sub || Object.keys(LINES) });
     else sources.push({ name: "직접", url: `https://swopenapi.seoul.go.kr/api/subway/${encodeURIComponent(state.apiKey)}/json/realtimePosition/0/200/${encodeURIComponent(state.line)}` });
@@ -1507,7 +1507,8 @@ async function fetchLive() {
   let data = null, used = null;
   for (const src of sources) {
     try {
-      data = src.runAll ? await directFetchAll(src.lines) : await tryFetch(src.url);
+      const opts = force ? { cache: "no-store" } : undefined;
+      data = src.runAll ? await directFetchAll(src.lines, opts) : await tryFetch(src.url, opts);
       used = src;
       break;
     } catch (e) {
@@ -1598,7 +1599,7 @@ function mockStep() {
 }
 
 /* ════════════════ 갱신 루프 ════════════════ */
-function refresh() { return state.mode === "live" ? fetchLive() : mockStep(); }
+function refresh(force) { return state.mode === "live" ? fetchLive(force) : mockStep(); }
 function restartTimer() {
   clearInterval(state.timer);
   state.timer = setInterval(refresh, currentRefreshSec() * 1000);
@@ -1631,7 +1632,7 @@ function selectLine(name) {
   document.getElementById("tabUp").textContent = isLoop ? "내선" : "상행";
   document.getElementById("tabDown").textContent = isLoop ? "외선" : "하행";
   if (state.mode === "mock") mockInit();
-  refresh();
+  refresh(true);
   restartTimer();
 }
 
@@ -1720,7 +1721,7 @@ document.getElementById("refreshBtn").addEventListener("click", () => {
   const btn = document.getElementById("refreshBtn");
   if (btn.classList.contains("spinning")) return;
   btn.classList.add("spinning");
-  Promise.resolve(refresh()).finally(() => setTimeout(() => btn.classList.remove("spinning"), 450));
+  Promise.resolve(refresh(true)).finally(() => setTimeout(() => btn.classList.remove("spinning"), 450));
 });
 
 /* ════════════════ 역 도착 정보 ════════════════ */
@@ -1767,14 +1768,15 @@ function etaText(a, elapsed = 0) {
   const t = m > 0 ? `${m}분${s ? " " + s + "초" : ""} 후 도착` : `${s}초 후 도착`;
   return real > 0 ? t : "약 " + t;
 }
-async function fetchArrival(name) {
+async function fetchArrival(name, force) {
+  const opts = force ? { cache: "no-store" } : undefined;
   const tryOnce = async (stn) => {
     let data = null;
     if (location.protocol !== "file:") {
-      try { data = await tryFetch(`/api/arrival?station=${encodeURIComponent(stn)}`); } catch (e) { data = null; }
+      try { data = await tryFetch(`/api/arrival?station=${encodeURIComponent(stn)}${force ? "&fresh=" + Date.now() : ""}`, opts); } catch (e) { data = null; }
     }
     if (!data && state.apiKey) {
-      data = await tryFetch(`https://swopenapi.seoul.go.kr/api/subway/${encodeURIComponent(state.apiKey)}/json/realtimeStationArrival/0/40/${encodeURIComponent(stn)}`);
+      data = await tryFetch(`https://swopenapi.seoul.go.kr/api/subway/${encodeURIComponent(state.apiKey)}/json/realtimeStationArrival/0/40/${encodeURIComponent(stn)}`, opts);
     }
     return data;
   };
@@ -1844,7 +1846,7 @@ async function openStationCard(name) {
   document.getElementById("stationCard").classList.add("open");
   syncFavBtn();
   try {
-    scList = await fetchArrival(name);
+    scList = await fetchArrival(name, true);
     scFetchedAt = Date.now();
     renderArrival(scList, 0);
     scTimer = setInterval(scTick, 1000);
@@ -2067,14 +2069,14 @@ let lastUserAct = Date.now(), lastLiveFetch = 0;
   document.addEventListener(ev, () => {
     const wasIdle = Date.now() - lastUserAct > 5 * 60 * 1000;
     lastUserAct = Date.now();
-    if (wasIdle && state.mode === "live") refresh();
+    if (wasIdle && state.mode === "live") refresh(true);
   }, { passive: true })
 );
 
 /* 백그라운드 탭에서는 호출을 멈춰 일일 한도를 아낀다 */
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) clearInterval(state.timer);
-  else { refresh(); restartTimer(); }
+  else { refresh(true); restartTimer(); }
 });
 
 /* 시작: 네이버 지도를 곧바로 사용, 실패 시에만 예비(기본) 지도로 자동 전환 */
@@ -2126,7 +2128,7 @@ if (window.innerWidth < 768) locateUser();
     if (j && j.ok) {
       state.proxyOk = true;
       state.mode = "live";
-      refresh();
+      refresh(true);
       restartTimer();
     }
   } catch (e) { /* 프록시 없음: 모의 모드 유지 */ }
