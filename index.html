@@ -66,6 +66,21 @@
   .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }
   .dot.live { background: var(--line); animation: pulse 1.8s infinite; }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+  .status-refresh {
+    margin-left: 1px;
+    width: 22px; height: 22px; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,.05);
+    color: var(--muted);
+    cursor: pointer;
+    transition: color .15s, border-color .15s, background .15s;
+  }
+  .status-refresh:hover { color: var(--text); border-color: rgba(255,255,255,.2); }
+  .status-refresh:active { background: rgba(255,255,255,.12); }
+  .status-refresh.spinning { color: var(--line); animation: spin .7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
   .chips {
     display: flex; gap: 6px; margin-top: 10px;
@@ -176,6 +191,9 @@
   .meter { font-size: 11px; color: var(--muted); display: flex; justify-content: space-between; padding-top: 10px; border-top: 1px solid var(--border); }
 
   /* ── 열차 패널 ─────────────────────── */
+  /* 운행 열차 목록 패널 + 모바일 열기 버튼 숨김 (지도 위 열차 마커는 그대로 동작) */
+  #trainPanel, #listFab { display: none !important; }
+
   .panel {
     position: absolute; z-index: 1000;
     background: var(--panel);
@@ -413,7 +431,7 @@
   <div class="brand-card">
     <div class="brand-row">
       <div class="brand">서울 지하철 라이브</div>
-      <div class="status"><span class="dot" id="statusDot"></span><span id="statusText">모의 데이터</span></div>
+      <div class="status"><span class="dot" id="statusDot"></span><span id="statusText">모의 데이터</span><button class="status-refresh" id="refreshBtn" aria-label="새로고침" title="새로고침"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button></div>
     </div>
     <div class="chips" id="lineChips"></div>
   </div>
@@ -1480,7 +1498,7 @@ async function fetchLive() {
     toast(`데이터는 받았으나 화면 표시 중 오류: ${e.message}`);
     return;
   }
-  setStatus(`실시간(${used.name}) · ${new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`, true);
+  setStatus("실시간", true);
 }
 
 /* ════════════════ 모의 데이터 ════════════════ */
@@ -1545,7 +1563,7 @@ function mockStep() {
 }
 
 /* ════════════════ 갱신 루프 ════════════════ */
-function refresh() { state.mode === "live" ? fetchLive() : mockStep(); }
+function refresh() { return state.mode === "live" ? fetchLive() : mockStep(); }
 function restartTimer() {
   clearInterval(state.timer);
   state.timer = setInterval(refresh, currentRefreshSec() * 1000);
@@ -1661,6 +1679,14 @@ function togglePanel() {
   document.getElementById("panelMin").innerHTML = p.classList.contains("min") ? "&#9652;" : "&#9662;";
 }
 document.getElementById("panelHead").addEventListener("click", togglePanel);
+
+/* 수동 새로고침: 현재 모드(실시간/모의)대로 즉시 갱신하고, 완료까지 아이콘을 회전 */
+document.getElementById("refreshBtn").addEventListener("click", () => {
+  const btn = document.getElementById("refreshBtn");
+  if (btn.classList.contains("spinning")) return;
+  btn.classList.add("spinning");
+  Promise.resolve(refresh()).finally(() => setTimeout(() => btn.classList.remove("spinning"), 450));
+});
 
 /* ════════════════ 역 도착 정보 ════════════════ */
 const SUBWAY_ID = {
