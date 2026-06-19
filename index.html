@@ -1780,9 +1780,9 @@ async function fetchPosition(line, force) {
 }
 
 /* 유령 도착 제거: 실시간 도착 API는 이미 지나간 열차의 '도착' 이벤트를 안 지워, 차가 없어도
-   "지금 도착"이 남는다. barvlDt==0('바로 여기' 주장)인 항목만 그 열차(btrainNo)가 실제로 해당
-   역이나 인접역에 있는지 위치 피드로 대조해, 멀리 있거나 운행 안 하면 제거한다.
-   barvlDt>0(정직한 카운트다운)·열차번호 없음·대조 불가 노선은 그대로 둔다(진짜 도착 보호). */
+   "지금 도착"이 남는다. 각 항목이 주장하는 거리(도착/진입/출발=당역, 전역=1, [N]번째 전역=N)와
+   그 열차(btrainNo)의 위치 피드상 실제 거리를 대조해, 실제가 주장보다 훨씬 멀거나(>주장+1) 운행
+   안 하면 제거한다. 'N분 후'(거리 주장 없음)·열차번호 없음·대조 불가 노선은 그대로 둔다(진짜 도착 보호). */
 async function filterGhostArrivals(name, list, force) {
   const X = resolve(name);
   if (!X || !list || !list.length) return list;
@@ -1797,15 +1797,25 @@ async function filterGhostArrivals(name, list, force) {
     } catch (e) {}
   }));
   if (!okLines.size) return list;
+  const distCache = {};
   return list.filter(a => {
-    if (Number(a.barvlDt) > 0) return true;                                  /* 살아있는 카운트다운 → 유지 */
     const ln = SUBWAY_ID[Number(a.subwayId)];
     if (!ln || !LINES[ln] || !okLines.has(ln) || !a.btrainNo) return true;   /* 대조 불가 → 유지 */
+    /* 메시지가 주장하는 거리(역 수) */
+    let claimed;
+    const m = (a.arvlMsg2 || "").match(/\[(\d+)\]번째/);
+    const cd = String(a.arvlCd);
+    if (m) claimed = Number(m[1]);
+    else if (cd === "0" || cd === "1" || cd === "2") claimed = 0;            /* 진입/도착/출발 = 당역 */
+    else if (cd === "3" || cd === "4" || cd === "5") claimed = 1;            /* 전역 */
+    else return true;                                                       /* 'N분 후' 등 거리 주장 없음 → 유지 */
     const cur = trainPos[a.btrainNo];
     if (!cur) return false;                                                  /* 운행 중 아님 → 유령 */
-    if (cur === X) return true;                                              /* 해당 역에 있음 → 진짜 */
-    const adj = graphOf(ln)[X];
-    return adj ? adj.has(cur) : true;                                        /* 인접역 → 진짜, 멀면 → 유령 */
+    if (cur === X) return true;                                              /* 당역에 있음 → 진짜 */
+    const k = ln + "|" + cur;
+    let d = distCache[k];
+    if (d === undefined) { const p = stationPath(ln, cur, X); d = p ? p.length - 1 : 99; distCache[k] = d; }
+    return d <= claimed + 1;                                                 /* 실제 거리 ≈ 주장(+허용 1) → 진짜, 멀면 유령 */
   });
 }
 
