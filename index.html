@@ -1768,6 +1768,47 @@ function etaText(a, elapsed = 0) {
   const t = m > 0 ? `${m}분${s ? " " + s + "초" : ""} 후 도착` : `${s}초 후 도착`;
   return real > 0 ? t : "약 " + t;
 }
+/* 위치 피드 한 노선 조회 (도착 유령 대조용) */
+async function fetchPosition(line, force) {
+  const fresh = force ? "&fresh=" + Date.now() : "";
+  const opts = force ? { cache: "no-store" } : undefined;
+  if (location.protocol !== "file:") {
+    try { return await tryFetch(`/api/position?line=${encodeURIComponent(line)}${fresh}`, opts); } catch (e) {}
+  }
+  if (state.apiKey) return await tryFetch(`https://swopenapi.seoul.go.kr/api/subway/${encodeURIComponent(state.apiKey)}/json/realtimePosition/0/200/${encodeURIComponent(line)}`, opts);
+  throw new Error("위치 조회 불가");
+}
+
+/* 유령 도착 제거: 실시간 도착 API는 이미 지나간 열차의 '도착' 이벤트를 안 지워, 차가 없어도
+   "지금 도착"이 남는다. barvlDt==0('바로 여기' 주장)인 항목만 그 열차(btrainNo)가 실제로 해당
+   역이나 인접역에 있는지 위치 피드로 대조해, 멀리 있거나 운행 안 하면 제거한다.
+   barvlDt>0(정직한 카운트다운)·열차번호 없음·대조 불가 노선은 그대로 둔다(진짜 도착 보호). */
+async function filterGhostArrivals(name, list, force) {
+  const X = resolve(name);
+  if (!X || !list || !list.length) return list;
+  const lines = [...new Set(list.map(a => SUBWAY_ID[Number(a.subwayId)]).filter(l => l && LINES[l]))];
+  if (!lines.length) return list;
+  const trainPos = {}, okLines = new Set();
+  await Promise.all(lines.map(async ln => {
+    try {
+      const data = await fetchPosition(ln, force);
+      const arr = (data && data.realtimePositionList) || [];
+      if (arr.length) { okLines.add(ln); for (const t of arr) { const s = resolve(t.statnNm); if (s && t.trainNo) trainPos[t.trainNo] = s; } }
+    } catch (e) {}
+  }));
+  if (!okLines.size) return list;
+  return list.filter(a => {
+    if (Number(a.barvlDt) > 0) return true;                                  /* 살아있는 카운트다운 → 유지 */
+    const ln = SUBWAY_ID[Number(a.subwayId)];
+    if (!ln || !LINES[ln] || !okLines.has(ln) || !a.btrainNo) return true;   /* 대조 불가 → 유지 */
+    const cur = trainPos[a.btrainNo];
+    if (!cur) return false;                                                  /* 운행 중 아님 → 유령 */
+    if (cur === X) return true;                                              /* 해당 역에 있음 → 진짜 */
+    const adj = graphOf(ln)[X];
+    return adj ? adj.has(cur) : true;                                        /* 인접역 → 진짜, 멀면 → 유령 */
+  });
+}
+
 async function fetchArrival(name, force) {
   const opts = force ? { cache: "no-store" } : undefined;
   const tryOnce = async (stn) => {
@@ -1831,8 +1872,10 @@ function scTick() {
   /* 20초마다 자동 재조회 */
   if (elapsed > 20 && !scFetching) {
     scFetching = true;
-    fetchArrival(scStation)
-      .then(l => { if (!scStation) return; scList = l; scFetchedAt = Date.now(); renderArrival(scList, 0); })
+    const st = scStation;
+    fetchArrival(st)
+      .then(l => filterGhostArrivals(st, l))
+      .then(l => { if (scStation !== st) return; scList = l; scFetchedAt = Date.now(); renderArrival(scList, 0); })
       .catch(() => {})
       .finally(() => { scFetching = false; });
   }
@@ -1846,7 +1889,10 @@ async function openStationCard(name) {
   document.getElementById("stationCard").classList.add("open");
   syncFavBtn();
   try {
-    scList = await fetchArrival(name, true);
+    let l = await fetchArrival(name, true);
+    l = await filterGhostArrivals(name, l, true);
+    if (scStation !== name) return; /* 그새 다른 역이 열림 */
+    scList = l;
     scFetchedAt = Date.now();
     renderArrival(scList, 0);
     scTimer = setInterval(scTick, 1000);
