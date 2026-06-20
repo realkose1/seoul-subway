@@ -2388,12 +2388,25 @@ document.addEventListener("visibilitychange", () => {
   adapter.init(viewOf(state.line).center, viewOf(state.line).zoom);
   selectLine(state.line);
   showUsage();
-  /* 즐겨찾는 역이 있으면 자동으로 도착 카드 열기 */
-  setTimeout(() => { const f = favList(); if (f[0]) openStationCard(f[0]); }, 800);
+  /* 즐겨찾는 역이 있으면 현재 위치에서 가장 가까운 것을 자동으로 연다 (위치는 locateUser가 잡음) */
+  if (favList().length) setTimeout(openNearestFavorite, window.innerWidth < 768 ? 2500 : 800);
 })();
 
 /* 모바일: 현재 위치를 얻어 지도 중심 이동 (수도권 내일 때만) */
 state.userPos = null;
+/* 즐겨찾기 자동 열기: 현재 위치에서 가장 가까운 즐겨찾기 역 (위치 없으면 첫 번째). 이미 카드가 열려 있으면 패스 */
+function openNearestFavorite() {
+  const f = favList();
+  if (!f.length || scStation) return;
+  let target = f[0], best = Infinity;
+  if (state.userPos) for (const name of f) {
+    const s = STN[name] || STN[resolve(name)];
+    if (!s) continue;
+    const d = distM(state.userPos, s);
+    if (d < best) { best = d; target = name; }
+  }
+  openStationCard(target);
+}
 function locateUser() {
   if (!("geolocation" in navigator)) return;
   navigator.geolocation.getCurrentPosition(p => {
@@ -2406,6 +2419,7 @@ function locateUser() {
     };
     if (adapter.map) apply();
     else setTimeout(() => { if (adapter.map) apply(); }, 1500); /* 지도 기동 전이면 잠시 후 적용 */
+    openNearestFavorite(); /* 위치를 잡았으니 가장 가까운 즐겨찾기 역을 연다 */
   }, () => { /* 거부/실패 시 조용히 기본 뷰 유지 */ }, { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 });
 }
 if (window.innerWidth < 768) locateUser();
