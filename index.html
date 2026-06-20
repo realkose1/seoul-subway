@@ -915,10 +915,20 @@ function smoothSeg(ln, seg) {
 const GRAPHS = {};
 function graphOf(lineName) { return GRAPHS[lineName] || (GRAPHS[lineName] = buildGraph(lineName)); }
 const ALL_VIEW = { center: [37.5400, 126.9860], zoom: 11, color: "#8a8d93" };
-function viewOf(name) { return name === "ALL" ? ALL_VIEW : LINES[name]; }
+function viewOf(name) {
+  if (name === "ALL") return ALL_VIEW;
+  if (LINES[name]) return LINES[name];
+  const lines = String(name).split(",").filter(l => LINES[l]);
+  if (!lines.length) return ALL_VIEW;
+  if (lines.length === 1) return LINES[lines[0]];
+  let a = 90, b = -90, c = 180, e = -180; /* 여러 노선 선택: 경계상자에 맞춘 뷰 */
+  for (const ln of lines) { const B = LINE_BBOX[ln]; if (!B) continue; a = Math.min(a, B[0]); b = Math.max(b, B[1]); c = Math.min(c, B[2]); e = Math.max(e, B[3]); }
+  const span = Math.max(b - a, (e - c) * 0.8);
+  return { center: [(a + b) / 2, (c + e) / 2], zoom: span > 0.55 ? 10 : span > 0.28 ? 11 : 12, color: "#8a8d93" };
+}
 function lineOfTrain(t) {
   if (t.subwayNm && LINES[t.subwayNm]) return t.subwayNm;
-  return state.line !== "ALL" ? state.line : "2호선";
+  return state.line !== "ALL" ? state.line.split(",")[0] : "2호선";
 }
 function colorOfTrain(t) { return LINES[lineOfTrain(t)].color; }
 function bearingDeg(a, b) {
@@ -1356,7 +1366,7 @@ function visibleLines() {
 }
 function currentRefreshSec() {
   if (state.mode === "mock") return 5;
-  return state.line === "ALL" ? 30 : 15; /* 활용사례 승인으로 한도 해제됨 */
+  return (state.line === "ALL" || state.line.includes(",")) ? 30 : 15; /* 활용사례 승인으로 한도 해제됨 */
 }
 const animState = new Map(); /* trainNo → { cur, goal, speed, heading, train } */
 const REDUCED_MOTION = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -1432,20 +1442,24 @@ function drawLine(lineName) {
     }
     return;
   }
-  const L_ = LINES[lineName];
-  document.documentElement.style.setProperty("--line", L_.color);
-  document.documentElement.style.setProperty("--line-ink", inkOn(L_.color));
+  const lines = lineName.split(",").filter(l => LINES[l]); /* 단일 또는 복수 선택 */
+  const themeColor = lines.length === 1 ? LINES[lines[0]].color : "#8a8d93";
+  document.documentElement.style.setProperty("--line", themeColor);
+  document.documentElement.style.setProperty("--line-ink", inkOn(themeColor));
   const drawn = new Set();
-  const termini = new Set();
-  for (const seg of L_.segments) {
-    if (!L_.loop || seg !== L_.segments[0]) { termini.add(seg[0]); termini.add(seg[seg.length - 1]); }
-  }
-  for (const seg of L_.segments) {
-    adapter.addPolyline(smoothSeg(lineName, seg), L_.color);
-    for (const n of seg) {
-      if (drawn.has(n) || !STN[n]) continue;
-      drawn.add(n);
-      adapter.addStation(n, STN[n], termini.has(n), L_.color);
+  for (const ln of lines) {
+    const L_ = LINES[ln];
+    const termini = new Set();
+    for (const seg of L_.segments) {
+      if (!L_.loop || seg !== L_.segments[0]) { termini.add(seg[0]); termini.add(seg[seg.length - 1]); }
+    }
+    for (const seg of L_.segments) {
+      adapter.addPolyline(smoothSeg(ln, seg), L_.color);
+      for (const n of seg) {
+        if (drawn.has(n) || !STN[n]) continue;
+        drawn.add(n);
+        adapter.addStation(n, STN[n], termini.has(n), L_.color);
+      }
     }
   }
 }
@@ -1567,12 +1581,12 @@ async function fetchLive(force) {
   /* 호출 경로 후보: 프록시(배포 환경) 우선, 직접 호출(키 입력 시) 폴백 */
   const sub = state.line === "ALL" ? visibleLines() : null;
   const lineParam = sub ? sub.join(",") : state.line;
-  const upstreamCost = state.line === "ALL" ? (sub ? sub.length : Object.keys(LINES).length) : 1;
+  const upstreamCost = state.line === "ALL" ? (sub ? sub.length : Object.keys(LINES).length) : state.line.split(",").length;
   const sources = [];
   if (location.protocol !== "file:")
     sources.push({ name: "프록시", url: `/api/position?line=${encodeURIComponent(lineParam)}${force ? "&fresh=" + Date.now() : ""}` });
   if (state.apiKey) {
-    if (state.line === "ALL") sources.push({ name: "직접", runAll: true, lines: sub || Object.keys(LINES) });
+    if (state.line === "ALL" || state.line.includes(",")) sources.push({ name: "직접", runAll: true, lines: sub || (state.line === "ALL" ? Object.keys(LINES) : state.line.split(",").filter(l => LINES[l])) });
     else sources.push({ name: "직접", url: `https://swopenapi.seoul.go.kr/api/subway/${encodeURIComponent(state.apiKey)}/json/realtimePosition/0/200/${encodeURIComponent(state.line)}` });
   }
   if (!sources.length) { toast("인증키를 입력하거나 프록시가 있는 배포 환경에서 실행해 주세요."); return; }
@@ -1641,8 +1655,8 @@ function spawnMock(lineName, count) {
 }
 function mockInit() {
   mockTrains = [];
-  if (state.line === "ALL") for (const ln of Object.keys(LINES)) spawnMock(ln, 4);
-  else spawnMock(state.line, 10 + Math.floor(Math.random() * 5));
+  const lines = state.line === "ALL" ? Object.keys(LINES) : state.line.split(",").filter(l => LINES[l]);
+  for (const ln of lines) spawnMock(ln, state.line === "ALL" ? 4 : (lines.length > 1 ? 6 : 10 + Math.floor(Math.random() * 5)));
 }
 function mockStep() {
   for (const t of mockTrains) {
@@ -1694,8 +1708,26 @@ function toast(msg) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove("show"), 4500);
 }
+/* 칩 클릭: '전체'는 단독, 나머지는 복수 토글(다시 누르면 해제, 모두 해제 시 전체) */
+function chipClick(name) {
+  if (name === "ALL") { selectLine("ALL"); return; }
+  let cur = state.line === "ALL" ? [] : state.line.split(",").filter(Boolean);
+  const i = cur.indexOf(name);
+  if (i >= 0) cur.splice(i, 1); else cur.push(name);
+  selectLine(cur.length ? cur.join(",") : "ALL");
+}
+/* 마지막 선택 호선 복원 (없거나 무효면 전체) */
+function loadSavedLine() {
+  try {
+    const s = localStorage.getItem("lastLine");
+    if (!s || s === "ALL") return "ALL";
+    const v = s.split(",").filter(l => LINES[l]);
+    return v.length ? v.join(",") : "ALL";
+  } catch (e) { return "ALL"; }
+}
 function selectLine(name) {
   state.line = name;
+  try { localStorage.setItem("lastLine", name); } catch (e) {}
   stopFollow();
   adapter.clearTrains();
   animState.clear();
@@ -1703,9 +1735,11 @@ function selectLine(name) {
   drawLine(name);
   const v = viewOf(name);
   adapter.setView(v.center, v.zoom);
-  document.querySelectorAll("#lineChips .chip").forEach(c => c.classList.toggle("on", c.dataset.line === name));
-  document.getElementById("panelTitle").textContent = name === "ALL" ? "전체 노선 운행 열차" : name + " 운행 열차";
-  const isLoop = name !== "ALL" && !!LINES[name].loop;
+  const sel = name === "ALL" ? [] : name.split(",");
+  document.querySelectorAll("#lineChips .chip").forEach(c =>
+    c.classList.toggle("on", c.dataset.line === "ALL" ? name === "ALL" : sel.includes(c.dataset.line)));
+  document.getElementById("panelTitle").textContent = name === "ALL" ? "전체 노선 운행 열차" : sel.join("·") + " 운행 열차";
+  const isLoop = sel.length === 1 && LINES[sel[0]] && !!LINES[sel[0]].loop;
   document.getElementById("tabUp").textContent = isLoop ? "내선" : "상행";
   document.getElementById("tabDown").textContent = isLoop ? "외선" : "하행";
   if (state.mode === "mock") mockInit();
@@ -1771,7 +1805,7 @@ const chipsEl = document.getElementById("lineChips");
   b.style.setProperty("--c", ALL_VIEW.color);
   b.style.setProperty("--ink", inkOn(ALL_VIEW.color));
   b.innerHTML = `<span class="swatch"></span>전체`;
-  b.addEventListener("click", () => selectLine("ALL"));
+  b.addEventListener("click", () => chipClick("ALL"));
   chipsEl.appendChild(b);
 }
 for (const [name, def] of Object.entries(LINES)) {
@@ -1780,7 +1814,7 @@ for (const [name, def] of Object.entries(LINES)) {
   b.style.setProperty("--c", def.color);
   b.style.setProperty("--ink", inkOn(def.color));
   b.innerHTML = `<span class="swatch"></span>${name}`;
-  b.addEventListener("click", () => selectLine(name));
+  b.addEventListener("click", () => chipClick(name));
   chipsEl.appendChild(b);
 }
 
@@ -2385,6 +2419,7 @@ document.addEventListener("visibilitychange", () => {
     adapter = basicAdapter;
     toast("네이버 지도를 불러오지 못해 예비 지도로 시작합니다.");
   }
+  state.line = loadSavedLine(); /* 마지막 선택 호선 복원 */
   adapter.init(viewOf(state.line).center, viewOf(state.line).zoom);
   selectLine(state.line);
   showUsage();
