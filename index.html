@@ -1846,32 +1846,117 @@ async function fetchArrival(name, force) {
   addUsage(1);
   return list || [];
 }
-function arrivalRowHtml(a, elapsed) {
-  return `
-    <div class="sc-row">
-      <span class="sc-dot" style="background:${colorOfArrival(a)}"></span>
+/* ── 도착 정보를 위치 피드(연결된 전체 열차)에서 직접 도출 ──
+   역별 도착 API는 역마다 데이터가 들쭉날쭉(작은 역은 빈약/유령)하다. 대신 모든 열차의 실제 위치로부터
+   각 역에 다가오는 열차를 직접 계산하면 모든 역이 일관되게 표시된다. API의 barvlDt는 정밀도 보정에만 쓴다. */
+const SEC_PER_STATION = 135; /* 평균 역간 소요(정차 포함) 추정 */
+let _stationLines = null;
+function linesAt(stn) {
+  if (!_stationLines) {
+    _stationLines = {};
+    for (const [ln, def] of Object.entries(LINES)) for (const seg of def.segments) for (const n of seg) (_stationLines[n] = _stationLines[n] || new Set()).add(ln);
+  }
+  return _stationLines[stn] ? [..._stationLines[stn]] : [];
+}
+function dirLabelLine(ln, t) {
+  const L_ = LINES[ln];
+  if (L_ && L_.loop) {
+    const term = resolve(t.statnTnm), loopArr = L_.segments[0].slice(0, -1);
+    if (!term || loopArr.includes(term)) return t.updnLine === "0" ? "내선" : "외선";
+  }
+  return t.updnLine === "0" ? "상행" : "하행";
+}
+/* 한 열차가 X역에 몇 정거장 앞에서 다가오는지(진행 경로상 위치). 안 오면 -1 */
+function stationsToX(ln, t, X, cur, term) {
+  const L_ = LINES[ln];
+  if (L_ && L_.loop) {
+    const arr = L_.segments[0].slice(0, -1), ci = arr.indexOf(cur), xi = arr.indexOf(X);
+    if (ci >= 0 && xi >= 0) {
+      const dir = t.updnLine === "0" ? 1 : -1;
+      return ((xi - ci) * dir + arr.length) % arr.length;
+    }
+  }
+  const p = stationPath(ln, cur, term);
+  return p ? p.indexOf(X) : -1;
+}
+async function fetchPositionsForLines(lines, force) {
+  return Promise.all(lines.map(async ln => {
+    try { const d = await fetchPosition(ln, force); return { line: ln, trains: (d && d.realtimePositionList) || [] }; }
+    catch (e) { return { line: ln, trains: [] }; }
+  }));
+}
+function deriveArrivals(name, posByLine) {
+  const X = resolve(name);
+  if (!X) return [];
+  const out = [];
+  for (const { line: ln, trains } of posByLine) {
+    if (!LINES[ln]) continue;
+    for (const t of trains) {
+      const cur = resolve(t.statnNm), term = resolve(t.statnTnm);
+      if (!cur || !term) continue;
+      const away = stationsToX(ln, t, X, cur, term);
+      if (away < 0 || away > 7) continue;
+      const st = String(t.trainSttus);
+      if (away === 0 && st === "2") continue; /* 방금 X 출발 → 떠남 */
+      const eta = away === 0 ? (st === "1" ? 0 : 25) : Math.max(0, away * SEC_PER_STATION - (st === "0" ? 90 : st === "2" ? 45 : 0));
+      out.push({ line: ln, color: LINES[ln].color, updn: dirLabelLine(ln, t), dest: t.statnTnm,
+        express: isExpress(t), btrainNo: t.trainNo, away, etaSec: Math.round(eta), curStn: t.statnNm, measured: false });
+    }
+  }
+  return out;
+}
+async function loadArrivals(name, force) {
+  const X = resolve(name), lines = X ? linesAt(X) : [];
+  const [posByLine, apiArr] = await Promise.all([
+    lines.length ? fetchPositionsForLines(lines, force) : Promise.resolve([]),
+    fetchArrival(name, force).catch(() => [])
+  ]);
+  const items = deriveArrivals(name, posByLine);
+  /* API barvlDt(실측 카운트다운)로 같은 열차 ETA 보정 */
+  const apiBy = {};
+  for (const a of apiArr) { const bd = Number(a.barvlDt) || 0; if (a.btrainNo && bd > 0) apiBy[a.btrainNo] = bd; }
+  for (const it of items) if (apiBy[it.btrainNo] != null) { it.etaSec = apiBy[it.btrainNo]; it.measured = true; }
+  /* 위치 도출 불가 노선(경의중앙·공항철도 등)은 API 항목으로 보강 */
+  const supported = new Set(lines), seen = new Set(items.map(it => it.btrainNo));
+  for (const a of apiArr) {
+    const ln = SUBWAY_ID[Number(a.subwayId)];
+    if ((ln && LINES[ln] && supported.has(ln)) || (a.btrainNo && seen.has(a.btrainNo))) continue;
+    const sec = etaSec(a);
+    if (sec >= 99998) continue;
+    items.push({ line: ln || "", color: colorOfArrival(a), updn: a.updnLine, dest: a.bstatnNm || (a.trainLineNm || "").split(" - ")[0].replace(/행$/, ""),
+      express: a.btrainSttus === "급행", btrainNo: a.btrainNo, away: null, etaSec: Math.max(0, sec), curStn: a.arvlMsg3 || "", measured: Number(a.barvlDt) > 0 });
+  }
+  return items;
+}
+function arrivalItemRowHtml(it, elapsed) {
+  const sec = Math.max(0, Math.round(it.etaSec - elapsed));
+  let eta;
+  if (sec <= 15) eta = "지금 도착";
+  else if (sec <= 50) eta = "곧 도착";
+  else if (it.measured) { const m = Math.floor(sec / 60), s = sec % 60; eta = m ? `${m}분${s ? " " + s + "초" : ""} 후` : `${s}초 후`; }
+  else eta = `약 ${Math.round(sec / 60)}분 후`;
+  const where = (!it.measured && it.curStn && it.away > 0) ? ` · ${it.curStn}` : "";
+  return `<div class="sc-row">
+      <span class="sc-dot" style="background:${it.color}"></span>
       <div class="sc-main">
-        <div class="sc-eta">${etaText(a, elapsed)}</div>
-        <div class="sc-sub">${lineNameOfArrival(a)} · ${(a.trainLineNm || a.bstatnNm + "행").split(" - ")[0]}${a.btrainSttus === "급행" ? " · 급행" : ""}</div>
+        <div class="sc-eta">${eta}</div>
+        <div class="sc-sub">${it.line ? it.line + " · " : ""}${it.dest}행${it.express ? " · 급행" : ""}${where}</div>
       </div>
     </div>`;
 }
 function arrivalColHtml(items, fallback, elapsed, inout) {
-  const label = items.length ? [...new Set(items.map(a => a.updnLine).filter(Boolean))].join(" · ") || fallback : fallback;
-  const rows = items.slice(0, 5).map(a => arrivalRowHtml(a, elapsed)).join("");
+  const rows = items.slice(0, 5).map(it => arrivalItemRowHtml(it, elapsed)).join("");
   return `<div class="sc-col">
-    <div class="sc-colhead">${label}</div>
+    <div class="sc-colhead">${fallback}</div>
     ${rows || timetableFallbackHtml(inout)}
     <button class="sc-tt-btn" data-inout="${inout}">시간표 보기</button>
   </div>`;
 }
-function renderArrival(list, elapsed = 0) {
+function renderArrival(items, elapsed = 0) {
   const body = document.getElementById("scBody");
-  const valid = list
-    .filter(a => lineNameOfArrival(a))
-    .sort((x, y) => etaSec(x) - etaSec(y));
-  const up = valid.filter(a => a.updnLine === "상행" || a.updnLine === "내선");
-  const down = valid.filter(a => a.updnLine === "하행" || a.updnLine === "외선");
+  const valid = (items || []).slice().sort((a, b) => a.etaSec - b.etaSec);
+  const up = valid.filter(a => a.updn === "상행" || a.updn === "내선");
+  const down = valid.filter(a => a.updn === "하행" || a.updn === "외선");
   body.innerHTML = `<div class="sc-cols">${arrivalColHtml(up, "상행", elapsed, "1")}${arrivalColHtml(down, "하행", elapsed, "2")}</div>`;
   body.querySelectorAll(".sc-tt-btn").forEach(b => b.addEventListener("click", () => openTimetable(scStation, b.dataset.inout)));
 }
@@ -1886,9 +1971,8 @@ function scTick() {
   if (elapsed > 20 && !scFetching) {
     scFetching = true;
     const st = scStation;
-    fetchArrival(st)
-      .then(l => filterGhostArrivals(st, l))
-      .then(l => { if (scStation !== st) return; scList = l; scFetchedAt = Date.now(); renderArrival(scList, 0); })
+    loadArrivals(st)
+      .then(items => { if (scStation !== st) return; scList = items; scFetchedAt = Date.now(); renderArrival(scList, 0); })
       .catch(() => {})
       .finally(() => { scFetching = false; });
   }
@@ -1903,10 +1987,9 @@ async function openStationCard(name) {
   document.getElementById("stationCard").classList.add("open");
   syncFavBtn();
   try {
-    let l = await fetchArrival(name, true);
-    l = await filterGhostArrivals(name, l, true);
+    const items = await loadArrivals(name, true);
     if (scStation !== name) return; /* 그새 다른 역이 열림 */
-    scList = l;
+    scList = items;
     scFetchedAt = Date.now();
     renderArrival(scList, 0);
     scTimer = setInterval(scTick, 1000);
