@@ -251,6 +251,9 @@
   .tt-dest { flex: 1; min-width: 0; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tt-row.next .tt-dest { color: var(--text); }
   .tt-tag { font-size: 10px; font-weight: 700; color: var(--line); flex: none; }
+  .tt-fb-note { font-size: 10px; color: var(--faint); padding: 5px 4px 3px; }
+  .tt-fb-eta { color: var(--muted) !important; }
+  .tt-fb-rel { font-size: 10.5px; color: var(--faint); font-weight: 500; margin-left: 5px; }
   .sc-colhead {
     font-size: 11px; font-weight: 700; color: var(--muted);
     padding: 2px 4px 7px; letter-spacing: .02em;
@@ -1858,7 +1861,7 @@ function arrivalColHtml(items, fallback, elapsed, inout) {
   const rows = items.slice(0, 5).map(a => arrivalRowHtml(a, elapsed)).join("");
   return `<div class="sc-col">
     <div class="sc-colhead">${label}</div>
-    ${rows || `<div class="sc-empty small">예정 없음</div>`}
+    ${rows || timetableFallbackHtml(inout)}
     <button class="sc-tt-btn" data-inout="${inout}">시간표 보기</button>
   </div>`;
 }
@@ -1872,7 +1875,7 @@ function renderArrival(list, elapsed = 0) {
   body.innerHTML = `<div class="sc-cols">${arrivalColHtml(up, "상행", elapsed, "1")}${arrivalColHtml(down, "하행", elapsed, "2")}</div>`;
   body.querySelectorAll(".sc-tt-btn").forEach(b => b.addEventListener("click", () => openTimetable(scStation, b.dataset.inout)));
 }
-let scList = [], scFetchedAt = 0, scTimer = null, scFetching = false, scMode = "arrival", ttCtx = null;
+let scList = [], scFetchedAt = 0, scTimer = null, scFetching = false, scMode = "arrival", ttCtx = null, scTimetable = null;
 function stopScTimer() { clearInterval(scTimer); scTimer = null; }
 function scTick() {
   if (!scStation) { stopScTimer(); return; }
@@ -1893,6 +1896,7 @@ function scTick() {
 async function openStationCard(name) {
   scStation = name;
   scMode = "arrival";
+  scTimetable = null;
   stopScTimer();
   document.getElementById("scTitle").textContent = name;
   document.getElementById("scBody").innerHTML = `<div class="sc-empty">불러오는 중...</div>`;
@@ -1906,6 +1910,7 @@ async function openStationCard(name) {
     scFetchedAt = Date.now();
     renderArrival(scList, 0);
     scTimer = setInterval(scTick, 1000);
+    loadTimetableFallback(name); /* 실시간 없는 방향에 보여줄 시간표 다음 열차를 배경에서 로드 */
   }
   catch (e) { document.getElementById("scBody").innerHTML = `<div class="sc-empty">도착 정보를 가져오지 못했습니다.<br>${e.message}</div>`; }
 }
@@ -1930,6 +1935,51 @@ document.getElementById("scRefresh").addEventListener("click", () => {
 const WEEK_LABEL = { "1": "평일", "2": "토요일", "3": "일·공휴일" };
 function weekTagToday() { const d = new Date().getDay(); return d === 0 ? "3" : d === 6 ? "2" : "1"; }
 function nowHHMM() { const d = new Date(); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); }
+/* 시간표는 새벽 운행을 24:xx~25:xx로 표기 — 자정 넘김까지 비교 가능한 '운행분'으로 변환 */
+function svcMin(hhmm) { const p = String(hhmm).split(":"); const h = (+p[0] || 0), m = (+p[1] || 0); return (h < 4 ? h + 24 : h) * 60 + m; }
+function ttRelative(left, now) {
+  const diff = svcMin(left) - svcMin(now);
+  if (diff <= 0) return "곧";
+  if (diff < 60) return `약 ${diff}분 후`;
+  return `약 ${Math.floor(diff / 60)}시간 ${diff % 60}분 후`;
+}
+/* 실시간 도착이 없을 때 시간표 기준 '다음 열차'를 보여준다 */
+function timetableFallbackHtml(inout) {
+  if (!scTimetable) return `<div class="sc-empty small">다음 열차 확인 중…</div>`;
+  const lines = scTimetable[inout];
+  if (!lines || !lines.length) return `<div class="sc-empty small">시간표 정보 없음</div>`;
+  const now = nowHHMM(), all = [];
+  for (const ln of lines) for (const t of (ln.trains || [])) all.push({ left: t.left, dest: t.dest, express: t.express, lineNum: ln.lineNum });
+  if (!all.length) return `<div class="sc-empty small">시간표 정보 없음</div>`;
+  all.sort((a, b) => svcMin(a.left) - svcMin(b.left));
+  const multi = new Set(all.map(t => t.lineNum)).size > 1;
+  const up = all.filter(t => svcMin(t.left) >= svcMin(now));
+  const sub = t => `${multi ? t.lineNum + " · " : ""}${t.dest}행${t.express ? " · 급행" : ""}`;
+  if (!up.length) { /* 운행 종료/새벽 → 첫차 안내 */
+    const f = all[0];
+    return `<div class="tt-fb-note">실시간 정보 없음 · 첫차</div>
+      <div class="sc-row"><span class="sc-dot" style="background:var(--faint)"></span>
+        <div class="sc-main"><div class="sc-eta tt-fb-eta">${f.left}</div><div class="sc-sub">${sub(f)}</div></div></div>`;
+  }
+  const rows = up.slice(0, 3).map(t => `
+    <div class="sc-row"><span class="sc-dot" style="background:var(--faint)"></span>
+      <div class="sc-main">
+        <div class="sc-eta tt-fb-eta">${t.left}<span class="tt-fb-rel">${ttRelative(t.left, now)}</span></div>
+        <div class="sc-sub">${sub(t)}</div>
+      </div></div>`).join("");
+  return `<div class="tt-fb-note">실시간 정보 없음 · 시간표 기준 다음 열차</div>${rows}`;
+}
+async function loadTimetableFallback(name) {
+  if (location.protocol === "file:") { scTimetable = {}; return; }
+  const week = weekTagToday();
+  const dir = io => fetch(`/api/timetable?name=${encodeURIComponent(name)}&week=${week}&inout=${io}`).then(r => r.ok ? r.json() : null).catch(() => null);
+  try {
+    const [a, b] = await Promise.all([dir("1"), dir("2")]);
+    if (scStation !== name) return;
+    scTimetable = { "1": (a && a.lines) || null, "2": (b && b.lines) || null };
+    if (scMode === "arrival") renderArrival(scList, (Date.now() - scFetchedAt) / 1000);
+  } catch (e) { scTimetable = {}; }
+}
 async function openTimetable(name, inout, week) {
   if (!name) return;
   scMode = "timetable";
