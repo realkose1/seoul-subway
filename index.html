@@ -251,6 +251,11 @@
   .tt-dest { flex: 1; min-width: 0; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tt-row.next .tt-dest { color: var(--text); }
   .tt-tag { font-size: 10px; font-weight: 700; color: var(--line); flex: none; }
+  .sc-linetabs { display: flex; gap: 5px; overflow-x: auto; padding: 1px 4px 9px; scrollbar-width: none; }
+  .sc-linetabs::-webkit-scrollbar { display: none; }
+  .sc-linetabs button { flex: none; display: flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--muted); font-family: var(--font); font-size: 11.5px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .sc-linetabs button .lt-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--lc, #8a8d93); flex: none; }
+  .sc-linetabs button.on { color: var(--text); background: rgba(255,255,255,.07); border-color: var(--lc, rgba(255,255,255,.25)); }
   .tt-fb-note { font-size: 10px; color: var(--faint); padding: 5px 4px 3px; }
   .tt-fb-eta { color: var(--muted) !important; }
   .tt-fb-rel { font-size: 10.5px; color: var(--faint); font-weight: 500; margin-left: 5px; }
@@ -1952,15 +1957,31 @@ function arrivalColHtml(items, fallback, elapsed, inout) {
     <button class="sc-tt-btn" data-inout="${inout}">시간표 보기</button>
   </div>`;
 }
+function lineSortKey(ln) { const m = String(ln).match(/^(\d+)호선/); return m ? Number(m[1]) : 100 + (ln.charCodeAt(0) || 0); }
 function renderArrival(items, elapsed = 0) {
   const body = document.getElementById("scBody");
-  const valid = (items || []).slice().sort((a, b) => a.etaSec - b.etaSec);
+  let all = (items || []).slice();
+  /* 환승역: 항목에 들어있는 노선들로 상단 필터 탭 구성 (2개 이상일 때만) */
+  const colorByLine = {};
+  for (const it of all) if (it.line && !colorByLine[it.line]) colorByLine[it.line] = it.color;
+  const lines = Object.keys(colorByLine).sort((a, b) => lineSortKey(a) - lineSortKey(b));
+  let tabs = "";
+  if (lines.length >= 2) {
+    const cur = (scLineFilter && lines.includes(scLineFilter)) ? scLineFilter : "전체";
+    tabs = `<div class="sc-linetabs">
+      <button data-line="전체" class="${cur === "전체" ? "on" : ""}">전체</button>
+      ${lines.map(ln => `<button data-line="${ln}" class="${cur === ln ? "on" : ""}" style="--lc:${colorByLine[ln]}"><span class="lt-dot"></span>${ln}</button>`).join("")}
+    </div>`;
+    if (cur !== "전체") all = all.filter(it => it.line === cur);
+  } else if (scLineFilter) scLineFilter = null;
+  const valid = all.sort((a, b) => a.etaSec - b.etaSec);
   const up = valid.filter(a => a.updn === "상행" || a.updn === "내선");
   const down = valid.filter(a => a.updn === "하행" || a.updn === "외선");
-  body.innerHTML = `<div class="sc-cols">${arrivalColHtml(up, "상행", elapsed, "1")}${arrivalColHtml(down, "하행", elapsed, "2")}</div>`;
+  body.innerHTML = tabs + `<div class="sc-cols">${arrivalColHtml(up, "상행", elapsed, "1")}${arrivalColHtml(down, "하행", elapsed, "2")}</div>`;
+  body.querySelectorAll(".sc-linetabs button").forEach(b => b.addEventListener("click", () => { scLineFilter = b.dataset.line; renderArrival(scList, (Date.now() - scFetchedAt) / 1000); }));
   body.querySelectorAll(".sc-tt-btn").forEach(b => b.addEventListener("click", () => openTimetable(scStation, b.dataset.inout)));
 }
-let scList = [], scFetchedAt = 0, scTimer = null, scFetching = false, scMode = "arrival", ttCtx = null, scTimetable = null;
+let scList = [], scFetchedAt = 0, scTimer = null, scFetching = false, scMode = "arrival", ttCtx = null, scTimetable = null, scLineFilter = null;
 function stopScTimer() { clearInterval(scTimer); scTimer = null; }
 function scTick() {
   if (!scStation) { stopScTimer(); return; }
@@ -1981,6 +2002,7 @@ async function openStationCard(name) {
   scStation = name;
   scMode = "arrival";
   scTimetable = null;
+  scLineFilter = null;
   stopScTimer();
   document.getElementById("scTitle").textContent = name;
   document.getElementById("scBody").innerHTML = `<div class="sc-empty">불러오는 중...</div>`;
