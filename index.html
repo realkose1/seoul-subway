@@ -461,9 +461,21 @@
   <div class="brand-card">
     <div class="brand-row">
       <div class="brand">서울 지하철 라이브</div>
-      <div class="status"><span class="dot" id="statusDot"></span><span id="statusText">모의 데이터</span><button class="status-refresh" id="refreshBtn" aria-label="새로고침" title="새로고침"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button></div>
+      <div class="status"><span class="dot" id="statusDot"></span><span id="statusText">모의 데이터</span><button class="status-refresh" id="refreshBtn" aria-label="새로고침" title="새로고침"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button><button class="status-refresh" id="settingsBtn" aria-label="설정" title="설정"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button></div>
     </div>
     <div class="chips" id="lineChips"></div>
+  </div>
+</div>
+
+<div class="settings" id="settings" role="dialog" aria-label="설정">
+  <h3>설정</h3>
+  <div class="field">
+    <label>지도</label>
+    <div class="seg" id="mapSeg">
+      <button data-prov="basic">기본</button>
+      <button data-prov="naver">네이버</button>
+    </div>
+    <div class="hint">기본 지도는 빠르고 항상 동작합니다. 네이버 지도는 더 자세한 지형·건물을 보여줍니다. 선택은 자동 저장됩니다.</div>
   </div>
 </div>
 
@@ -701,7 +713,7 @@ const LINES = {
 /* ════════════════ 앱 상태 ════════════════ */
 const state = {
   mode: DEFAULT_API_KEY ? "live" : "mock",   // mock | live
-  mapProvider: "basic",    // naver 기본, basic은 인증 실패 시 예비
+  mapProvider: "basic",    // 기본 지도가 디폴트; 설정에서 naver로 전환(localStorage "mapProvider"에 저장)
   line: "ALL",
   intervalSec: 30,
   apiKey: DEFAULT_API_KEY,
@@ -2421,11 +2433,42 @@ document.addEventListener("visibilitychange", () => {
   else { refresh(true); restartTimer(); }
 });
 
-/* 시작: 네이버 지도를 곧바로 사용, 실패 시에만 예비(기본) 지도로 자동 전환 */
+/* ── 설정 패널: 지도 종류(기본/네이버) 선택, localStorage에 저장 ── */
+function syncProviderSeg() {
+  document.querySelectorAll("#mapSeg button").forEach(b =>
+    b.classList.toggle("on", b.dataset.prov === state.mapProvider));
+}
+(function initSettings() {
+  const panel = document.getElementById("settings");
+  const btn = document.getElementById("settingsBtn");
+  if (!panel || !btn) return;
+  btn.addEventListener("click", e => {
+    e.stopPropagation();
+    const open = panel.classList.toggle("open");
+    if (open) syncProviderSeg();
+  });
+  document.addEventListener("click", e => {
+    if (panel.classList.contains("open") && !panel.contains(e.target) && !btn.contains(e.target))
+      panel.classList.remove("open");
+  });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") panel.classList.remove("open"); });
+  panel.querySelectorAll("#mapSeg button").forEach(b => b.addEventListener("click", async () => {
+    const p = b.dataset.prov;
+    if (p === state.mapProvider) return;
+    await setProvider(p);                                   /* 실패 시 setProvider가 기본으로 복구 */
+    localStorage.setItem("mapProvider", state.mapProvider); /* 실제 적용된 값을 저장 */
+    syncProviderSeg();
+  }));
+})();
+
+/* 시작: 저장된 지도 설정을 따른다(기본=basic). naver를 고른 적이 있을 때만 시도하고, 실패하면 기본으로. */
 (async () => {
-  let ok = false;
-  try { ok = await naverAdapter.ensure(); } catch (e) { ok = false; }
-  if (ok) {
+  const savedProvider = localStorage.getItem("mapProvider") === "naver" ? "naver" : "basic";
+  let useNaver = false;
+  if (savedProvider === "naver") {
+    try { useNaver = await naverAdapter.ensure(); } catch (e) { useNaver = false; }
+  }
+  if (useNaver) {
     showLayer("map-naver");
     state.mapProvider = "naver";
     adapter = naverAdapter;
@@ -2433,12 +2476,13 @@ document.addEventListener("visibilitychange", () => {
     showLayer("map-basic");
     state.mapProvider = "basic";
     adapter = basicAdapter;
-    toast("네이버 지도를 불러오지 못해 예비 지도로 시작합니다.");
+    if (savedProvider === "naver") toast("네이버 지도를 불러오지 못해 기본 지도로 시작합니다.");
   }
   state.line = loadSavedLine(); /* 마지막 선택 호선 복원 */
   adapter.init(viewOf(state.line).center, viewOf(state.line).zoom);
   selectLine(state.line);
   showUsage();
+  syncProviderSeg();
   /* 즐겨찾는 역이 있으면 현재 위치에서 가장 가까운 것을 자동으로 연다 (위치는 locateUser가 잡음) */
   if (favList().length) setTimeout(openNearestFavorite, window.innerWidth < 768 ? 2500 : 800);
 })();
