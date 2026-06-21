@@ -123,6 +123,9 @@
     display: flex; align-items: center; justify-content: center;
   }
   .icon-btn:hover { border-color: rgba(255,255,255,.2); }
+  .locate-btn { position: absolute; right: 14px; top: calc(max(12px, env(safe-area-inset-top)) + 98px); z-index: 1000; }
+  .locate-btn:active { transform: scale(0.94); }
+  .locate-btn svg { display: block; }
 
   /* ── 설정: 하단 모달(바텀시트) ─────────── */
   .settings-scrim {
@@ -476,6 +479,8 @@
     <div class="chips" id="lineChips"></div>
   </div>
 </div>
+
+<button class="icon-btn locate-btn" id="locateBtn" aria-label="현재 위치로 이동" title="현재 위치로 이동"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.5"/><line x1="12" y1="2.5" x2="12" y2="5.5"/><line x1="12" y1="18.5" x2="12" y2="21.5"/><line x1="2.5" y1="12" x2="5.5" y2="12"/><line x1="18.5" y1="12" x2="21.5" y2="12"/></svg></button>
 
 <div class="settings-scrim" id="settingsScrim"></div>
 <div class="settings" id="settings" role="dialog" aria-modal="true" aria-label="설정">
@@ -2532,6 +2537,19 @@ function locateUser() {
     openNearestFavorite(); /* 위치를 잡았으니 가장 가까운 즐겨찾기 역을 연다 */
   }, () => { /* 거부/실패 시 조용히 기본 뷰 유지 */ }, { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 });
 }
+/* 우상단 '현재 위치로 이동' 버튼: 위치를 즉시 중앙으로(있으면) + 최신 위치 재조회. 즐겨찾기 자동열기 부작용 없음 */
+function recenterToUser() {
+  if (state.userPos && adapter.map) {
+    if (adapter.setUserLocation) adapter.setUserLocation(state.userPos);
+    adapter.setView(state.userPos, 14);
+  }
+  if (!("geolocation" in navigator)) { toast("이 기기에서 위치를 사용할 수 없습니다."); return; }
+  navigator.geolocation.getCurrentPosition(p => {
+    state.userPos = [p.coords.latitude, p.coords.longitude];
+    if (adapter.map) { if (adapter.setUserLocation) adapter.setUserLocation(state.userPos); adapter.setView(state.userPos, 14); }
+  }, () => { if (!state.userPos) toast("위치 권한을 확인해 주세요."); }, { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 });
+}
+document.getElementById("locateBtn").addEventListener("click", recenterToUser);
 if (window.innerWidth < 768) locateUser();
 
 /* 배포 환경 프록시 감지: 키가 없어도 /api/position 이 살아 있으면 실시간으로 자동 전환 */
