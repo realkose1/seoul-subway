@@ -441,7 +441,8 @@
   /* ── 토스트 ───────────────────────── */
   .toast {
     position: absolute; left: 50%; bottom: 24px;
-    transform: translateX(-50%) translateY(80px);
+    transform: translateX(-50%) translateY(12px);
+    opacity: 0; pointer-events: none;
     z-index: 2000;
     background: var(--panel-solid);
     border: 1px solid var(--border);
@@ -450,10 +451,10 @@
     font-size: 12.5px;
     width: max-content;
     max-width: calc(100vw - 40px);
-    transition: transform .3s ease;
+    transition: opacity .28s ease, transform .28s ease;
     text-align: center;
   }
-  .toast.show { transform: translateX(-50%) translateY(0); }
+  .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
   @media (max-width: 767px) { .toast { bottom: 72px; } }
 
   @media (prefers-reduced-motion: reduce) {
@@ -1116,10 +1117,9 @@ const basicAdapter = {
   async ensure() { return true; },
   resize() { if (this.map) this.map.invalidateSize(); },
   init(center, zoom) {
-    this.map = L.map("map-basic", { zoomControl: true }).setView(center, zoom);
+    this.map = L.map("map-basic", { zoomControl: false }).setView(center, zoom);
     this.map.on("click", e => onMapClick([e.latlng.lat, e.latlng.lng]));
     this.map.on("dragstart", () => stopFollow());
-    this.map.zoomControl.setPosition("bottomleft");
     L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
       attribution: "&copy; OpenStreetMap &copy; CARTO", subdomains: "abcd", maxZoom: 19
     }).addTo(this.map);
@@ -1211,7 +1211,7 @@ const naverAdapter = {
   },
   init(center, zoom) {
     this.map = new naver.maps.Map("map-naver", {
-      center: new naver.maps.LatLng(center[0], center[1]), zoom
+      center: new naver.maps.LatLng(center[0], center[1]), zoom, zoomControl: false
     });
     /* 네이버가 컨테이너 스타일을 건드려도 전체 화면 배치를 유지 */
     const el = document.getElementById("map-naver");
