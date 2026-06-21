@@ -124,19 +124,28 @@
   }
   .icon-btn:hover { border-color: rgba(255,255,255,.2); }
 
-  /* ── 설정 패널 ─────────────────────── */
-  .settings {
-    position: absolute; top: 64px; right: 14px;
-    z-index: 1100;
-    width: min(320px, calc(100vw - 28px));
-    background: var(--panel);
-    backdrop-filter: blur(16px);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 16px;
-    display: none;
+  /* ── 설정: 하단 모달(바텀시트) ─────────── */
+  .settings-scrim {
+    position: fixed; inset: 0; z-index: 1190;
+    background: rgba(0, 0, 0, 0.5);
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.25s ease;
   }
-  .settings.open { display: block; }
+  .settings-scrim.open { opacity: 1; pointer-events: auto; }
+  .settings {
+    position: fixed; left: 50%; bottom: 0; z-index: 1200;
+    width: min(480px, 100%);
+    max-height: 85vh; overflow-y: auto;
+    transform: translateX(-50%) translateY(105%);
+    background: var(--panel-solid);
+    border: 1px solid var(--border); border-bottom: none;
+    border-radius: 20px 20px 0 0;
+    padding: 8px 20px max(20px, env(safe-area-inset-bottom));
+    box-shadow: 0 -12px 44px rgba(0, 0, 0, 0.55);
+    transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+  }
+  .settings.open { transform: translateX(-50%) translateY(0); }
+  .sheet-grip { width: 40px; height: 4px; border-radius: 2px; background: var(--faint); margin: 6px auto 14px; }
   .settings h3 { font-size: 13px; font-weight: 700; margin-bottom: 12px; }
   .field { margin-bottom: 14px; }
   .field label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 6px; }
@@ -467,7 +476,9 @@
   </div>
 </div>
 
-<div class="settings" id="settings" role="dialog" aria-label="설정">
+<div class="settings-scrim" id="settingsScrim"></div>
+<div class="settings" id="settings" role="dialog" aria-modal="true" aria-label="설정">
+  <div class="sheet-grip"></div>
   <h3>설정</h3>
   <div class="field">
     <label>지도</label>
@@ -2448,18 +2459,14 @@ function syncProviderSeg() {
 }
 (function initSettings() {
   const panel = document.getElementById("settings");
+  const scrim = document.getElementById("settingsScrim");
   const btn = document.getElementById("settingsBtn");
   if (!panel || !btn) return;
-  btn.addEventListener("click", e => {
-    e.stopPropagation();
-    const open = panel.classList.toggle("open");
-    if (open) syncProviderSeg();
-  });
-  document.addEventListener("click", e => {
-    if (panel.classList.contains("open") && !panel.contains(e.target) && !btn.contains(e.target))
-      panel.classList.remove("open");
-  });
-  document.addEventListener("keydown", e => { if (e.key === "Escape") panel.classList.remove("open"); });
+  const openSheet = () => { panel.classList.add("open"); if (scrim) scrim.classList.add("open"); syncProviderSeg(); };
+  const closeSheet = () => { panel.classList.remove("open"); if (scrim) scrim.classList.remove("open"); };
+  btn.addEventListener("click", e => { e.stopPropagation(); panel.classList.contains("open") ? closeSheet() : openSheet(); });
+  if (scrim) scrim.addEventListener("click", closeSheet);
+  document.addEventListener("keydown", e => { if (e.key === "Escape") closeSheet(); });
   panel.querySelectorAll("#mapSeg button").forEach(b => b.addEventListener("click", async () => {
     const p = b.dataset.prov;
     if (p === state.mapProvider) return;
