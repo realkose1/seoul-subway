@@ -2025,6 +2025,24 @@ function deriveArrivals(name, posByLine) {
   }
   return out;
 }
+/* 같은 열차가 한 역의 도착 목록에 두 번 들어가지 않게 정리한다.
+   서울 위치 API는 역 진입↔출발 전환 순간 같은 trainNo를 두 행으로 내보낼 때가 있어
+   (둘 다 같은 btrainNo→같은 barvlDt로 보정되어) "N분 후 ○○행"이 똑같이 두 번 찍힌다.
+   btrainNo로 묶고(없으면 방향·목적지·현재역·거리 조합 — 서로 다른 열차는 절대 동일 키가 아님),
+   실측 우선·더 가까운 항목을 남긴다. */
+function dedupArrivals(items) {
+  const seen = new Map(), out = [];
+  for (const it of items) {
+    const key = it.btrainNo ? `no:${it.btrainNo}` : `pos:${it.updn}|${it.dest}|${it.curStn}|${it.away}`;
+    const idx = seen.get(key);
+    if (idx == null) { seen.set(key, out.length); out.push(it); continue; }
+    const prev = out[idx];
+    const better = (it.measured && !prev.measured) ||
+      (it.measured === prev.measured && (it.etaSec ?? 1e9) < (prev.etaSec ?? 1e9));
+    if (better) out[idx] = it;
+  }
+  return out;
+}
 async function loadArrivals(name, force) {
   const X = resolve(name), lines = X ? linesAt(X) : [];
   const [posByLine, apiArr] = await Promise.all([
@@ -2046,7 +2064,7 @@ async function loadArrivals(name, force) {
     items.push({ line: ln || "", color: colorOfArrival(a), updn: a.updnLine, dest: a.bstatnNm || (a.trainLineNm || "").split(" - ")[0].replace(/행$/, ""),
       express: a.btrainSttus === "급행", btrainNo: a.btrainNo, away: null, etaSec: Math.max(0, sec), curStn: a.arvlMsg3 || "", measured: Number(a.barvlDt) > 0 });
   }
-  return items;
+  return dedupArrivals(items);
 }
 function arrivalItemRowHtml(it, elapsed) {
   const sec = Math.max(0, Math.round(it.etaSec - elapsed));
