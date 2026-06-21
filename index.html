@@ -402,7 +402,7 @@
   .train-pin.express { border-radius: 6px; }
   .leaflet-tooltip.stn-label {
     background: transparent; border: none; box-shadow: none;
-    color: var(--muted); font-size: 10px; font-weight: 600;
+    color: #cdd1d7; font-size: 10px; font-weight: 600;
     font-family: var(--font);
     text-shadow: 0 1px 3px rgba(0,0,0,.9), 0 0 6px rgba(0,0,0,.8);
   }
@@ -727,6 +727,7 @@ const state = {
 };
 const STATUS_LABEL = { "0": "진입 중", "1": "도착", "2": "출발", "3": "전역 출발" };
 const LABEL_ZOOM = 13;
+const BASIC_LABEL_ZOOM = 12; /* 기본 지도는 자체 역 라벨이 없어 한 단계 일찍 역명 노출 */
 
 /* ════════════════ 역명 해석 / 노선 그래프 ════════════════ */
 const NORM = {};
@@ -1125,8 +1126,8 @@ const basicAdapter = {
   },
   addStation(name, pos, isTerminal, color) {
     const m = L.circleMarker(pos, {
-      radius: isTerminal ? 4.5 : 3, color: isTerminal ? color : "#6A6D73",
-      weight: isTerminal ? 2 : 1.5, fillColor: "#0d0e10", fillOpacity: 1
+      radius: isTerminal ? 5 : 3.4, color: isTerminal ? color : "#cdd1d7",
+      weight: isTerminal ? 2.5 : 1.5, fillColor: "#ffffff", fillOpacity: 1
     }).addTo(this.stationLayer);
     m.on("click", () => onMapClick(pos));
     this.labelLayer.addLayer(
@@ -1137,7 +1138,7 @@ const basicAdapter = {
   },
   syncLabels() {
     if (!this.map) return;
-    if (this.map.getZoom() >= LABEL_ZOOM) { if (!this.map.hasLayer(this.labelLayer)) this.map.addLayer(this.labelLayer); }
+    if (this.map.getZoom() >= BASIC_LABEL_ZOOM) { if (!this.map.hasLayer(this.labelLayer)) this.map.addLayer(this.labelLayer); }
     else if (this.map.hasLayer(this.labelLayer)) this.map.removeLayer(this.labelLayer);
   },
   upsertTrain(no, pos, t, heading) {
@@ -1445,9 +1446,16 @@ function drawLine(lineName) {
   if (lineName === "ALL") {
     document.documentElement.style.setProperty("--line", ALL_VIEW.color);
     document.documentElement.style.setProperty("--line-ink", inkOn(ALL_VIEW.color));
+    const seenAll = new Set();
     for (const [nm, def] of Object.entries(LINES)) {
       for (const seg of def.segments) {
         adapter.addPolyline(smoothSeg(nm, seg), def.color);
+        /* 기본 지도는 베이스맵에 역 라벨이 없으므로 전체 보기에도 역 dot/이름을 그린다(라벨은 줌으로 자동 노출) */
+        if (state.mapProvider === "basic") for (const n of seg) {
+          if (seenAll.has(n) || !STN[n]) continue;
+          seenAll.add(n);
+          adapter.addStation(n, STN[n], false, def.color);
+        }
       }
     }
     return;
