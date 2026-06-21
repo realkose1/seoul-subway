@@ -1116,7 +1116,7 @@ const basicAdapter = {
       radius: isTerminal ? 4.5 : 3, color: isTerminal ? color : "#6A6D73",
       weight: isTerminal ? 2 : 1.5, fillColor: "#0d0e10", fillOpacity: 1
     }).addTo(this.stationLayer);
-    m.bindPopup(`<div class="pp-line">${state.line}</div><div class="pp-title">${name}</div>`);
+    m.on("click", () => onMapClick(pos));
     this.labelLayer.addLayer(
       L.marker(pos, { opacity: 0, interactive: false })
         .bindTooltip(name, { permanent: true, direction: "right", offset: [6, 0], className: "stn-label" })
@@ -1231,10 +1231,8 @@ const naverAdapter = {
       },
       zIndex: 1
     });
-    naver.maps.Event.addListener(m, "click", () => {
-      this.info.setContent(`<div class="naver-pp"><div class="pp-line">${state.line}</div><div class="pp-title">${name}</div></div>`);
-      this.info.open(this.map, m);
-    });
+    /* 역 dot 탭 → 도착 카드 열기(마커 클릭이 지도 click을 가로채므로 직접 onMapClick 위임) */
+    naver.maps.Event.addListener(m, "click", () => onMapClick([pos[0], pos[1]]));
     this.stations.push(m);
     const lbl = new naver.maps.Marker({
       map: null, position: ll, clickable: false,
