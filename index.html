@@ -1126,13 +1126,13 @@ const basicAdapter = {
   },
   addStation(name, pos, isTerminal, color) {
     const m = L.circleMarker(pos, {
-      radius: isTerminal ? 5 : 3.4, color: isTerminal ? color : "#cdd1d7",
-      weight: isTerminal ? 2.5 : 1.5, fillColor: "#ffffff", fillOpacity: 1
+      radius: isTerminal ? 6.5 : 4.8, color: isTerminal ? color : "#cdd1d7",
+      weight: isTerminal ? 2.5 : 1.6, fillColor: "#ffffff", fillOpacity: 1
     }).addTo(this.stationLayer);
     m.on("click", () => onMapClick(pos));
     this.labelLayer.addLayer(
-      L.marker(pos, { opacity: 0, interactive: false })
-        .bindTooltip(name, { permanent: true, direction: "right", offset: [6, 0], className: "stn-label" })
+      L.marker(pos, { opacity: 0, interactive: false, icon: L.divIcon({ className: "", iconSize: [0, 0] }) })
+        .bindTooltip(name, { permanent: true, direction: "right", offset: [isTerminal ? 9 : 7, 0], className: "stn-label" })
     );
     this.syncLabels();
   },
