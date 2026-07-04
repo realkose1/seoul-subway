@@ -1889,6 +1889,9 @@ if (NATIVE) {
   const mo = new MutationObserver(scheduleCard);
   const cardEl = document.getElementById("stationCard");
   if (cardEl) mo.observe(cardEl, { subtree: true, childList: true, attributes: true, characterData: true });
+  /* 여백 탭 몰입 모드(html.immersive)를 네이티브 바에도 반영 */
+  const postImmersive = () => { try { window.webkit.messageHandlers.ui.postMessage({ type: "immersive", on: document.documentElement.classList.contains("immersive") }); } catch (e) {} };
+  new MutationObserver(postImmersive).observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
   const dbg = new URLSearchParams(location.search).get("_dbg");   /* 개발용: ?_dbg=역명 이면 해당 역 카드 자동 열기 */
   if (dbg) setTimeout(() => { try { openStationCard(dbg); } catch (e) {} }, 2600);
 }
