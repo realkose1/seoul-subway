@@ -51,7 +51,7 @@
     position: absolute; top: 0; left: 0; right: 0;
     z-index: 1000;
     display: flex; align-items: flex-start; gap: 10px;
-    padding: max(12px, env(safe-area-inset-top)) 14px 0 14px;
+    padding: 0;
     pointer-events: none;
   }
   .brand-card {
@@ -59,12 +59,11 @@
     background: var(--panel);
     backdrop-filter: blur(26px) saturate(180%);
     -webkit-backdrop-filter: blur(26px) saturate(180%);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 12px 14px;
+    border: none; border-bottom: 1px solid var(--border);
+    border-radius: 0 0 var(--radius) var(--radius);
+    padding: max(12px, calc(env(safe-area-inset-top) + 6px)) 16px 12px;
     min-width: 0;
     flex: 1;
-    max-width: 560px;
   }
   .brand-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .brand { font-size: 15px; font-weight: 700; letter-spacing: -0.02em; white-space: nowrap; }
@@ -131,7 +130,7 @@
     display: flex; align-items: center; justify-content: center;
   }
   .icon-btn:hover { border-color: rgba(255,255,255,.2); }
-  .locate-btn { position: absolute; right: 14px; top: calc(max(12px, env(safe-area-inset-top)) + 98px); z-index: 1000; }
+  .locate-btn { position: absolute; right: 14px; top: calc(max(12px, env(safe-area-inset-top) + 6px) + 85px); z-index: 1000; }
   .locate-btn:active { transform: scale(0.94); }
   .locate-btn svg { display: block; }
   /* 이머시브: 지도 여백 탭으로 상/하단 레이어(+위치 버튼) 함께 숨김/복귀 */
