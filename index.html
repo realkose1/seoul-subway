@@ -1642,6 +1642,16 @@ function dropStaleTrains(list) {
   if (!ref) return list; /* 수신 시각 정보 없음(모의 데이터 등): 그대로 둔다 */
   return list.filter(t => { const r = recptMs(t.recptnDt); return r == null || ref - r <= STALE_TRAIN_MS; });
 }
+/* 같은 위치·행선·방향의 열차가 둘 이상이면(느린 갱신으로 남은 유령 등) 최신 수신분만 남긴다 — 지도 마커·선택창·열차 목록 중복 방지 */
+function dedupTrains(list) {
+  const seen = new Map();
+  for (const t of list) {
+    const k = `${t.statnNm}|${t.statnTnm}|${t.updnLine}`;
+    const prev = seen.get(k);
+    if (!prev || (recptMs(t.recptnDt) || 0) > (recptMs(prev.recptnDt) || 0)) seen.set(k, t);
+  }
+  return [...seen.values()];
+}
 
 async function fetchLive(force) {
   if (!force && !idleGate()) return;
@@ -1683,7 +1693,7 @@ async function fetchLive(force) {
   state.calls++;
   addUsage(upstreamCost);
   state.dataPath = used.name;
-  state.trains = dropStaleTrains(data.realtimePositionList || []);
+  state.trains = dedupTrains(dropStaleTrains(data.realtimePositionList || []));
   /* 2단계: 표시 (렌더링 오류는 별도로 보고한다) */
   try {
     renderTrains();
