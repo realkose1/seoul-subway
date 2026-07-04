@@ -134,6 +134,12 @@
   .locate-btn { position: absolute; right: 14px; top: calc(max(12px, env(safe-area-inset-top)) + 98px); z-index: 1000; }
   .locate-btn:active { transform: scale(0.94); }
   .locate-btn svg { display: block; }
+  /* 이머시브: 지도 여백 탭으로 상/하단 레이어(+위치 버튼) 함께 숨김/복귀 */
+  .topbar, .locate-btn, .station-card, .panel { transition: opacity .28s ease; }
+  html.immersive .topbar, html.immersive .locate-btn,
+  html.immersive .station-card, html.immersive .panel { opacity: 0; }
+  html.immersive .brand-card, html.immersive .locate-btn,
+  html.immersive .station-card, html.immersive .panel { pointer-events: none; }
 
   /* ── 설정: 하단 모달(바텀시트) ─────────── */
   .settings-scrim {
@@ -2064,7 +2070,7 @@ function stationsToX(ln, t, X, cur, term) {
 }
 async function fetchPositionsForLines(lines, force) {
   return Promise.all(lines.map(async ln => {
-    try { const d = await fetchPosition(ln, force); return { line: ln, trains: (d && d.realtimePositionList) || [] }; }
+    try { const d = await fetchPosition(ln, force); return { line: ln, trains: dropStaleTrains((d && d.realtimePositionList) || []) }; }
     catch (e) { return { line: ln, trains: [] }; }
   }));
 }
@@ -2094,11 +2100,18 @@ function deriveArrivals(name, posByLine) {
    btrainNo로 묶고(없으면 방향·목적지·현재역·거리 조합 — 서로 다른 열차는 절대 동일 키가 아님),
    실측 우선·더 가까운 항목을 남긴다. */
 function dedupArrivals(items) {
-  const seen = new Map(), out = [];
+  const byNo = new Map(), byPos = new Map(), out = [];
   for (const it of items) {
-    const key = it.btrainNo ? `no:${it.btrainNo}` : `pos:${it.updn}|${it.dest}|${it.curStn}|${it.away}`;
-    const idx = seen.get(key);
-    if (idx == null) { seen.set(key, out.length); out.push(it); continue; }
+    const nk = it.btrainNo ? `no:${it.btrainNo}` : null;
+    /* 위치가 완전히 같은 도출 열차(같은 방향·목적지·현재역·거리)는 trainNo가 달라도 같은 도착 — 유령/중복 합침 */
+    const pk = (it.away != null) ? `${it.updn}|${it.dest}|${it.curStn}|${it.away}` : null;
+    let idx = (nk && byNo.has(nk)) ? byNo.get(nk) : (pk && byPos.has(pk)) ? byPos.get(pk) : null;
+    if (idx == null) {
+      idx = out.length; out.push(it);
+      if (nk) byNo.set(nk, idx);
+      if (pk) byPos.set(pk, idx);
+      continue;
+    }
     const prev = out[idx];
     const better = (it.measured && !prev.measured) ||
       (it.measured === prev.measured && (it.etaSec ?? 1e9) < (prev.etaSec ?? 1e9));
@@ -2439,7 +2452,8 @@ function onMapClick(pos) {
     .sort((a, b) => a.d - b.d)
     .slice(0, 4)
     .map(x => x.st.train);
-  if (!stn && !trains.length) { document.getElementById("stationCard").classList.remove("open"); scStation = null; stopScTimer(); return; }
+  if (!stn && !trains.length) { document.documentElement.classList.toggle("immersive"); return; } /* 여백 탭: 상/하단 레이어 토글 */
+  document.documentElement.classList.remove("immersive"); /* 역·열차 선택 시 크롬 복귀 */
   if (stn && !trains.length) return openStationCard(stn);
   if (!stn && trains.length === 1) return openTrainCardByNo(trains[0].trainNo);
   showChooser(stn, trains);
