@@ -1157,7 +1157,7 @@ const basicAdapter = {
   async ensure() { return true; },
   resize() { if (this.map) this.map.invalidateSize(); },
   init(center, zoom) {
-    this.map = L.map("map-basic", { zoomControl: false }).setView(center, zoom);
+    this.map = L.map("map-basic", { zoomControl: false, preferCanvas: true }).setView(center, zoom);   /* 역 dot·노선을 캔버스로 렌더 → 마커 많을 때 팬/줌 부하·발열 감소 */
     this.map.on("click", e => onMapClick([e.latlng.lat, e.latlng.lng]));
     this.map.on("dragstart", () => stopFollow());
     L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
