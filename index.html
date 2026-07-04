@@ -72,7 +72,8 @@
     font-size: 11px; color: var(--muted); white-space: nowrap;
   }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }
-  .dot.live { background: var(--line); animation: pulse 1.8s infinite; }
+  .dot.live { background: #22c55e; animation: pulse 1.8s infinite; }   /* 실시간 정상 싱크 = 녹색(노선색과 무관) */
+  .ver { font-size: 10px; font-weight: 500; color: var(--faint-text); letter-spacing: 0; margin-left: 1px; }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
   .status-refresh {
     margin-left: 1px;
@@ -212,7 +213,7 @@
     padding: 7px 0;
     cursor: pointer;
   }
-  .seg button.on { background: var(--line); color: var(--line-ink, #fff); }
+  .seg button.on { background: #ECEDEE; color: #17181c; }
   .hint { font-size: 11px; color: var(--faint-text); line-height: 1.6; margin-top: 4px; }
   .hint a { color: var(--muted); }
   /* 즐겨찾는 역 관리 */
@@ -503,7 +504,7 @@
 <div class="topbar">
   <div class="brand-card">
     <div class="brand-row">
-      <div class="brand">서울 지하철 라이브</div>
+      <div class="brand">서울 지하철 라이브 <span class="ver">v1.0</span></div>
       <div class="status"><span class="dot" id="statusDot"></span><span id="statusText">모의 데이터</span><button class="status-refresh" id="refreshBtn" aria-label="새로고침" title="새로고침"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button><button class="status-refresh" id="settingsBtn" aria-label="설정" title="설정"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button></div>
     </div>
     <div class="chips" id="lineChips"></div>
