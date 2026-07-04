@@ -210,6 +210,20 @@
   .seg button.on { background: var(--line); color: var(--line-ink, #fff); }
   .hint { font-size: 11px; color: var(--faint-text); line-height: 1.6; margin-top: 4px; }
   .hint a { color: var(--muted); }
+  /* 즐겨찾는 역 관리 */
+  .fav-count { color: var(--faint-text); font-weight: 400; }
+  .fav-list { display: flex; flex-direction: column; margin-top: 2px; }
+  .fav-row { display: flex; align-items: center; gap: 10px; padding: 9px 4px; border-radius: 8px; cursor: pointer; }
+  .fav-row:active { background: rgba(255,255,255,.06); }
+  .fav-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .fav-name { font-size: 14px; color: var(--text); }
+  .fav-line { font-size: 11px; color: var(--faint-text); }
+  .fav-actions { margin-left: auto; display: flex; align-items: center; gap: 1px; }
+  .fav-actions button { background: transparent; border: none; color: var(--muted); font-size: 12px; width: 30px; height: 30px; border-radius: 7px; cursor: pointer; line-height: 1; }
+  .fav-actions button:disabled { opacity: .28; }
+  .fav-actions button:active:not(:disabled) { background: rgba(255,255,255,.09); }
+  .fav-del { font-size: 14px !important; }
+  .fav-empty { font-size: 12.5px; color: var(--faint-text); line-height: 1.6; padding: 6px 4px; }
   .meter { font-size: 11px; color: var(--muted); display: flex; justify-content: space-between; padding-top: 10px; border-top: 1px solid var(--border); }
 
   /* ── 열차 패널 ─────────────────────── */
@@ -496,6 +510,10 @@
 <div class="settings" id="settings" role="dialog" aria-modal="true" aria-label="설정">
   <div class="sheet-grip"></div>
   <h3>설정</h3>
+  <div class="field">
+    <label>즐겨찾는 역 <span class="fav-count" id="favCount"></span></label>
+    <div class="fav-list" id="favList"></div>
+  </div>
   <div class="field">
     <label>지도</label>
     <div class="seg" id="mapSeg">
@@ -2323,6 +2341,29 @@ function wireTtControls() {
 }
 /* 즐겨찾는 역: 별을 켜두면 다음 접속 때 자동으로 도착 카드가 열린다 */
 function favList() { try { return JSON.parse(localStorage.getItem("favStations") || "[]"); } catch (e) { return []; } }
+function saveFav(arr) { try { localStorage.setItem("favStations", JSON.stringify(arr.slice(0, 5))); } catch (e) {} }
+/* 설정 시트: 즐겨찾는 역 목록 렌더 (탭→열기, ✕→삭제, ▲▼→순서변경) */
+function renderFavList() {
+  const el = document.getElementById("favList");
+  if (!el) return;
+  const f = favList(), cnt = document.getElementById("favCount");
+  if (cnt) cnt.textContent = `${f.length} / 5`;
+  if (!f.length) { el.innerHTML = `<div class="fav-empty">지도에서 역을 누르고 <span style="color:var(--text)">&#9734;</span> 를 켜면 여기에 모입니다.</div>`; return; }
+  el.innerHTML = f.map((name, i) => {
+    const ls = linesAt(resolve(name)) || [];
+    const color = (ls[0] && LINES[ls[0]]) ? LINES[ls[0]].color : "#8a8d93";
+    return `<div class="fav-row" data-name="${name}">
+      <span class="fav-dot" style="background:${color}"></span>
+      <span class="fav-name">${name}</span>
+      ${ls[0] ? `<span class="fav-line">${ls[0]}</span>` : ""}
+      <span class="fav-actions">
+        <button class="fav-mv" data-dir="-1" data-i="${i}" aria-label="위로"${i === 0 ? " disabled" : ""}>&#9650;</button>
+        <button class="fav-mv" data-dir="1" data-i="${i}" aria-label="아래로"${i === f.length - 1 ? " disabled" : ""}>&#9660;</button>
+        <button class="fav-del" data-name="${name}" aria-label="삭제">&#10005;</button>
+      </span>
+    </div>`;
+  }).join("");
+}
 function syncFavBtn() {
   const b = document.getElementById("scFav");
   b.style.display = scStation ? "" : "none";
@@ -2336,6 +2377,7 @@ document.getElementById("scFav").addEventListener("click", () => {
   else f = [scStation, ...f].slice(0, 5);
   try { localStorage.setItem("favStations", JSON.stringify(f)); } catch (e) {}
   syncFavBtn();
+  renderFavList();
   toast(favList().includes(scStation) ? `${scStation}역을 즐겨찾기에 추가했습니다. 접속하면 자동으로 열립니다.` : `${scStation}역 즐겨찾기를 해제했습니다.`);
 });
 /* 열차 상세 카드 */
@@ -2478,8 +2520,16 @@ function syncProviderSeg() {
   const scrim = document.getElementById("settingsScrim");
   const btn = document.getElementById("settingsBtn");
   if (!panel || !btn) return;
-  const openSheet = () => { panel.classList.add("open"); if (scrim) scrim.classList.add("open"); syncProviderSeg(); };
+  const openSheet = () => { panel.classList.add("open"); if (scrim) scrim.classList.add("open"); syncProviderSeg(); renderFavList(); };
   const closeSheet = () => { panel.classList.remove("open"); if (scrim) scrim.classList.remove("open"); };
+  const favEl = document.getElementById("favList");
+  if (favEl) favEl.addEventListener("click", e => {
+    const del = e.target.closest(".fav-del"), mv = e.target.closest(".fav-mv"), row = e.target.closest(".fav-row");
+    const f = favList();
+    if (del) { saveFav(f.filter(x => x !== del.dataset.name)); renderFavList(); return; }
+    if (mv) { const i = +mv.dataset.i, j = i + (+mv.dataset.dir); if (j >= 0 && j < f.length) { [f[i], f[j]] = [f[j], f[i]]; saveFav(f); renderFavList(); } return; }
+    if (row) { closeSheet(); openStationCard(row.dataset.name); }
+  });
   btn.addEventListener("click", e => { e.stopPropagation(); panel.classList.contains("open") ? closeSheet() : openSheet(); });
   if (scrim) scrim.addEventListener("click", closeSheet);
   document.addEventListener("keydown", e => { if (e.key === "Escape") closeSheet(); });
