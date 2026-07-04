@@ -321,7 +321,7 @@
   }
   .sc-follow.on { background: #215cd6; border-color: #215cd6; }
   .sc-empty { padding: 18px; text-align: center; color: var(--muted); font-size: 12.5px; }
-  @media (max-width: 767px) { .station-card { bottom: 66px; } }
+  @media (max-width: 767px) { .station-card { bottom: max(14px, env(safe-area-inset-bottom)); } }
 
   .list-fab { display: none; }
   @media (max-width: 767px) {
