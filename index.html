@@ -8,7 +8,7 @@
 <style>
   :root {
     --bg: #0d0e10;
-    --panel: rgba(20, 21, 24, 0.94);
+    --panel: rgba(24, 26, 32, 0.66);   /* 리퀴드 글래스(반투명) — 밝은 네이버 지도에선 .naver-map로 불투명 복귀 */
     --panel-solid: #141518;
     --border: rgba(255, 255, 255, 0.08);
     --text: #ECEDEE;
@@ -39,6 +39,14 @@
   .leaflet-control-zoom a { background: var(--panel-solid) !important; color: var(--text) !important; border-color: var(--border) !important; }
 
   /* ── 상단 바 ───────────────────────── */
+  /* ── 리퀴드 글래스: 상/하단 레이어 (스펙큘러 상단 하이라이트 + 플로팅 섀도) ── */
+  .brand-card, .station-card, .panel, .icon-btn, .toast {
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 12px 36px rgba(0,0,0,0.44);
+  }
+  /* 밝은 네이버 지도에선 명도대비 위해 유리를 불투명으로 */
+  html.naver-map .brand-card, html.naver-map .station-card, html.naver-map .panel,
+  html.naver-map .settings, html.naver-map .toast, html.naver-map .icon-btn { background: var(--panel-solid); }
+
   .topbar {
     position: absolute; top: 0; left: 0; right: 0;
     z-index: 1000;
@@ -49,8 +57,8 @@
   .brand-card {
     pointer-events: auto;
     background: var(--panel);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(26px) saturate(180%);
+    -webkit-backdrop-filter: blur(26px) saturate(180%);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 12px 14px;
@@ -116,7 +124,7 @@
     border-radius: var(--radius);
     border: 1px solid var(--border);
     background: var(--panel);
-    backdrop-filter: blur(16px);
+    backdrop-filter: blur(26px) saturate(180%);
     color: var(--text);
     font-size: 17px;
     cursor: pointer;
@@ -140,11 +148,12 @@
     width: min(480px, 100%);
     max-height: 85vh; overflow-y: auto;
     transform: translateX(-50%) translateY(105%);
-    background: var(--panel-solid);
+    background: var(--panel);
+    backdrop-filter: blur(26px) saturate(180%); -webkit-backdrop-filter: blur(26px) saturate(180%);
     border: 1px solid var(--border); border-bottom: none;
     border-radius: 20px 20px 0 0;
     padding: 8px 20px max(20px, env(safe-area-inset-bottom));
-    box-shadow: 0 -12px 44px rgba(0, 0, 0, 0.55);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 -12px 44px rgba(0, 0, 0, 0.55);
     transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
   }
   .settings.open { transform: translateX(-50%) translateY(0); }
@@ -210,8 +219,8 @@
   .panel {
     position: absolute; z-index: 1000;
     background: var(--panel);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(26px) saturate(180%);
+    -webkit-backdrop-filter: blur(26px) saturate(180%);
     border: 1px solid var(--border);
     display: flex; flex-direction: column;
     overflow: hidden;
@@ -230,7 +239,7 @@
     width: min(420px, calc(100vw - 28px));
     max-height: 46vh;
     background: var(--panel);
-    backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(26px) saturate(180%); -webkit-backdrop-filter: blur(26px) saturate(180%);
     border: 1px solid var(--border); border-radius: 16px;
     display: none; flex-direction: column; overflow: hidden;
   }
@@ -310,7 +319,7 @@
       bottom: max(14px, env(safe-area-inset-bottom));
       left: 50%; transform: translateX(-50%);
       background: var(--panel);
-      backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+      backdrop-filter: blur(26px) saturate(180%); -webkit-backdrop-filter: blur(26px) saturate(180%);
       border: 1px solid var(--border); border-radius: 999px;
       color: var(--text);
       font-family: var(--font); font-size: 12.5px; font-weight: 600;
@@ -447,7 +456,8 @@
     transform: translateX(-50%) translateY(12px);
     opacity: 0; pointer-events: none;
     z-index: 2000;
-    background: var(--panel-solid);
+    background: var(--panel);
+    backdrop-filter: blur(18px) saturate(180%); -webkit-backdrop-filter: blur(18px) saturate(180%);
     border: 1px solid var(--border);
     border-radius: 11px;
     padding: 11px 18px;
@@ -1784,6 +1794,7 @@ function selectLine(name) {
 /* 지도 레이어 표시 전환 (지도는 재생성하지 않고 상시 유지) */
 function showLayer(id) {
   document.querySelectorAll(".maplayer").forEach(el => { el.style.display = el.id === id ? "block" : "none"; });
+  document.documentElement.classList.toggle("naver-map", id === "map-naver"); /* 밝은 지도에선 유리 대신 불투명(명도대비) */
 }
 
 /* 지도 제공자 전환 */
