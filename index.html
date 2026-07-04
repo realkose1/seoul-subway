@@ -120,7 +120,7 @@
   .icon-btn {
     pointer-events: auto;
     width: 42px; height: 42px; flex: none;
-    border-radius: var(--radius);
+    border-radius: 50%;
     border: 1px solid var(--border);
     background: var(--panel);
     backdrop-filter: blur(26px) saturate(180%);
@@ -223,8 +223,8 @@
   .fav-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
   .fav-name { font-size: 14px; color: var(--text); }
   .fav-line { font-size: 11px; color: var(--faint-text); }
-  .fav-actions { margin-left: auto; display: flex; align-items: center; gap: 1px; }
-  .fav-actions button { background: transparent; border: none; color: var(--muted); font-size: 12px; width: 30px; height: 30px; border-radius: 7px; cursor: pointer; line-height: 1; }
+  .fav-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+  .fav-actions button { background: rgba(255,255,255,.04); border: 1px solid var(--border); color: var(--muted); font-size: 10.5px; width: 28px; height: 28px; border-radius: 50%; cursor: pointer; line-height: 1; padding: 0; }
   .fav-actions button:disabled { opacity: .28; }
   .fav-actions button:active:not(:disabled) { background: rgba(255,255,255,.09); }
   .fav-del { font-size: 14px !important; }
@@ -265,7 +265,7 @@
   .station-card.open { display: flex; }
   .sc-head { display: flex; align-items: center; gap: 8px; padding: 13px 14px 9px; }
   .sc-head h3 { font-size: 14px; font-weight: 700; flex: 1; }
-  .sc-btn { background: none; border: none; cursor: pointer; color: var(--muted); font-size: 14px; padding: 4px 6px; font-family: var(--font); }
+  .sc-btn { width: 32px; height: 32px; flex: none; display: inline-flex; align-items: center; justify-content: center; background: rgba(255,255,255,.05); border: 1px solid var(--border); border-radius: 50%; cursor: pointer; color: var(--muted); font-size: 14px; padding: 0; font-family: var(--font); }
   .sc-btn:hover { color: var(--text); }
   #scRefresh { display: inline-flex; align-items: center; }
   #scRefresh.spinning svg { animation: spin .7s linear infinite; }
@@ -356,9 +356,10 @@
   .panel-head h2 { font-size: 13px; font-weight: 700; flex: 1; }
   .panel-head .count { font-size: 12px; color: var(--muted); }
   .panel-min {
-    background: none; border: none; cursor: pointer;
-    color: var(--muted); font-size: 15px; line-height: 1;
-    padding: 4px 2px 4px 10px;
+    width: 30px; height: 30px; flex: none; margin-left: 8px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: rgba(255,255,255,.05); border: 1px solid var(--border); border-radius: 50%;
+    cursor: pointer; color: var(--muted); font-size: 13px; line-height: 1; padding: 0;
   }
   .panel-min:hover { color: var(--text); }
   @media (min-width: 768px) {
