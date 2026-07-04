@@ -50,6 +50,8 @@
   /* 네이티브 앱(?native=1): 상단바를 SwiftUI 네이티브 유리로 대체 → 웹 상단바 숨김, 현위치 버튼은 네이티브 바 밑으로 */
   html.native-app .brand-card { display: none; }
   html.native-app .locate-btn { top: calc(max(12px, env(safe-area-inset-top)) + 150px); }
+  /* 하단 역 카드도 네이티브로 대체: 웹 카드는 렌더는 유지(파싱용)하되 안 보이게 + 터치 통과 */
+  html.native-app .station-card { opacity: 0 !important; pointer-events: none !important; }
 
   .topbar {
     position: absolute; top: 0; left: 0; right: 0;
@@ -1798,6 +1800,15 @@ if (NATIVE) {
     chip: n => chipClick(n),
     refresh: () => document.getElementById("refreshBtn").click(),
     settings: () => document.getElementById("settingsBtn").click(),
+    card: {
+      fav: () => document.getElementById("scFav").click(),
+      refresh: () => document.getElementById("scRefresh").click(),
+      close: () => document.getElementById("scClose").click(),
+      tab: key => { const b = document.querySelector('#scBody .sc-linetabs button[data-line="' + key + '"]'); if (b) b.click(); },
+      tt: io => { const b = document.querySelector('#scBody .sc-tt-btn[data-inout="' + io + '"]'); if (b) b.click(); },
+      pick: i => { const els = document.querySelectorAll("#scBody .sc-pick"); if (els[i]) els[i].click(); },
+      follow: () => { const b = document.getElementById("scFollow"); if (b) b.click(); },
+    },
   };
 }
 function postTopbar() {
@@ -1817,6 +1828,69 @@ function postTopbar() {
       chips,
     });
   } catch (e) {}
+}
+/* ── 하단 역 카드도 네이티브 유리로: 카드 DOM을 파싱해 모델을 네이티브로 전송 ── */
+function parseCardRow(el, pickCounter) {
+  const dotEl = el.querySelector(".sc-dot");
+  const etaEl = el.querySelector(".sc-eta");
+  const subEl = el.querySelector(".sc-sub");
+  const row = {
+    dot: dotEl ? (dotEl.style.background || getComputedStyle(dotEl).backgroundColor) : "",
+    eta: etaEl ? etaEl.textContent.trim() : "",
+    etaColor: etaEl ? getComputedStyle(etaEl).color : "",
+    sub: subEl ? subEl.textContent.trim() : "",
+    pick: el.classList.contains("sc-pick"),
+  };
+  if (row.pick) row.pickIndex = pickCounter.n++;
+  return row;
+}
+function postCard() {
+  if (!NATIVE || !(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.ui)) return;
+  try {
+    const cardEl = document.getElementById("stationCard");
+    const body = document.getElementById("scBody");
+    const pc = { n: 0 };
+    const tabs = [...body.querySelectorAll(".sc-linetabs button")].map(b => ({
+      key: b.dataset.line, label: b.textContent.trim(), on: b.classList.contains("on"),
+      color: (getComputedStyle(b).getPropertyValue("--lc") || "").trim(),
+    }));
+    let layout = "list", sections = [];
+    const cols = body.querySelector(".sc-cols");
+    if (cols) {
+      layout = "cols";
+      sections = [...cols.querySelectorAll(".sc-col")].map(col => ({
+        head: (col.querySelector(".sc-colhead")?.textContent || "").trim(),
+        ttInout: col.querySelector(".sc-tt-btn")?.dataset.inout || null,
+        note: (col.querySelector(".tt-fb-note")?.textContent || "").trim() || null,
+        emptyMsg: (col.querySelector(".sc-empty")?.textContent || "").trim() || null,
+        rows: [...col.querySelectorAll(".sc-row")].map(r => parseCardRow(r, pc)),
+      }));
+    } else {
+      sections = [{ head: "", ttInout: null, note: null, emptyMsg: null, rows: [...body.querySelectorAll(".sc-row")].map(r => parseCardRow(r, pc)) }];
+    }
+    const followBtn = document.getElementById("scFollow");
+    const emptyEl = body.querySelector(":scope > .sc-empty");
+    const favEl = document.getElementById("scFav");
+    window.webkit.messageHandlers.ui.postMessage({
+      type: "card",
+      open: cardEl.classList.contains("open"),
+      title: document.getElementById("scTitle").textContent,
+      fav: favEl.textContent.trim() === "★",
+      favShown: getComputedStyle(favEl).display !== "none",
+      tabs, layout, sections,
+      follow: followBtn ? { label: followBtn.textContent.trim(), on: followBtn.classList.contains("on") } : null,
+      empty: emptyEl ? emptyEl.textContent.trim() : null,
+    });
+  } catch (e) {}
+}
+if (NATIVE) {
+  let cardRaf = 0;
+  const scheduleCard = () => { if (cardRaf) return; cardRaf = requestAnimationFrame(() => { cardRaf = 0; postCard(); }); };
+  const mo = new MutationObserver(scheduleCard);
+  const cardEl = document.getElementById("stationCard");
+  if (cardEl) mo.observe(cardEl, { subtree: true, childList: true, attributes: true, characterData: true });
+  const dbg = new URLSearchParams(location.search).get("_dbg");   /* 개발용: ?_dbg=역명 이면 해당 역 카드 자동 열기 */
+  if (dbg) setTimeout(() => { try { openStationCard(dbg); } catch (e) {} }, 2600);
 }
 let toastTimer;
 function toast(msg) {
