@@ -47,6 +47,10 @@
   html.naver-map .brand-card, html.naver-map .station-card, html.naver-map .panel,
   html.naver-map .settings, html.naver-map .toast, html.naver-map .icon-btn { background: rgba(20, 22, 28, 0.64); text-shadow: 0 1px 4px rgba(0,0,0,.6); }  /* 밝은 지도 위에서도 유리 확실히(반투명) + 텍스트 그림자로 가독성 보완 */
 
+  /* 네이티브 앱(?native=1): 상단바를 SwiftUI 네이티브 유리로 대체 → 웹 상단바 숨김, 현위치 버튼은 네이티브 바 밑으로 */
+  html.native-app .brand-card { display: none; }
+  html.native-app .locate-btn { top: calc(max(12px, env(safe-area-inset-top)) + 150px); }
+
   .topbar {
     position: absolute; top: 0; left: 0; right: 0;
     z-index: 1000;
@@ -1783,6 +1787,36 @@ function restartTimer() {
 function setStatus(text, live) {
   document.getElementById("statusText").textContent = text;
   document.getElementById("statusDot").className = "dot" + (live ? " live" : "");
+  postTopbar();
+}
+
+/* ── 네이티브 앱 브리지: 상단바를 SwiftUI 유리로 (?native=1) ── */
+const NATIVE = /[?&]native=1/.test(location.search);
+if (NATIVE) {
+  document.documentElement.classList.add("native-app");
+  window.__native = {
+    chip: n => chipClick(n),
+    refresh: () => document.getElementById("refreshBtn").click(),
+    settings: () => document.getElementById("settingsBtn").click(),
+  };
+}
+function postTopbar() {
+  if (!NATIVE || !(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.ui)) return;
+  try {
+    const chips = [...document.querySelectorAll("#lineChips .chip")].map(c => ({
+      name: c.dataset.line,
+      label: c.textContent.trim(),
+      color: (getComputedStyle(c).getPropertyValue("--c") || "#888").trim(),
+      ink: (getComputedStyle(c).getPropertyValue("--ink") || "#fff").trim(),
+      on: c.classList.contains("on"),
+    }));
+    window.webkit.messageHandlers.ui.postMessage({
+      type: "topbar",
+      status: document.getElementById("statusText").textContent,
+      live: document.getElementById("statusDot").classList.contains("live"),
+      chips,
+    });
+  } catch (e) {}
 }
 let toastTimer;
 function toast(msg) {
@@ -1821,6 +1855,7 @@ function selectLine(name) {
   const sel = name === "ALL" ? [] : name.split(",");
   document.querySelectorAll("#lineChips .chip").forEach(c =>
     c.classList.toggle("on", c.dataset.line === "ALL" ? name === "ALL" : sel.includes(c.dataset.line)));
+  postTopbar();
   document.getElementById("panelTitle").textContent = name === "ALL" ? "전체 노선 운행 열차" : sel.join("·") + " 운행 열차";
   const isLoop = sel.length === 1 && LINES[sel[0]] && !!LINES[sel[0]].loop;
   document.getElementById("tabUp").textContent = isLoop ? "내선" : "상행";
@@ -1901,6 +1936,7 @@ for (const [name, def] of Object.entries(LINES)) {
   b.addEventListener("click", () => chipClick(name));
   chipsEl.appendChild(b);
 }
+postTopbar();   /* 네이티브 앱: 초기 칩 목록 전송 */
 
 
 /* 방향 탭 */
