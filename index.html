@@ -1847,8 +1847,8 @@ const chipsEl = document.getElementById("lineChips");
 {
   const b = document.createElement("button");
   b.className = "chip"; b.dataset.line = "ALL";
-  b.style.setProperty("--c", ALL_VIEW.color);
-  b.style.setProperty("--ink", inkOn(ALL_VIEW.color));
+  b.style.setProperty("--c", "#ECEDEE");                 /* 전체 칩 활성은 near-white로 밝게(지도 테마 --line은 ALL_VIEW.color 유지) */
+  b.style.setProperty("--ink", inkOn("#ECEDEE"));
   b.innerHTML = `<span class="swatch"></span>전체`;
   b.addEventListener("click", () => chipClick("ALL"));
   chipsEl.appendChild(b);
