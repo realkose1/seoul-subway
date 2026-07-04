@@ -49,7 +49,7 @@
 
   /* 네이티브 앱(?native=1): 상단바를 SwiftUI 네이티브 유리로 대체 → 웹 상단바 숨김, 현위치 버튼은 네이티브 바 밑으로 */
   html.native-app .brand-card { display: none; }
-  html.native-app .locate-btn { top: calc(max(12px, env(safe-area-inset-top)) + 150px); }
+  html.native-app .locate-btn { top: calc(max(12px, env(safe-area-inset-top)) + 100px); }
   /* 하단 역 카드도 네이티브로 대체: 웹 카드는 렌더는 유지(파싱용)하되 안 보이게 + 터치 통과 */
   html.native-app .station-card { opacity: 0 !important; pointer-events: none !important; }
 
@@ -517,7 +517,7 @@
   </div>
 </div>
 
-<button class="icon-btn locate-btn" id="locateBtn" aria-label="현재 위치로 이동" title="현재 위치로 이동"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.5"/><line x1="12" y1="2.5" x2="12" y2="5.5"/><line x1="12" y1="18.5" x2="12" y2="21.5"/><line x1="2.5" y1="12" x2="5.5" y2="12"/><line x1="18.5" y1="12" x2="21.5" y2="12"/></svg></button>
+<button class="icon-btn locate-btn" id="locateBtn" aria-label="현재 위치로 이동" title="현재 위치로 이동"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="2.3" fill="currentColor" stroke="none"/><line x1="12" y1="1.5" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22.5"/><line x1="1.5" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22.5" y2="12"/></svg></button>
 
 <div class="settings-scrim" id="settingsScrim"></div>
 <div class="settings" id="settings" role="dialog" aria-modal="true" aria-label="설정">
