@@ -1170,6 +1170,8 @@ const basicAdapter = {
     this.map = L.map("map-basic", { zoomControl: false, preferCanvas: true }).setView(center, zoom);   /* 역 dot·노선을 캔버스로 렌더 → 마커 많을 때 팬/줌 부하·발열 감소 */
     this.map.on("click", e => onMapClick([e.latlng.lat, e.latlng.lng]));
     this.map.on("dragstart", () => stopFollow());
+    this.map.on("dragstart zoomstart", beginInteract);   /* 조작 중 열차 애니 그리기 멈춤(버벅임 완화) */
+    this.map.on("dragend zoomend", endInteract);
     L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
       attribution: "&copy; OpenStreetMap &copy; CARTO", subdomains: "abcd", maxZoom: 19
     }).addTo(this.map);
@@ -1215,6 +1217,12 @@ const basicAdapter = {
   },
   moveTrain(no, pos) { const m = this.markers.get(no); if (m) m.setLatLng(pos); },
   getView() { const c = this.map.getCenter(); return { center: [c.lat, c.lng], zoom: this.map.getZoom() }; },
+  /* 현재 화면 범위(+pad 여유)를 {s,n,w,e} 숫자로 — 화면 밖 열차 애니 컬링용 */
+  visibleBox(pad) {
+    if (!this.map || !this.map.getBounds) return null;
+    try { const b = this.map.getBounds().pad(pad); return { s: b.getSouth(), n: b.getNorth(), w: b.getWest(), e: b.getEast() }; }
+    catch (e) { return null; }
+  },
   setUserLocation(pos) {
     const icon = L.divIcon({ className: "", iconSize: [16, 16], iconAnchor: [8, 8], html: '<div class="user-dot"></div>' });
     if (this.userMarker) this.userMarker.setLatLng(pos);
@@ -1274,9 +1282,11 @@ const naverAdapter = {
       backgroundColor: "#141518", anchorSize: new naver.maps.Size(10, 10),
       anchorColor: "#141518", pixelOffset: new naver.maps.Point(0, -8)
     });
-    naver.maps.Event.addListener(this.map, "zoom_changed", () => { this.syncLabels(); scheduleReIcon(); });
+    naver.maps.Event.addListener(this.map, "zoom_changed", () => { this.syncLabels(); scheduleReIcon(); markInteracting(); });
     naver.maps.Event.addListener(this.map, "click", e => onMapClick([e.coord.lat(), e.coord.lng()]));
     naver.maps.Event.addListener(this.map, "dragstart", () => stopFollow());
+    naver.maps.Event.addListener(this.map, "dragstart", beginInteract);   /* 조작 중 열차 애니 그리기 멈춤(네이버 팬 버벅임 완화) */
+    naver.maps.Event.addListener(this.map, "dragend", endInteract);
     setTimeout(() => { if (this.map) naver.maps.Event.trigger(this.map, "resize"); }, 300);
   },
   destroy() {
@@ -1339,6 +1349,19 @@ const naverAdapter = {
   },
   moveTrain(no, pos) { const m = this.markers.get(no); if (m) m.setPosition(new naver.maps.LatLng(pos[0], pos[1])); },
   getView() { const c = this.map.getCenter(); return { center: [c.lat(), c.lng()], zoom: this.map.getZoom() }; },
+  /* 현재 화면 범위(+pad 여유)를 {s,n,w,e} 숫자로 — 네이버 DOM 마커는 특히 무거워 화면 밖 열차 애니 컬링이 중요 */
+  visibleBox(pad) {
+    if (!this.map || !this.map.getBounds) return null;
+    try {
+      const b = this.map.getBounds();
+      const sw = b.getSW ? b.getSW() : (b.getMin && b.getMin());
+      const ne = b.getNE ? b.getNE() : (b.getMax && b.getMax());
+      if (!sw || !ne) return null;
+      const s = sw.lat(), n = ne.lat(), w = sw.lng(), e = ne.lng();
+      const dLat = (n - s) * pad, dLng = (e - w) * pad;
+      return { s: s - dLat, n: n + dLat, w: w - dLng, e: e + dLng };
+    } catch (e) { return null; }
+  },
   setUserLocation(pos) {
     const ll = new naver.maps.LatLng(pos[0], pos[1]);
     if (this.userMarker) this.userMarker.setPosition(ll);
@@ -1442,15 +1465,22 @@ function currentRefreshSec() {
 }
 const animState = new Map(); /* trainNo → { cur, goal, speed, heading, train } */
 const REDUCED_MOTION = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+/* 지도를 드래그·줌 하는 동안엔 열차 DOM 갱신(이동·회전)을 멈춰 팬/줌 버벅임 완화 — 특히 DOM 마커가 무거운 네이버.
+   조작 중에도 경로 진행 계산(st.cur)은 계속하고 화면 그리기만 생략하며, 열차는 지도 오버레이라 자기 좌표에 그대로 붙어 있는다 */
+let mapInteracting = false, _interactTimer = null;
+function markInteracting() { mapInteracting = true; clearTimeout(_interactTimer); _interactTimer = setTimeout(() => { mapInteracting = false; }, 200); }
+function beginInteract() { mapInteracting = true; clearTimeout(_interactTimer); }
+function endInteract() { clearTimeout(_interactTimer); _interactTimer = setTimeout(() => { mapInteracting = false; }, 200); }
 let animLastTs = performance.now();
 setInterval(() => {
   const now = performance.now();
   const dt = Math.min(1, (now - animLastTs) / 1000);
   animLastTs = now;
-  /* 화면 밖 열차는 위치 계산만 하고 DOM 갱신은 생략 → 발열·버벅임 완화(기본 지도 한정) */
-  let animBounds = null;
-  if (adapter === basicAdapter && adapter.map && adapter.map.getBounds) { try { animBounds = adapter.map.getBounds().pad(0.3); } catch (e) {} }
-  const inView = p => !animBounds || animBounds.contains(p);
+  /* 화면 밖 열차는 위치 계산만 하고 DOM 갱신은 생략 → 발열·버벅임 완화(기본·네이버 모두).
+     지도 조작 중(mapInteracting)이면 그리기 자체를 건너뛴다 */
+  const box = (adapter.visibleBox && !mapInteracting) ? adapter.visibleBox(0.3) : null;
+  const canDraw = !mapInteracting;
+  const inView = p => canDraw && (!box || (p[0] >= box.s && p[0] <= box.n && p[1] >= box.w && p[1] <= box.e));
   for (const st of animState.values()) {
     if (st.idx >= st.route.length) continue;
     if (REDUCED_MOTION) {
@@ -1471,7 +1501,8 @@ setInterval(() => {
           const nh = bearingDeg(st.cur, st.route[st.idx]);
           if (Math.abs(nh - st.heading) > 4) {
             st.heading = nh;
-            adapter.upsertTrain(st.no, st.cur, st.train, nh); /* 모서리에서 회전 */
+            if (canDraw && (!box || (st.cur[0] >= box.s && st.cur[0] <= box.n && st.cur[1] >= box.w && st.cur[1] <= box.e)))
+              adapter.upsertTrain(st.no, st.cur, st.train, nh); /* 모서리에서 회전(화면 안·조작 아닐 때만) */
           }
         }
       } else {
