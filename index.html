@@ -2096,8 +2096,8 @@ if (NATIVE) {
     const seq = [
       [4000, () => selectLine("ALL")],
       [8000, () => selectLine("2호선")],
-      [12000, () => openStationCard("강남")],
-      [17000, () => selectLine("신분당선")],
+      [12000, () => selectLine("신분당선")],
+      [16000, () => openStationCard("강남")],
     ];
     seq.forEach(([t, fn]) => setTimeout(() => { try { fn(); } catch (e) {} }, t));
   }
