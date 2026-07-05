@@ -52,6 +52,8 @@
   html.native-app .locate-btn { top: calc(max(12px, env(safe-area-inset-top)) + 100px); }
   /* 하단 역 카드도 네이티브로 대체: 웹 카드는 렌더는 유지(파싱용)하되 안 보이게 + 터치 통과 */
   html.native-app .station-card { opacity: 0 !important; pointer-events: none !important; }
+  /* 설정 시트도 네이티브로 대체: 웹 시트/스크림은 렌더 유지(파싱용)하되 안 보이게 + 터치 통과 */
+  html.native-app .settings, html.native-app .settings-scrim { opacity: 0 !important; pointer-events: none !important; }
 
   .topbar {
     position: absolute; top: 0; left: 0; right: 0;
@@ -1809,6 +1811,13 @@ if (NATIVE) {
       pick: i => { const els = document.querySelectorAll("#scBody .sc-pick"); if (els[i]) els[i].click(); },
       follow: () => { const b = document.getElementById("scFollow"); if (b) b.click(); },
     },
+    settingsPanel: {
+      selectMap: prov => { const b = document.querySelector('#mapSeg button[data-prov="' + prov + '"]'); if (b) b.click(); },
+      favTap: name => { const el = document.querySelector('.fav-row[data-name="' + CSS.escape(name) + '"]'); if (el) el.click(); },
+      favDel: name => { const el = document.querySelector('.fav-del[data-name="' + CSS.escape(name) + '"]'); if (el) el.click(); },
+      favMove: (i, dir) => { const el = document.querySelector('.fav-mv[data-i="' + i + '"][data-dir="' + dir + '"]'); if (el) el.click(); },
+      close: () => { const p = document.getElementById("settings"); if (p && p.classList.contains("open")) document.getElementById("settingsBtn").click(); },
+    },
   };
 }
 function postTopbar() {
@@ -1883,12 +1892,46 @@ function postCard() {
     });
   } catch (e) {}
 }
+/* 설정 시트도 네이티브 유리로: 시트 DOM(즐겨찾기·지도 선택)을 파싱해 모델을 네이티브로 전송 */
+function postSettings() {
+  if (!NATIVE || !(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.ui)) return;
+  try {
+    const panel = document.getElementById("settings");
+    const mapProviders = [...document.querySelectorAll("#mapSeg button")].map(b => ({
+      prov: b.dataset.prov, label: b.textContent.trim(), on: b.classList.contains("on"),
+    }));
+    const favorites = [...document.querySelectorAll("#favList .fav-row")].map(r => {
+      const mv = r.querySelectorAll(".fav-mv");
+      const dot = r.querySelector(".fav-dot");
+      return {
+        name: r.dataset.name,
+        label: (r.querySelector(".fav-name")?.textContent || "").trim(),
+        line: (r.querySelector(".fav-line")?.textContent || "").trim(),
+        color: dot ? (dot.style.background || getComputedStyle(dot).backgroundColor) : "#8a8d93",
+        canUp: !(mv[0] && mv[0].disabled),
+        canDown: !(mv[1] && mv[1].disabled),
+      };
+    });
+    window.webkit.messageHandlers.ui.postMessage({
+      type: "settings",
+      open: panel.classList.contains("open"),
+      favCount: (document.getElementById("favCount")?.textContent || "").trim(),
+      favEmpty: (document.querySelector("#favList .fav-empty")?.textContent || "").trim() || null,
+      mapProviders, favorites,
+    });
+  } catch (e) {}
+}
 if (NATIVE) {
   let cardRaf = 0;
   const scheduleCard = () => { if (cardRaf) return; cardRaf = requestAnimationFrame(() => { cardRaf = 0; postCard(); }); };
   const mo = new MutationObserver(scheduleCard);
   const cardEl = document.getElementById("stationCard");
   if (cardEl) mo.observe(cardEl, { subtree: true, childList: true, attributes: true, characterData: true });
+  let settingsRaf = 0;
+  const scheduleSettings = () => { if (settingsRaf) return; settingsRaf = requestAnimationFrame(() => { settingsRaf = 0; postSettings(); }); };
+  const settingsMo = new MutationObserver(scheduleSettings);
+  const settingsEl = document.getElementById("settings");
+  if (settingsEl) settingsMo.observe(settingsEl, { subtree: true, childList: true, attributes: true, characterData: true });
   /* 여백 탭 몰입 모드(html.immersive)를 네이티브 바에도 반영 */
   const postImmersive = () => { try { window.webkit.messageHandlers.ui.postMessage({ type: "immersive", on: document.documentElement.classList.contains("immersive") }); } catch (e) {} };
   new MutationObserver(postImmersive).observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
@@ -2336,6 +2379,7 @@ function scTick() {
   }
 }
 async function openStationCard(name) {
+  if (NATIVE && closeSettingsSheet) closeSettingsSheet();   /* 설정 시트가 떠 있으면 먼저 내림(중복 표시 방지) */
   scStation = name;
   scMode = "arrival";
   scTimetable = null;
@@ -2535,6 +2579,7 @@ function trainDetailHtml(t) {
 function openTrainCardByNo(no) {
   const t = state.trains.find(x => x.trainNo === no);
   if (!t) return;
+  if (NATIVE && closeSettingsSheet) closeSettingsSheet();
   scStation = null;
   stopScTimer();
   syncFavBtn();
@@ -2588,6 +2633,7 @@ function onMapClick(pos) {
 }
 /* 역/열차 선택 레이어 */
 function showChooser(stn, trains) {
+  if (NATIVE && closeSettingsSheet) closeSettingsSheet();
   scStation = null;
   stopScTimer();
   document.getElementById("scTitle").textContent = "어느 정보를 볼까요?";
@@ -2657,6 +2703,7 @@ function syncProviderSeg() {
   document.querySelectorAll("#mapSeg button").forEach(b =>
     b.classList.toggle("on", b.dataset.prov === state.mapProvider));
 }
+let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 때 설정 시트를 내리기 위한 참조 */
 (function initSettings() {
   const panel = document.getElementById("settings");
   const scrim = document.getElementById("settingsScrim");
@@ -2664,6 +2711,7 @@ function syncProviderSeg() {
   if (!panel || !btn) return;
   const openSheet = () => { panel.classList.add("open"); if (scrim) scrim.classList.add("open"); syncProviderSeg(); renderFavList(); };
   const closeSheet = () => { panel.classList.remove("open"); if (scrim) scrim.classList.remove("open"); };
+  closeSettingsSheet = closeSheet;
   const favEl = document.getElementById("favList");
   if (favEl) favEl.addEventListener("click", e => {
     const del = e.target.closest(".fav-del"), mv = e.target.closest(".fav-mv"), row = e.target.closest(".fav-row");
@@ -2672,7 +2720,15 @@ function syncProviderSeg() {
     if (mv) { const i = +mv.dataset.i, j = i + (+mv.dataset.dir); if (j >= 0 && j < f.length) { [f[i], f[j]] = [f[j], f[i]]; saveFav(f); renderFavList(); } return; }
     if (row) { closeSheet(); openStationCard(row.dataset.name); }
   });
-  btn.addEventListener("click", e => { e.stopPropagation(); panel.classList.contains("open") ? closeSheet() : openSheet(); });
+  btn.addEventListener("click", e => {
+    e.stopPropagation();
+    if (panel.classList.contains("open")) { closeSheet(); return; }
+    if (NATIVE) {
+      const cardEl = document.getElementById("stationCard");
+      if (cardEl && cardEl.classList.contains("open")) document.getElementById("scClose").click();   /* 설정을 열 때 카드가 떠 있으면 먼저 내림(중복 표시 방지) */
+    }
+    openSheet();
+  });
   if (scrim) scrim.addEventListener("click", closeSheet);
   document.addEventListener("keydown", e => { if (e.key === "Escape") closeSheet(); });
   panel.querySelectorAll("#mapSeg button").forEach(b => b.addEventListener("click", async () => {
