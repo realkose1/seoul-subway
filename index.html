@@ -144,6 +144,22 @@
   .locate-btn { position: absolute; right: 14px; top: calc(max(12px, env(safe-area-inset-top)) + 98px); z-index: 1000; }
   .locate-btn:active { transform: scale(0.94); }
   .locate-btn svg { display: block; }
+  /* 현재위치 활성 상태(누르면 켜지고, 지도를 움직이면 꺼짐) — 흰 배경+검정 아이콘으로 반전 */
+  .icon-btn.locate-btn.on { background: #ECEDEE; color: #17181c; border-color: transparent; }
+  /* 선택한 역 핀 마커 (네이버 앱 핀 메타포, 흰 바탕+검정 아이콘·테두리로 다크/라이트 지도 모두 또렷) */
+  .sel-pin-wrap { width: 48px; height: 48px; position: relative; pointer-events: none; }
+  .sel-pin {
+    position: absolute; left: 7px; top: 4px;
+    width: 34px; height: 34px;
+    background: #fff; border: 2px solid #17181c;
+    border-radius: 50% 50% 50% 0;
+    transform: rotate(-45deg);
+    box-shadow: 0 3px 10px rgba(0,0,0,0.45);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .sel-pin svg { transform: rotate(45deg); display: block; }
+  @keyframes selPinDrop { from { transform: translateY(-8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+  .sel-pin-wrap { animation: selPinDrop 0.22s ease-out; }
   /* 이머시브: 지도 여백 탭으로 상/하단 레이어(+위치 버튼) 함께 숨김/복귀 */
   .topbar, .locate-btn, .station-card, .panel { transition: opacity .28s ease; }
   html.immersive .topbar, html.immersive .locate-btn,
@@ -521,7 +537,7 @@
   </div>
 </div>
 
-<button class="icon-btn locate-btn" id="locateBtn" aria-label="현재 위치로 이동" title="현재 위치로 이동"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="2.3" fill="currentColor" stroke="none"/><line x1="12" y1="1.5" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22.5"/><line x1="1.5" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22.5" y2="12"/></svg></button>
+<button class="icon-btn locate-btn" id="locateBtn" aria-label="현재 위치로 이동" title="현재 위치로 이동"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="6"/><line x1="12" y1="2" x2="12" y2="7"/><line x1="12" y1="17" x2="12" y2="22"/><line x1="2" y1="12" x2="7" y2="12"/><line x1="17" y1="12" x2="22" y2="12"/></svg></button>
 
 <div class="settings-scrim" id="settingsScrim"></div>
 <div class="settings" id="settings" role="dialog" aria-modal="true" aria-label="설정">
@@ -1159,6 +1175,9 @@ function loadScript(src) {
   });
 }
 
+/* 선택한 역 핀 마커 HTML (양쪽 지도 공용) — 흰 물방울 핀 + 검정 전철 아이콘 */
+const SEL_PIN_HTML = `<div class="sel-pin-wrap"><div class="sel-pin"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#17181c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="3" width="12" height="13" rx="3"/><line x1="6" y1="10" x2="18" y2="10"/><circle cx="9.5" cy="13" r="0.6" fill="#17181c"/><circle cx="14.5" cy="13" r="0.6" fill="#17181c"/><line x1="9" y1="16" x2="7.5" y2="20"/><line x1="15" y1="16" x2="16.5" y2="20"/></svg></div></div>`;
+
 /* ════════════════ 지도 어댑터: 기본(Leaflet) ════════════════ */
 const basicAdapter = {
   containerId: "map-basic",
@@ -1169,7 +1188,7 @@ const basicAdapter = {
   init(center, zoom) {
     this.map = L.map("map-basic", { zoomControl: false, preferCanvas: true }).setView(center, zoom);   /* 역 dot·노선을 캔버스로 렌더 → 마커 많을 때 팬/줌 부하·발열 감소 */
     this.map.on("click", e => onMapClick([e.latlng.lat, e.latlng.lng]));
-    this.map.on("dragstart", () => stopFollow());
+    this.map.on("dragstart", () => { stopFollow(); setLocate(false); });   /* 지도를 움직이면 현재위치 토글 해제 */
     this.map.on("dragstart zoomstart", beginInteract);   /* 조작 중 열차 애니 그리기 멈춤(버벅임 완화) */
     this.map.on("dragend zoomend", endInteract);
     L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
@@ -1228,6 +1247,13 @@ const basicAdapter = {
     if (this.userMarker) this.userMarker.setLatLng(pos);
     else this.userMarker = L.marker(pos, { icon, interactive: false, zIndexOffset: 2000 }).addTo(this.map);
   },
+  /* 선택한 역 핀 (카드 열림 → 표시, 닫힘 → 제거) */
+  setSelectedStation(pos) {
+    this.clearSelectedStation();
+    const icon = L.divIcon({ className: "", iconSize: [48, 48], iconAnchor: [24, 45], html: SEL_PIN_HTML });
+    this.selPin = L.marker(pos, { icon, interactive: false, zIndexOffset: 3000 }).addTo(this.map);
+  },
+  clearSelectedStation() { if (this.selPin) { this.map.removeLayer(this.selPin); this.selPin = null; } },
   prune(seen) {
     for (const [no, m] of this.markers) if (!seen.has(no)) { this.trainLayer.removeLayer(m); this.markers.delete(no); }
   },
@@ -1284,7 +1310,7 @@ const naverAdapter = {
     });
     naver.maps.Event.addListener(this.map, "zoom_changed", () => { this.syncLabels(); scheduleReIcon(); markInteracting(); });
     naver.maps.Event.addListener(this.map, "click", e => onMapClick([e.coord.lat(), e.coord.lng()]));
-    naver.maps.Event.addListener(this.map, "dragstart", () => stopFollow());
+    naver.maps.Event.addListener(this.map, "dragstart", () => { stopFollow(); setLocate(false); });   /* 지도를 움직이면 현재위치 토글 해제 */
     naver.maps.Event.addListener(this.map, "dragstart", beginInteract);   /* 조작 중 열차 애니 그리기 멈춤(네이버 팬 버벅임 완화) */
     naver.maps.Event.addListener(this.map, "dragend", endInteract);
     setTimeout(() => { if (this.map) naver.maps.Event.trigger(this.map, "resize"); }, 300);
@@ -1362,6 +1388,15 @@ const naverAdapter = {
       return { s: s - dLat, n: n + dLat, w: w - dLng, e: e + dLng };
     } catch (e) { return null; }
   },
+  /* 선택한 역 핀 (카드 열림 → 표시, 닫힘 → 제거) */
+  setSelectedStation(pos) {
+    this.clearSelectedStation();
+    this.selPin = new naver.maps.Marker({
+      map: this.map, position: new naver.maps.LatLng(pos[0], pos[1]), clickable: false,
+      icon: { content: SEL_PIN_HTML, anchor: new naver.maps.Point(24, 45) }, zIndex: 300
+    });
+  },
+  clearSelectedStation() { if (this.selPin) { this.selPin.setMap(null); this.selPin = null; } },
   setUserLocation(pos) {
     const ll = new naver.maps.LatLng(pos[0], pos[1]);
     if (this.userMarker) this.userMarker.setPosition(ll);
@@ -2096,12 +2131,16 @@ async function setProvider(p) {
     adapter = next;
     if (adapter.map) adapter.resize();
     else adapter.init(viewOf(state.line).center, viewOf(state.line).zoom);
-    if (prev !== adapter && prev.map) { prev.clearLine(); prev.clearTrains(); }
+    if (prev !== adapter && prev.map) { prev.clearLine(); prev.clearTrains(); if (prev.clearSelectedStation) prev.clearSelectedStation(); }
     drawLine(state.line);
     renderTrains();
     if (keepView) adapter.setView(keepView.center, keepView.zoom);
     else adapter.setView(viewOf(state.line).center, viewOf(state.line).zoom);
     if (state.userPos && adapter.setUserLocation) adapter.setUserLocation(state.userPos);
+    if (scStation && adapter.setSelectedStation) {   /* 열려있는 역 카드 핀을 새 지도에 다시 표시 */
+      const sp = STN[scStation] || STN[resolve(scStation)];
+      if (sp) adapter.setSelectedStation(sp);
+    }
   } catch (e) {
     console.error("지도 전환 실패:", e);
     if (p !== "basic") {
@@ -2477,6 +2516,8 @@ function scTick() {
 async function openStationCard(name) {
   if (NATIVE) { if (closeSettingsSheet) closeSettingsSheet(); closeTrainPanelIfOpen(); }   /* 다른 네이티브 레이어가 떠 있으면 먼저 내림(중복 표시 방지) */
   scStation = name;
+  const selPos = STN[name] || STN[resolve(name)];
+  if (selPos && adapter.setSelectedStation) adapter.setSelectedStation(selPos);   /* 선택한 역 핀 표시 */
   scMode = "arrival";
   scTimetable = null;
   scLineFilter = null;
@@ -2501,6 +2542,7 @@ document.getElementById("scClose").addEventListener("click", () => {
   scStation = null;
   scMode = "arrival";
   stopScTimer();
+  if (adapter.clearSelectedStation) adapter.clearSelectedStation();   /* 카드 닫으면 역 핀 제거 */
 });
 document.getElementById("scRefresh").addEventListener("click", () => {
   const btn = document.getElementById("scRefresh");
@@ -2676,6 +2718,7 @@ function openTrainCardByNo(no) {
   const t = state.trains.find(x => x.trainNo === no);
   if (!t) return;
   if (NATIVE) { if (closeSettingsSheet) closeSettingsSheet(); closeTrainPanelIfOpen(); }
+  if (adapter.clearSelectedStation) adapter.clearSelectedStation();
   scStation = null;
   stopScTimer();
   syncFavBtn();
@@ -2730,6 +2773,7 @@ function onMapClick(pos) {
 /* 역/열차 선택 레이어 */
 function showChooser(stn, trains) {
   if (NATIVE) { if (closeSettingsSheet) closeSettingsSheet(); closeTrainPanelIfOpen(); }
+  if (adapter.clearSelectedStation) adapter.clearSelectedStation();
   scStation = null;
   stopScTimer();
   document.getElementById("scTitle").textContent = "어느 정보를 볼까요?";
@@ -2905,7 +2949,11 @@ function recenterToUser() {
     if (adapter.map) { if (adapter.setUserLocation) adapter.setUserLocation(state.userPos); adapter.setView(state.userPos, 14); }
   }, () => { if (!state.userPos) toast("위치 권한을 확인해 주세요."); }, { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 });
 }
-document.getElementById("locateBtn").addEventListener("click", recenterToUser);
+/* 현재위치 토글: 누르면 활성(흰색 반전) + 내 위치로 이동, 지도를 드래그하면 자동 비활성 */
+function setLocate(on) {
+  document.getElementById("locateBtn").classList.toggle("on", on);
+}
+document.getElementById("locateBtn").addEventListener("click", () => { recenterToUser(); setLocate(true); });
 if (window.innerWidth < 768) locateUser();
 
 /* 배포 환경 프록시 감지: 키가 없어도 /api/position 이 살아 있으면 실시간으로 자동 전환 */
