@@ -2091,6 +2091,15 @@ if (NATIVE) {
     ];
     seq.forEach(([t, fn]) => setTimeout(() => { try { fn(); } catch (e) {} }, t));
   }
+  if (new URLSearchParams(location.search).get("_shots")) {   /* 마케팅 스크린샷용 장면 시퀀서(파라미터 있을 때만) */
+    const seq = [
+      [3000, () => selectLine("ALL")],
+      [7000, () => selectLine("2호선")],
+      [11000, () => openStationCard("강남")],
+      [16000, () => selectLine("신분당선")],
+    ];
+    seq.forEach(([t, fn]) => setTimeout(() => { try { fn(); } catch (e) {} }, t));
+  }
 }
 let toastTimer;
 function toast(msg) {
