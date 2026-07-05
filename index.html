@@ -2991,7 +2991,7 @@ function setLocate(on) {
   document.getElementById("locateBtn").classList.toggle("on", on);
 }
 document.getElementById("locateBtn").addEventListener("click", () => { recenterToUser(); setLocate(true); });
-if (window.innerWidth < 768) locateUser();
+if (window.innerWidth < 768 && !new URLSearchParams(location.search).get("_shots")) locateUser();
 
 /* 배포 환경 프록시 감지: 키가 없어도 /api/position 이 살아 있으면 실시간으로 자동 전환 */
 (async () => {
