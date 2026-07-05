@@ -1986,6 +1986,17 @@ if (NATIVE) {
   new MutationObserver(postImmersive).observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
   const dbg = new URLSearchParams(location.search).get("_dbg");   /* 개발용: ?_dbg=역명 이면 해당 역 카드 자동 열기 */
   if (dbg) setTimeout(() => { try { openStationCard(dbg); } catch (e) {} }, 2600);
+  /* 개발용: ?_dbgFlow=1 이면 실제 웹 함수를 순차 호출해 네이티브 브리지 전체(카드→설정→열차목록→몰입모드)를 탭 없이 자동 검증 */
+  if (new URLSearchParams(location.search).get("_dbgFlow")) {
+    const seq = [
+      [2500, () => openStationCard("강남")],
+      [5000, () => document.getElementById("settingsBtn").click()],
+      [7500, () => document.getElementById("listFab").click()],
+      [10000, () => onMapClick([90, 0])],   // 역/열차 근처 아님 -> 여백탭 취급 -> immersive 토글
+      [12500, () => onMapClick([90, 0])],   // immersive 해제
+    ];
+    seq.forEach(([t, fn]) => setTimeout(() => { try { fn(); } catch (e) {} }, t));
+  }
 }
 let toastTimer;
 function toast(msg) {
