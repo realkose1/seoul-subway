@@ -49,7 +49,7 @@
 
   /* 네이티브 앱(?native=1): 상단바를 SwiftUI 네이티브 유리로 대체 → 웹 상단바 숨김, 현위치 버튼은 네이티브 바 밑으로 */
   html.native-app .brand-card { display: none; }
-  html.native-app .locate-btn { top: calc(max(12px, env(safe-area-inset-top)) + 132px); }
+  html.native-app .locate-btn { top: calc(max(12px, env(safe-area-inset-top)) + 122px); }
   /* 하단 역 카드도 네이티브로 대체: 웹 카드는 렌더는 유지(파싱용)하되 안 보이게 + 터치 통과 */
   html.native-app .station-card { opacity: 0 !important; pointer-events: none !important; }
   /* 설정 시트도 네이티브로 대체: 웹 시트/스크림은 렌더 유지(파싱용)하되 안 보이게 + 터치 통과 */
