@@ -1878,6 +1878,8 @@ if (NATIVE) {
       tt: io => { const b = document.querySelector('#scBody .sc-tt-btn[data-inout="' + io + '"]'); if (b) b.click(); },
       pick: i => { const els = document.querySelectorAll("#scBody .sc-pick"); if (els[i]) els[i].click(); },
       follow: () => { const b = document.getElementById("scFollow"); if (b) b.click(); },
+      ttBack: () => { const b = document.getElementById("ttBack"); if (b) b.click(); },
+      ttWeek: w => { const b = document.querySelector('.tt-weeks button[data-w="' + w + '"]'); if (b) b.click(); },
     },
     settingsPanel: {
       selectMap: prov => { const b = document.querySelector('#mapSeg button[data-prov="' + prov + '"]'); if (b) b.click(); },
@@ -1936,6 +1938,32 @@ function postCard() {
   try {
     const cardEl = document.getElementById("stationCard");
     const body = document.getElementById("scBody");
+    const favEl0 = document.getElementById("scFav");
+    /* 시간표 화면(.tt-head)일 땐 시간표 모델을 별도로 전송 */
+    if (body.querySelector(".tt-head")) {
+      const weeks = [...body.querySelectorAll(".tt-weeks button")].map(b => ({ w: b.dataset.w, label: b.textContent.trim(), on: b.classList.contains("on") }));
+      const ttSections = [...body.querySelectorAll(".tt-sec")].map(sec => {
+        const lineEl = sec.querySelector(".tt-line");
+        let line = "";
+        if (lineEl) { const c = lineEl.cloneNode(true); const m = c.querySelector(".tt-meta"); if (m) m.remove(); line = c.textContent.trim(); }
+        const rows = [...sec.querySelectorAll(".tt-row")].map(r => {
+          const de = r.querySelector(".tt-dest"); let dest = "";
+          if (de) { const c = de.cloneNode(true); const bd = c.querySelector(".badge"); if (bd) bd.remove(); dest = c.textContent.trim(); }
+          return { time: (r.querySelector(".tt-time")?.textContent || "").trim(), dest, express: !!r.querySelector(".badge.express"), next: r.classList.contains("next") };
+        });
+        return { line, meta: (sec.querySelector(".tt-meta")?.textContent || "").trim(), empty: (sec.querySelector(".sc-empty")?.textContent || "").trim() || null, rows };
+      });
+      window.webkit.messageHandlers.ui.postMessage({
+        type: "card", open: cardEl.classList.contains("open"), mode: "timetable",
+        title: document.getElementById("scTitle").textContent,
+        fav: favEl0.textContent.trim() === "★", favShown: getComputedStyle(favEl0).display !== "none",
+        ttBack: !!document.getElementById("ttBack"),
+        ttDir: (body.querySelector(".tt-dir")?.textContent || "").trim(),
+        weeks, ttSections,
+        ttEmpty: (body.querySelector(":scope > .sc-empty")?.textContent || "").trim() || null,
+      });
+      return;
+    }
     const pc = { n: 0 };
     const tabs = [...body.querySelectorAll(".sc-linetabs button")].map(b => ({
       key: b.dataset.line, label: b.textContent.trim(), on: b.classList.contains("on"),
@@ -1959,7 +1987,7 @@ function postCard() {
     const emptyEl = body.querySelector(":scope > .sc-empty");
     const favEl = document.getElementById("scFav");
     window.webkit.messageHandlers.ui.postMessage({
-      type: "card",
+      type: "card", mode: "arrival",
       open: cardEl.classList.contains("open"),
       title: document.getElementById("scTitle").textContent,
       fav: favEl.textContent.trim() === "★",
