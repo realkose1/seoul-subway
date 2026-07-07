@@ -493,6 +493,7 @@
   .gm-style-iw button.gm-ui-hover-effect span { background-color: var(--muted) !important; }
   .gm-stn-label { transform: translateY(-15px); }
   .stn-label-light { color: #3a3d42; font-size: 10px; font-weight: 700; font-family: var(--font); white-space: nowrap; text-shadow: 0 0 3px #fff, 0 0 5px #fff, 0 0 8px #fff; transform: translate(8px, -6px); }
+  .stn-label-dark { color: #c9ccd1; font-size: 10px; font-weight: 700; font-family: var(--font); white-space: nowrap; text-shadow: 0 0 3px #0d0e10, 0 0 6px #0d0e10; transform: translate(8px, -6px); }  /* 애플(다크) 지도용 역명 */
   .stn-dot-html { width: 9px; height: 9px; border-radius: 50%; background: #fff; border: 2px solid #8a8d93; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
   .stn-dot-html.terminal { border-color: var(--line); width: 11px; height: 11px; }
   .naver-pp { font-family: var(--font); color: var(--text); font-size: 12.5px; line-height: 1.7; padding: 12px 14px; min-width: 150px; }
@@ -525,6 +526,7 @@
 </head>
 <body>
 <div id="map-basic" class="maplayer" style="position:absolute;top:0;right:0;bottom:0;left:0"></div>
+<div id="map-apple" class="maplayer" style="display:none;position:absolute;top:0;right:0;bottom:0;left:0"></div>
 <div id="map-naver" class="maplayer" style="display:none;position:absolute;top:0;right:0;bottom:0;left:0"></div>
 
 <div class="topbar">
@@ -551,9 +553,10 @@
     <label>지도</label>
     <div class="seg" id="mapSeg">
       <button data-prov="basic">기본</button>
+      <button data-prov="apple">애플</button>
       <button data-prov="naver">네이버</button>
     </div>
-    <div class="hint">기본 지도는 빠르고 항상 동작합니다. 네이버 지도는 더 자세한 지형·건물을 보여줍니다. 선택은 자동 저장됩니다.</div>
+    <div class="hint">기본 지도는 빠르고 항상 동작합니다. 애플·네이버 지도는 더 자세한 지형·건물을 보여줍니다. 선택은 자동 저장됩니다.</div>
   </div>
 </div>
 
@@ -1417,7 +1420,185 @@ const naverAdapter = {
   }
 };
 
-const ADAPTERS = { basic: basicAdapter, naver: naverAdapter };
+/* ════════════════ 지도 어댑터: 애플(MapKit JS) ════════════════
+   토큰: /api/mapkit-token (Vercel 환경변수 MAPKIT_KEY_ID/MAPKIT_PRIVATE_KEY 필요).
+   키가 없으면 ensure()가 false → 기본 지도 유지(네이버 인증 실패와 동일한 폴백). */
+const appleAdapter = {
+  containerId: "map-apple",
+  map: null, shapes: [], stations: [], labels: [], markers: new Map(), labelsOn: false,
+  _ready: false, _initCalled: false, _prog: false, _lastZoom: 0, _els: new Map(),
+  resize() {},
+  /* 0×0 래퍼로 앵커를 정확히 제어(라이브러리 기본 앵커 의존 제거): 내부 요소를 (dx,dy)에 절대배치 */
+  _wrap(html, dx, dy) {
+    const w = document.createElement("div");
+    w.style.cssText = "width:0;height:0;overflow:visible;position:relative;";
+    const inner = document.createElement("div");
+    inner.style.cssText = `position:absolute;left:${dx}px;top:${dy}px;`;
+    inner.innerHTML = html;
+    w.appendChild(inner);
+    return w;
+  },
+  _ann(pos, el, opts) {
+    const a = new mapkit.Annotation(new mapkit.Coordinate(pos[0], pos[1]), () => el, Object.assign({ animates: false, enabled: false }, opts || {}));
+    this.map.addAnnotation(a);
+    return a;
+  },
+  async ensure() {
+    if (this._ready) return true;
+    if (!window.mapkit) {
+      try { await loadScript("https://cdn.apple-mapkit.com/mk/5.x.x/mapkit.js"); }
+      catch (e) { toast("애플 지도 스크립트를 불러오지 못했습니다."); return false; }
+    }
+    try {
+      await new Promise((resolve, reject) => {
+        const to = setTimeout(() => reject(new Error("인증 시간 초과")), 10000);
+        try {
+          mapkit.addEventListener("configuration-change", e => { if (e.status === "Initialized") { clearTimeout(to); resolve(); } });
+          mapkit.addEventListener("error", e => { clearTimeout(to); reject(new Error(e.status || "인증 오류")); });
+          if (!this._initCalled) {
+            this._initCalled = true;
+            mapkit.init({
+              authorizationCallback: done => {
+                fetch("/api/mapkit-token").then(r => r.json())
+                  .then(j => { if (j && j.token) done(j.token); else { clearTimeout(to); reject(new Error((j && j.error) || "토큰 없음")); } })
+                  .catch(err => { clearTimeout(to); reject(err); });
+              }
+            });
+          }
+        } catch (e) { clearTimeout(to); reject(e); }
+      });
+    } catch (e) {
+      toast("애플 지도를 사용할 수 없습니다. 기본 지도를 유지합니다.");
+      return false;
+    }
+    this._ready = true;
+    return true;
+  },
+  _zoom() {
+    const h = (this.map && this.map.element && this.map.element.clientHeight) || window.innerHeight;
+    const d = this.map.region.span.latitudeDelta || 0.0001;
+    return Math.log2((h / 256) * 360 / d);
+  },
+  init(center, zoom) {
+    const el = document.getElementById("map-apple");
+    el.classList.add("maplayer");
+    this.map = new mapkit.Map("map-apple", {
+      colorScheme: mapkit.Map.ColorSchemes.Dark,                 /* 다크 테마 유지(유리 대비 그대로) */
+      isRotationEnabled: false,
+      showsCompass: mapkit.FeatureVisibility.Hidden,
+      showsScale: mapkit.FeatureVisibility.Hidden,
+      showsMapTypeControl: false,
+      showsZoomControl: false,
+    });
+    this.map.getZoom = () => this._zoom();                        /* trainSizePx 등 공용 코드 호환 */
+    this.setView(center, zoom);
+    this._lastZoom = zoom;
+    this.map.addEventListener("single-tap", ev => {
+      try { const c = this.map.convertPointOnPageToCoordinate(ev.pointOnPage); onMapClick([c.latitude, c.longitude]); } catch (e) {}
+    });
+    this.map.addEventListener("region-change-start", () => {
+      if (this._prog) return;
+      stopFollow(); setLocate(false); beginInteract();            /* 사용자 조작으로 간주 */
+    });
+    this.map.addEventListener("region-change-end", () => {
+      if (!this._prog) endInteract();
+      const z = this._zoom();
+      if (Math.abs(z - this._lastZoom) > 0.3) { this._lastZoom = z; this.syncLabels(); scheduleReIcon(); }
+    });
+  },
+  destroy() {
+    if (this.map) { try { this.map.destroy(); } catch (e) {} this.map = null; }
+    this.shapes = []; this.stations = []; this.labels = []; this.markers.clear(); this._els.clear();
+  },
+  setView(c, z) {
+    this._prog = true;
+    try {
+      const h = (this.map.element && this.map.element.clientHeight) || window.innerHeight;
+      const dLat = (h / 256) * 360 / Math.pow(2, z);
+      this.map.region = new mapkit.CoordinateRegion(new mapkit.Coordinate(c[0], c[1]), new mapkit.CoordinateSpan(dLat, dLat * 0.8));
+    } catch (e) {}
+    setTimeout(() => { this._prog = false; }, 350);
+  },
+  getView() {
+    const r = this.map.region;
+    return { center: [r.center.latitude, r.center.longitude], zoom: this._zoom() };
+  },
+  visibleBox(pad) {
+    if (!this.map) return null;
+    try {
+      const r = this.map.region;
+      const hs = r.span.latitudeDelta / 2, hw = r.span.longitudeDelta / 2;
+      const dLat = r.span.latitudeDelta * pad, dLng = r.span.longitudeDelta * pad;
+      return { s: r.center.latitude - hs - dLat, n: r.center.latitude + hs + dLat, w: r.center.longitude - hw - dLng, e: r.center.longitude + hw + dLng };
+    } catch (e) { return null; }
+  },
+  clearLine() {
+    this.shapes.forEach(s => this.map.removeOverlay(s)); this.shapes = [];
+    this.stations.forEach(a => this.map.removeAnnotation(a)); this.stations = [];
+    this.labels.forEach(a => this.map.removeAnnotation(a)); this.labels = [];
+  },
+  addPolyline(pts, color) {
+    const o = new mapkit.PolylineOverlay(pts.map(p => new mapkit.Coordinate(p[0], p[1])), {
+      style: new mapkit.Style({ lineWidth: 4, strokeColor: color, strokeOpacity: 0.85, lineJoin: "round", lineCap: "round" })
+    });
+    this.map.addOverlay(o);
+    this.shapes.push(o);
+  },
+  addStation(name, pos, isTerminal, color) {
+    const half = isTerminal ? 7.5 : 6.5;                          /* dot 총폭(테두리 포함)의 절반 */
+    const dot = this._ann(pos, this._wrap(`<div class="stn-dot-html${isTerminal ? " terminal" : ""}"></div>`, -half, -half));
+    this.stations.push(dot);
+    const lbl = this._ann(pos, this._wrap(`<div class="stn-label-dark">${name}</div>`, 0, 0), { visible: false });
+    this.labels.push(lbl);
+    this.syncLabels(true);
+  },
+  syncLabels(force) {
+    if (!this.map) return;
+    const on = this._zoom() >= LABEL_ZOOM;
+    if (on === this.labelsOn && !force) return;
+    this.labelsOn = on;
+    for (const l of this.labels) l.visible = on;
+  },
+  upsertTrain(no, pos, t, heading) {
+    const len = trainSizePx(this.map);
+    let el = this._els.get(no);
+    if (el) {
+      el.firstElementChild.style.left = (-len / 2) + "px";
+      el.firstElementChild.style.top = (-len / 2) + "px";
+      el.firstElementChild.innerHTML = trainPinHtml(t, heading, len);
+      const a = this.markers.get(no);
+      if (a) a.coordinate = new mapkit.Coordinate(pos[0], pos[1]);
+    } else {
+      el = this._wrap(trainPinHtml(t, heading, len), -len / 2, -len / 2);
+      this._els.set(no, el);
+      this.markers.set(no, this._ann(pos, el));
+    }
+  },
+  moveTrain(no, pos) { const a = this.markers.get(no); if (a) a.coordinate = new mapkit.Coordinate(pos[0], pos[1]); },
+  /* 선택한 역 핀 (카드 열림 → 표시, 닫힘 → 제거) */
+  setSelectedStation(pos) {
+    this.clearSelectedStation();
+    this.selPin = this._ann(pos, this._wrap(SEL_PIN_HTML, -24, -45));
+  },
+  clearSelectedStation() { if (this.selPin) { this.map.removeAnnotation(this.selPin); this.selPin = null; } },
+  setUserLocation(pos) {
+    if (this.userMarker) this.userMarker.coordinate = new mapkit.Coordinate(pos[0], pos[1]);
+    else this.userMarker = this._ann(pos, this._wrap('<div class="user-dot"></div>', -8, -8));
+  },
+  prune(seen) {
+    for (const [no, a] of this.markers) if (!seen.has(no)) { this.map.removeAnnotation(a); this.markers.delete(no); this._els.delete(no); }
+  },
+  clearTrains() {
+    for (const a of this.markers.values()) this.map.removeAnnotation(a);
+    this.markers.clear(); this._els.clear();
+  },
+  focusTrain(no) {
+    const a = this.markers.get(no);
+    if (a) { this.setView([a.coordinate.latitude, a.coordinate.longitude], Math.max(this._zoom(), 13)); openTrainCardByNo(no); }
+  }
+};
+
+const ADAPTERS = { basic: basicAdapter, apple: appleAdapter, naver: naverAdapter };
 let adapter = basicAdapter;
 
 /* ════════════════ 열차 크기와 움직임 ════════════════ */
@@ -2914,20 +3095,21 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
 
 /* 시작: 저장된 지도 설정을 따른다(기본=basic). naver를 고른 적이 있을 때만 시도하고, 실패하면 기본으로. */
 (async () => {
-  const savedProvider = localStorage.getItem("mapProvider") === "naver" ? "naver" : "basic";
-  let useNaver = false;
-  if (savedProvider === "naver") {
-    try { useNaver = await naverAdapter.ensure(); } catch (e) { useNaver = false; }
+  const savedRaw = localStorage.getItem("mapProvider");
+  const savedProvider = (savedRaw === "naver" || savedRaw === "apple") ? savedRaw : "basic";
+  let useAlt = false;
+  if (savedProvider !== "basic") {
+    try { useAlt = await ADAPTERS[savedProvider].ensure(); } catch (e) { useAlt = false; }
   }
-  if (useNaver) {
-    showLayer("map-naver");
-    state.mapProvider = "naver";
-    adapter = naverAdapter;
+  if (useAlt) {
+    showLayer(ADAPTERS[savedProvider].containerId);
+    state.mapProvider = savedProvider;
+    adapter = ADAPTERS[savedProvider];
   } else {
     showLayer("map-basic");
     state.mapProvider = "basic";
     adapter = basicAdapter;
-    if (savedProvider === "naver") toast("네이버 지도를 불러오지 못해 기본 지도로 시작합니다.");
+    if (savedProvider !== "basic") toast(`${savedProvider === "naver" ? "네이버" : "애플"} 지도를 불러오지 못해 기본 지도로 시작합니다.`);
   }
   state.line = loadSavedLine(); /* 마지막 선택 호선 복원 */
   adapter.init(viewOf(state.line).center, viewOf(state.line).zoom);
