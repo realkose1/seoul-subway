@@ -1507,6 +1507,20 @@ const appleAdapter = {
       const z = this._zoom();
       if (Math.abs(z - this._lastZoom) > 0.3) { this._lastZoom = z; this.syncLabels(); scheduleReIcon(); }
     });
+    /* 인증·첫 렌더가 끝나기 전에 추가된 어노테이션(역 dot 등)이 유실되는 문제 보정:
+       열차는 매 틱 좌표 갱신으로 살아나지만 정적인 역·라벨은 그대로 사라짐 → 준비 후 한 번 재부착 */
+    setTimeout(() => this._resettle(), 1500);
+    setTimeout(() => this._resettle(), 3500);
+  },
+  _resettle() {
+    if (!this.map) return;
+    try {
+      const all = [...this.stations, ...this.labels, this.selPin, this.userMarker, ...this.markers.values()].filter(Boolean);
+      if (!all.length) return;
+      this.map.removeAnnotations(all);
+      this.map.addAnnotations(all);
+      this.syncLabels(true);
+    } catch (e) {}
   },
   destroy() {
     if (this.map) { try { this.map.destroy(); } catch (e) {} this.map = null; }
