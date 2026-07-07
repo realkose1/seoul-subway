@@ -1988,6 +1988,9 @@ function postCard() {
     const favEl = document.getElementById("scFav");
     window.webkit.messageHandlers.ui.postMessage({
       type: "card", mode: "arrival",
+      /* Apple 지도 열기용 역 좌표 (심사 Guideline 4: 내장 지도 연동 옵션) */
+      station: scStation || null,
+      coord: (() => { const c = scStation ? (STN[scStation] || STN[resolve(scStation)]) : null; return c ? [c[0], c[1]] : null; })(),
       open: cardEl.classList.contains("open"),
       title: document.getElementById("scTitle").textContent,
       fav: favEl.textContent.trim() === "★",
