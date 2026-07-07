@@ -1547,8 +1547,11 @@ const appleAdapter = {
     this.shapes.push(o);
   },
   addStation(name, pos, isTerminal, color) {
-    const half = isTerminal ? 7.5 : 6.5;                          /* dot 총폭(테두리 포함)의 절반 */
-    const dot = this._ann(pos, this._wrap(`<div class="stn-dot-html${isTerminal ? " terminal" : ""}"></div>`, -half, -half));
+    /* 기본 지도(circleMarker)와 동일한 룩: 흰 원 + 회색 테두리, 종점은 노선색 굵은 테두리 */
+    const d = isTerminal ? 13 : 9.6, bw = isTerminal ? 2.5 : 1.6, bc = isTerminal ? color : "#cdd1d7";
+    const half = d / 2 + bw;
+    const dot = this._ann(pos, this._wrap(
+      `<div style="width:${d}px;height:${d}px;border-radius:50%;background:#fff;border:${bw}px solid ${bc};box-sizing:content-box;"></div>`, -half, -half));
     this.stations.push(dot);
     const lbl = this._ann(pos, this._wrap(`<div class="stn-label-dark">${name}</div>`, 0, 0), { visible: false });
     this.labels.push(lbl);
