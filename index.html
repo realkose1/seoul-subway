@@ -1449,27 +1449,28 @@ const appleAdapter = {
       try { await loadScript("https://cdn.apple-mapkit.com/mk/5.x.x/mapkit.js"); }
       catch (e) { toast("애플 지도 스크립트를 불러오지 못했습니다."); return false; }
     }
+    /* 토큰 선검증: MapKit JS는 지도를 만들 때에야 인증을 시작하므로, 여기선 키 존재만 확인 */
     try {
-      await new Promise((resolve, reject) => {
-        const to = setTimeout(() => reject(new Error("인증 시간 초과")), 10000);
-        try {
-          mapkit.addEventListener("configuration-change", e => { if (e.status === "Initialized") { clearTimeout(to); resolve(); } });
-          mapkit.addEventListener("error", e => { clearTimeout(to); reject(new Error(e.status || "인증 오류")); });
-          if (!this._initCalled) {
-            this._initCalled = true;
-            mapkit.init({
-              authorizationCallback: done => {
-                fetch("/api/mapkit-token").then(r => r.json())
-                  .then(j => { if (j && j.token) done(j.token); else { clearTimeout(to); reject(new Error((j && j.error) || "토큰 없음")); } })
-                  .catch(err => { clearTimeout(to); reject(err); });
-              }
-            });
-          }
-        } catch (e) { clearTimeout(to); reject(e); }
+      const j = await (await fetch("/api/mapkit-token")).json();
+      if (!j || !j.token) { toast("애플 지도를 사용할 수 없습니다. 기본 지도를 유지합니다."); return false; }
+      this._token = j.token;
+    } catch (e) { toast("애플 지도 토큰을 가져오지 못했습니다. 기본 지도를 유지합니다."); return false; }
+    if (!this._initCalled) {
+      this._initCalled = true;
+      /* 토큰이 유효하지 않으면(맵 생성 후 비동기 발생) 기본 지도로 자동 복귀 */
+      mapkit.addEventListener("error", e => {
+        if (state.mapProvider === "apple" && !this._errHandled) {
+          this._errHandled = true;
+          toast("애플 지도 인증에 실패했습니다. 기본 지도로 복귀합니다.");
+          setProvider("basic");
+        }
       });
-    } catch (e) {
-      toast("애플 지도를 사용할 수 없습니다. 기본 지도를 유지합니다.");
-      return false;
+      mapkit.init({
+        authorizationCallback: done => {
+          if (this._token) { const t = this._token; this._token = null; done(t); }
+          else fetch("/api/mapkit-token").then(r => r.json()).then(j => { if (j && j.token) done(j.token); }).catch(() => {});
+        }
+      });
     }
     this._ready = true;
     return true;
