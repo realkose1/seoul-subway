@@ -1723,6 +1723,19 @@ let mapInteracting = false, _interactTimer = null;
 function markInteracting() { mapInteracting = true; clearTimeout(_interactTimer); _interactTimer = setTimeout(() => { mapInteracting = false; }, 200); }
 function beginInteract() { mapInteracting = true; clearTimeout(_interactTimer); }
 function endInteract() { clearTimeout(_interactTimer); _interactTimer = setTimeout(() => { mapInteracting = false; }, 200); }
+/* 줌 변화 감시(이벤트 누락 대비): 핀치 등 어떤 경로로 줌이 바뀌어도 역 dot/이름 표시 상태를 동기화.
+   지도 라이브러리의 zoom/region 이벤트가 일부 제스처에서 누락되는 경우가 있어 폴링으로 보강한다. */
+let _lastSyncZoom = null;
+setInterval(() => {
+  try {
+    if (!adapter || !adapter.map || !adapter.getView || !adapter.syncLabels) return;
+    const z = adapter.getView().zoom;
+    if (_lastSyncZoom === null || Math.abs(z - _lastSyncZoom) > 0.3) {
+      _lastSyncZoom = z;
+      adapter.syncLabels();
+    }
+  } catch (e) {}
+}, 800);
 let animLastTs = performance.now();
 setInterval(() => {
   const now = performance.now();
