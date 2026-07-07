@@ -1485,6 +1485,7 @@ const appleAdapter = {
     el.classList.add("maplayer");
     this.map = new mapkit.Map("map-apple", {
       colorScheme: mapkit.Map.ColorSchemes.Dark,                 /* 다크 테마 유지(유리 대비 그대로) */
+      mapType: mapkit.Map.MapTypes.MutedStandard,                /* POI·도로 배지 억제 — 노선/열차가 주인공 */
       isRotationEnabled: false,
       showsCompass: mapkit.FeatureVisibility.Hidden,
       showsScale: mapkit.FeatureVisibility.Hidden,
