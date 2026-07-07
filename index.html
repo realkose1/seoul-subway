@@ -2083,6 +2083,19 @@ function setStatus(text, live) {
 const NATIVE = /[?&]native=1/.test(location.search);
 if (NATIVE) {
   document.documentElement.classList.add("native-app");
+  /* navigator.geolocation을 네이티브 CoreLocation으로 우회 — WKWebView의 JS geolocation은
+     앱 권한과 별개로 "웹사이트가 위치를 사용하려 합니다"라는 자체 팝업을 추가로 띄우는데,
+     이를 막는 공개 API가 없어(WKUIDelegate에 해당 delegate가 없음) 애초에 브라우저의
+     navigator.geolocation을 호출하지 않고 네이티브에 직접 위치를 요청한다 */
+  let geoReqId = 0;
+  const geoCallbacks = new Map();
+  window.__nativeGeoResolve = (id, lat, lng) => { const cb = geoCallbacks.get(id); if (cb) { geoCallbacks.delete(id); cb.success({ coords: { latitude: lat, longitude: lng } }); } };
+  window.__nativeGeoReject = (id, message) => { const cb = geoCallbacks.get(id); if (cb) { geoCallbacks.delete(id); if (cb.error) cb.error({ code: 1, message: message || "위치 권한이 거부되었습니다." }); } };
+  navigator.geolocation.getCurrentPosition = (success, error) => {
+    const id = String(++geoReqId);
+    geoCallbacks.set(id, { success, error });
+    try { window.webkit.messageHandlers.ui.postMessage({ type: "geoRequest", id }); } catch (e) { if (error) error({ code: 2, message: "네이티브 브리지 오류" }); }
+  };
   window.__native = {
     chip: n => chipClick(n),
     refresh: () => document.getElementById("refreshBtn").click(),
