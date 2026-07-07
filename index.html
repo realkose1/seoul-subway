@@ -1484,10 +1484,13 @@ const appleAdapter = {
     this._ready = true;
     return true;
   },
+  /* 표준 Web Mercator 줌(경도/가로폭 기준)으로 계산 — 위도(세로) 기준으로 계산하면 메르카토르
+     투영의 위도 압축(1/cos(lat))만큼 오차가 생겨, 서울 위도(~37.5°)에서 실제보다 더 축소되어
+     보이고 터치 판정(mpp 기반) 반경도 실제보다 좁아진다(약 40px→32px). */
   _zoom() {
-    const h = (this.map && this.map.element && this.map.element.clientHeight) || window.innerHeight;
-    const d = this.map.region.span.latitudeDelta || 0.0001;
-    return Math.log2((h / 256) * 360 / d);
+    const w = (this.map && this.map.element && this.map.element.clientWidth) || window.innerWidth;
+    const d = this.map.region.span.longitudeDelta || 0.0001;
+    return Math.log2((w / 256) * 360 / d);
   },
   init(center, zoom) {
     const el = document.getElementById("map-apple");
@@ -1538,9 +1541,13 @@ const appleAdapter = {
   setView(c, z) {
     this._prog = true;
     try {
-      const h = (this.map.element && this.map.element.clientHeight) || window.innerHeight;
-      const dLat = (h / 256) * 360 / Math.pow(2, z);
-      this.map.region = new mapkit.CoordinateRegion(new mapkit.Coordinate(c[0], c[1]), new mapkit.CoordinateSpan(dLat, dLat * 0.8));
+      const el = this.map.element;
+      const w = (el && el.clientWidth) || window.innerWidth;
+      const h = (el && el.clientHeight) || window.innerHeight;
+      const dLng = (w / 256) * 360 / Math.pow(2, z);
+      /* 위도 방향은 경도 방향보다 메르카토르 투영에서 1/cos(lat) 배 압축되어 보이므로 보정 */
+      const dLat = dLng * (h / w) * Math.cos(c[0] * Math.PI / 180);
+      this.map.region = new mapkit.CoordinateRegion(new mapkit.Coordinate(c[0], c[1]), new mapkit.CoordinateSpan(dLat, dLng));
     } catch (e) {}
     setTimeout(() => { this._prog = false; }, 350);
   },
@@ -2996,7 +3003,7 @@ function onMapClick(pos) {
     const d = distM(pos, c);
     if (d < stnD) { stnD = d; stn = nm; }
   }
-  if (!(stn && stnD <= 40 * mpp)) stn = null;   /* 역 터치 판정 반경 40px (모바일 손가락 여유) */
+  if (!(stn && stnD <= 46 * mpp)) stn = null;   /* 역 터치 판정 반경 46px (Apple HIG 최소 터치 타겟 44pt 기준 여유) */
   /* 열차 후보 (탭 지점 주변, 가까운 순 최대 4대) */
   const trainHit = Math.max(20, trainSizePx(adapter.map) * 0.55) * mpp;
   const trains = [...animState.values()]
