@@ -808,6 +808,11 @@ const state = {
 const STATUS_LABEL = { "0": "진입 중", "1": "도착", "2": "출발", "3": "전역 출발" };
 const LABEL_ZOOM = 13;
 const BASIC_LABEL_ZOOM = 12; /* 기본 지도는 자체 역 라벨이 없어 한 단계 일찍 역명 노출 */
+/* 역 dot 표시 줌 임계값: ALL 뷰는 dot이 590개라 줌아웃 시 숨겨 부하↓(특히 애플 DOM 마커),
+   단일/복수 노선 뷰는 dot이 적어 거의 항상 표시(아주 멀리 줌아웃할 때만 숨김) */
+const STATION_DOT_ZOOM_ALL = 12;
+const STATION_DOT_ZOOM_LINE = 10;
+function stationDotsVisible(z) { return z >= (state.line === "ALL" ? STATION_DOT_ZOOM_ALL : STATION_DOT_ZOOM_LINE); }
 
 /* ════════════════ 역명 해석 / 노선 그래프 ════════════════ */
 const NORM = {};
@@ -1222,7 +1227,10 @@ const basicAdapter = {
   },
   syncLabels() {
     if (!this.map) return;
-    if (this.map.getZoom() >= BASIC_LABEL_ZOOM) { if (!this.map.hasLayer(this.labelLayer)) this.map.addLayer(this.labelLayer); }
+    const z = this.map.getZoom();
+    if (stationDotsVisible(z)) { if (!this.map.hasLayer(this.stationLayer)) this.map.addLayer(this.stationLayer); }
+    else if (this.map.hasLayer(this.stationLayer)) this.map.removeLayer(this.stationLayer);
+    if (stationDotsVisible(z) && z >= BASIC_LABEL_ZOOM) { if (!this.map.hasLayer(this.labelLayer)) this.map.addLayer(this.labelLayer); }
     else if (this.map.hasLayer(this.labelLayer)) this.map.removeLayer(this.labelLayer);
   },
   upsertTrain(no, pos, t, heading) {
@@ -1334,9 +1342,11 @@ const naverAdapter = {
     }));
   },
   addStation(name, pos, isTerminal, color) {
+    const z = this.map ? this.map.getZoom() : 12;
+    this.dotsOn = stationDotsVisible(z); this.labelsOn = this.dotsOn && z >= LABEL_ZOOM;   /* 초기 표시여부 O(1) */
     const ll = new naver.maps.LatLng(pos[0], pos[1]);
     const m = new naver.maps.Marker({
-      map: this.map, position: ll,
+      map: this.dotsOn ? this.map : null, position: ll,
       icon: {
         content: `<div class="stn-dot-html${isTerminal ? " terminal" : ""}"></div>`,
         anchor: new naver.maps.Point(isTerminal ? 7 : 6, isTerminal ? 7 : 6)
@@ -1347,19 +1357,18 @@ const naverAdapter = {
     naver.maps.Event.addListener(m, "click", () => onMapClick([pos[0], pos[1]]));
     this.stations.push(m);
     const lbl = new naver.maps.Marker({
-      map: null, position: ll, clickable: false,
+      map: this.labelsOn ? this.map : null, position: ll, clickable: false,
       icon: { content: `<div class="stn-label-light">${name}</div>`, anchor: new naver.maps.Point(0, 0) },
       zIndex: 2
     });
     this.labels.push(lbl);
-    this.syncLabels(true);
   },
   syncLabels(force) {
     if (!this.map) return;
-    const on = this.map.getZoom() >= LABEL_ZOOM;
-    if (on === this.labelsOn && !force) return;
-    this.labelsOn = on;
-    for (const l of this.labels) l.setMap(on ? this.map : null);
+    const z = this.map.getZoom();
+    const dots = stationDotsVisible(z), labs = dots && z >= LABEL_ZOOM;
+    if (dots !== this.dotsOn || force) { this.dotsOn = dots; for (const s of this.stations) s.setMap(dots ? this.map : null); }
+    if (labs !== this.labelsOn || force) { this.labelsOn = labs; for (const l of this.labels) l.setMap(labs ? this.map : null); }
   },
   upsertTrain(no, pos, t, heading) {
     const ll = new naver.maps.LatLng(pos[0], pos[1]);
@@ -1561,22 +1570,23 @@ const appleAdapter = {
     this.shapes.push(o);
   },
   addStation(name, pos, isTerminal, color) {
+    const z = this._zoom();
+    this.dotsOn = stationDotsVisible(z); this.labelsOn = this.dotsOn && z >= LABEL_ZOOM;   /* 초기 표시여부 O(1) — ALL 뷰 590개 draw 때 O(n²) 방지 */
     /* 기본 지도(circleMarker)와 동일한 룩: 흰 원 + 회색 테두리, 종점은 노선색 굵은 테두리 */
     const d = isTerminal ? 13 : 9.6, bw = isTerminal ? 2.5 : 1.6, bc = isTerminal ? color : "#cdd1d7";
     const half = d / 2 + bw;
     const dot = this._ann(pos, this._wrap(
-      `<div style="width:${d}px;height:${d}px;border-radius:50%;background:#fff;border:${bw}px solid ${bc};box-sizing:content-box;"></div>`, -half, -half));
+      `<div style="width:${d}px;height:${d}px;border-radius:50%;background:#fff;border:${bw}px solid ${bc};box-sizing:content-box;"></div>`, -half, -half), { visible: this.dotsOn });
     this.stations.push(dot);
-    const lbl = this._ann(pos, this._wrap(`<div class="stn-label-dark">${name}</div>`, 0, 0), { visible: false });
+    const lbl = this._ann(pos, this._wrap(`<div class="stn-label-dark">${name}</div>`, 0, 0), { visible: this.labelsOn });
     this.labels.push(lbl);
-    this.syncLabels(true);
   },
   syncLabels(force) {
     if (!this.map) return;
-    const on = this._zoom() >= LABEL_ZOOM;
-    if (on === this.labelsOn && !force) return;
-    this.labelsOn = on;
-    for (const l of this.labels) l.visible = on;
+    const z = this._zoom();
+    const dots = stationDotsVisible(z), labs = z >= LABEL_ZOOM;
+    if (dots !== this.dotsOn || force) { this.dotsOn = dots; for (const s of this.stations) s.visible = dots; }
+    if (labs !== this.labelsOn || force) { this.labelsOn = labs; for (const l of this.labels) l.visible = labs && dots; }
   },
   upsertTrain(no, pos, t, heading) {
     const len = trainSizePx(this.map);
