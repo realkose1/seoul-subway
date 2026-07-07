@@ -2105,6 +2105,7 @@ if (NATIVE) {
   window.__nativeGeoResolve = (id, lat, lng) => { const cb = geoCallbacks.get(id); if (cb) { geoCallbacks.delete(id); cb.success({ coords: { latitude: lat, longitude: lng } }); } };
   window.__nativeGeoReject = (id, message) => { const cb = geoCallbacks.get(id); if (cb) { geoCallbacks.delete(id); if (cb.error) cb.error({ code: 1, message: message || "위치 권한이 거부되었습니다." }); } };
   navigator.geolocation.getCurrentPosition = (success, error) => {
+    if (new URLSearchParams(location.search).get("_shots")) { if (error) error({ code: 1, message: "denied" }); return; }   /* TEMP: 캡처 모드에선 위치 프롬프트 차단 */
     const id = String(++geoReqId);
     geoCallbacks.set(id, { success, error });
     try { window.webkit.messageHandlers.ui.postMessage({ type: "geoRequest", id }); } catch (e) { if (error) error({ code: 2, message: "네이티브 브리지 오류" }); }
