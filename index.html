@@ -2284,6 +2284,21 @@ if (NATIVE) {
   const dbg = new URLSearchParams(location.search).get("_dbg");   /* 개발용: ?_dbg=역명 이면 해당 역 카드 자동 열기 */
   if (dbg) setTimeout(() => { try { openStationCard(dbg); } catch (e) {} }, 2600);
   /* 개발용: ?_dbgFlow=1 이면 실제 웹 함수를 순차 호출해 네이티브 브리지 전체(카드→설정→열차목록→몰입모드)를 탭 없이 자동 검증 */
+  if (new URLSearchParams(location.search).get("_dbgApple")) {   /* TEMP: 애플 지도 역 dot 진단 */
+    setTimeout(() => { try {
+      const a = appleAdapter.stations[0];
+      toast([
+        "n=" + appleAdapter.stations.length,
+        "vis=" + (a && a.visible),
+        "el=" + !!(a && a.element),
+        "dom=" + (a && a.element ? document.contains(a.element) : "-"),
+        "sz=" + (a && a.element ? a.element.offsetWidth + "x" + a.element.offsetHeight : "-"),
+        "pd=" + (a && a.element && a.element.parentElement ? getComputedStyle(a.element.parentElement).display + "/" + a.element.parentElement.offsetWidth : "-"),
+        "bld=" + (window.mapkit ? mapkit.build : "-"),
+      ].join(" "));
+      clearTimeout(toastTimer);   /* 안 사라지게 */
+    } catch (e) { toast("dbg err " + e.message); } }, 9000);
+  }
   if (new URLSearchParams(location.search).get("_dbgFlow")) {
     const seq = [
       [2500, () => openStationCard("강남")],
