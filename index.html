@@ -813,6 +813,11 @@ const BASIC_LABEL_ZOOM = 12; /* 기본 지도는 자체 역 라벨이 없어 한
 const STATION_DOT_ZOOM_ALL = 12;
 const STATION_DOT_ZOOM_LINE = 10;
 function stationDotsVisible(z) { return z >= (state.line === "ALL" ? STATION_DOT_ZOOM_ALL : STATION_DOT_ZOOM_LINE); }
+/* 전체(또는 복수 노선) 보기에서 크게 줌아웃하면 열차 수백 대의 DOM 갱신·보간이 메인 스레드를
+   포화시켜 저사양 기기에선 멈추기까지 한다 — 이 줌에선 열차가 2~4px 점이라 정보 가치도 없으므로
+   표시를 통째로 쉬고, 확대하면 즉시 복귀한다 (역 dot와 같은 폴링 워처가 토글) */
+const TRAIN_ZOOM_ALL = 11;
+function trainsVisible(z) { return !(state.line === "ALL" || state.line.includes(",")) || z >= TRAIN_ZOOM_ALL; }
 
 /* ════════════════ 역명 해석 / 노선 그래프 ════════════════ */
 const NORM = {};
@@ -1746,6 +1751,7 @@ function endInteract() { clearTimeout(_interactTimer); _interactTimer = setTimeo
 /* 줌 변화 감시(이벤트 누락 대비): 핀치 등 어떤 경로로 줌이 바뀌어도 역 dot/이름 표시 상태를 동기화.
    지도 라이브러리의 zoom/region 이벤트가 일부 제스처에서 누락되는 경우가 있어 폴링으로 보강한다. */
 let _lastSyncZoom = null;
+let trainsHiddenByZoom = false, _trainHideNotified = false;
 setInterval(() => {
   try {
     if (!adapter || !adapter.map || !adapter.getView || !adapter.syncLabels) return;
@@ -1753,6 +1759,15 @@ setInterval(() => {
     if (_lastSyncZoom === null || Math.abs(z - _lastSyncZoom) > 0.3) {
       _lastSyncZoom = z;
       adapter.syncLabels();
+    }
+    /* 매 틱 평가(줌 변화뿐 아니라 노선 전환으로도 바뀜) */
+    const hide = !trainsVisible(z);
+    if (hide !== trainsHiddenByZoom) {
+      trainsHiddenByZoom = hide;
+      if (hide) {
+        adapter.clearTrains();
+        if (!_trainHideNotified) { _trainHideNotified = true; toast("지도를 확대하면 열차가 표시됩니다"); }
+      } else reIconTrains();
     }
   } catch (e) {}
 }, 800);
@@ -1762,6 +1777,7 @@ setInterval(() => {
   const now = performance.now();
   const dt = Math.min(1, (now - animLastTs) / 1000);
   animLastTs = now;
+  if (trainsHiddenByZoom) return; /* 줌아웃으로 열차 숨김 중: 보간·DOM 전부 쉼 (다음 renderTrains가 위치 보정) */
   /* 화면 밖 열차는 위치 계산만 하고 DOM 갱신은 생략 → 발열·버벅임 완화(기본·네이버 모두).
      지도 조작 중(mapInteracting)이면 그리기 자체를 건너뛴다 */
   animTick++;
@@ -1905,8 +1921,10 @@ function renderTrains() {
     if (total > 2500) { startPos = r.pos.slice(); route = [r.goal.slice()]; total = distM(startPos, route[0]); }
     while (route.length > 1 && distM(startPos, route[0]) < 25) route.shift();
     const heading = distM(startPos, route[0]) > 5 ? bearingDeg(startPos, route[0]) : r.heading;
-    adapter.upsertTrain(t.trainNo, offsetLeft(startPos, heading, trackOffM), t, heading);
-    adapter.moveTrain(t.trainNo, offsetLeft(startPos, heading, trackOffM));
+    if (!trainsHiddenByZoom) {
+      adapter.upsertTrain(t.trainNo, offsetLeft(startPos, heading, trackOffM), t, heading);
+      adapter.moveTrain(t.trainNo, offsetLeft(startPos, heading, trackOffM));
+    }
     const speed = Math.min(28, Math.max(3, total / dur)); /* m/s */
     animState.set(t.trainNo, { no: t.trainNo, cur: startPos.slice(), route, idx: 0, speed, heading, anchor: r.anchor, train: t });
   }
@@ -1931,7 +1949,13 @@ function renderList() {
       </div>
     </div>`).join("");
   list.querySelectorAll(".train-item").forEach(el =>
-    el.addEventListener("click", () => adapter.focusTrain(el.dataset.no)));
+    el.addEventListener("click", () => {
+      const no = el.dataset.no;
+      /* 줌아웃으로 마커가 내려간 상태면 어댑터의 마커 조회가 실패하므로 보간 상태로 직접 이동 */
+      const st = trainsHiddenByZoom && animState.get(no);
+      if (st) { adapter.setView(st.cur, Math.max(adapter.getView().zoom, 13)); openTrainCardByNo(no); }
+      else adapter.focusTrain(no);
+    }));
 }
 
 /* ════════════════ 실시간 API ════════════════ */
@@ -2130,17 +2154,23 @@ if (NATIVE) {
   const realGeo = navigator.geolocation;
   const realGCP = realGeo.getCurrentPosition.bind(realGeo);   /* 구(1.0) 네이티브 폴백용 원본 보관 */
   const geoDone = id => { const cb = geoCallbacks.get(id); if (cb) { geoCallbacks.delete(id); clearTimeout(cb.timer); } return cb; };
-  window.__nativeGeoResolve = (id, lat, lng) => { const cb = geoDone(id); if (cb) cb.success({ coords: { latitude: lat, longitude: lng } }); };
-  window.__nativeGeoReject = (id, message) => { const cb = geoDone(id); if (cb && cb.error) cb.error({ code: 1, message: message || "위치 권한이 거부되었습니다." }); };
+  let nativeGeoSeen = false;   /* 네이티브가 한 번이라도 응답 → geoRequest 지원 확정, 폴백 불필요 */
+  let bridgeGeoDead = false;   /* 한 번 무응답 타임아웃 → 구(1.0) 네이티브로 판단, 다음부턴 즉시 폴백 */
+  window.__nativeGeoResolve = (id, lat, lng) => { nativeGeoSeen = true; const cb = geoDone(id); if (cb) cb.success({ coords: { latitude: lat, longitude: lng } }); };
+  window.__nativeGeoReject = (id, message) => { nativeGeoSeen = true; const cb = geoDone(id); if (cb && cb.error) cb.error({ code: 1, message: message || "위치 권한이 거부되었습니다." }); };
   /* navigator.geolocation 자체를 심(shim) 객체로 교체 — WKWebView는 geolocation 메서드에 대한
      단순 대입을 조용히 무시할 수 있어, defineProperty로 프로퍼티(게터)를 통째로 바꿔야
      MapKit JS 등 모든 JS 호출이 확실히 네이티브 브리지를 타게 된다 */
   const geoShim = {
     getCurrentPosition(success, error) {
+      /* 스토어 1.0(build 17/18) 네이티브는 geoRequest 미지원 → 무응답이면 실 geolocation으로 폴백.
+         적응형: 한 번 무응답이면 이후엔 즉시 폴백(구 네이티브에서 매번 2.5초 기다리지 않음),
+         한 번이라도 응답했으면 신 네이티브 확정 → 권한 팝업이 떠 있어도 이중 팝업이 안 뜨게 길게 대기 */
+      if (bridgeGeoDead && !nativeGeoSeen) { realGCP(success, error); return; }
       const id = String(++geoReqId);
-      /* 스토어 1.0(build 17/18) 네이티브는 geoRequest 미지원 → 4초 내 응답 없으면 실 geolocation으로 폴백
-         (이중 팝업이 뜰 수 있지만 기능은 동작; v1.1 업데이트 후엔 브리지로 즉시 응답) */
-      const timer = setTimeout(() => { if (geoCallbacks.delete(id)) realGCP(success, error); }, 4000);
+      const timer = setTimeout(() => {
+        if (geoCallbacks.delete(id)) { if (!nativeGeoSeen) bridgeGeoDead = true; realGCP(success, error); }
+      }, nativeGeoSeen ? 15000 : 2500);
       geoCallbacks.set(id, { success, error, timer });
       try { window.webkit.messageHandlers.ui.postMessage({ type: "geoRequest", id }); }
       catch (e) { if (geoDone(id) && error) error({ code: 2, message: "네이티브 브리지 오류" }); }
@@ -3262,6 +3292,7 @@ function recenterToUser() {
     adapter.setView(state.userPos, 14);
   }
   if (!("geolocation" in navigator)) { toast("이 기기에서 위치를 사용할 수 없습니다."); return; }
+  if (!state.userPos) toast("현재 위치 확인 중…"); /* 첫 요청은 권한 팝업·위치 픽스로 수 초 걸릴 수 있어 즉시 피드백 */
   navigator.geolocation.getCurrentPosition(p => {
     state.userPos = [p.coords.latitude, p.coords.longitude];
     if (adapter.map) { if (adapter.setUserLocation) adapter.setUserLocation(state.userPos); adapter.setView(state.userPos, 14); }
