@@ -1501,7 +1501,7 @@ const appleAdapter = {
     const w0 = el0.clientWidth || window.innerWidth, h0 = el0.clientHeight || window.innerHeight;
     const dLng0 = (w0 / 256) * 360 / Math.pow(2, zoom);
     const dLat0 = dLng0 * (h0 / w0) * Math.cos(center[0] * Math.PI / 180);
-    this.map = new mapkit.Map("map-apple", {
+    const opts = {
       region: new mapkit.CoordinateRegion(new mapkit.Coordinate(center[0], center[1]), new mapkit.CoordinateSpan(dLat0, dLng0)),
       colorScheme: mapkit.Map.ColorSchemes.Dark,                 /* 다크 테마 유지(유리 대비 그대로) */
       mapType: mapkit.Map.MapTypes.MutedStandard,                /* POI·도로 배지 억제 — 노선/열차가 주인공 */
@@ -1510,7 +1510,11 @@ const appleAdapter = {
       showsScale: mapkit.FeatureVisibility.Hidden,
       showsMapTypeControl: false,
       showsZoomControl: false,
-    });
+    };
+    /* 애플 베이스맵 자체의 지하철역 이름·dot 숨김 — 우리 dot/라벨(줌 임계값 관리)과 이중 표시되고,
+       줌아웃 시 "역이름이 안 사라지는" 원인이 이 기본 POI였다 */
+    try { opts.pointOfInterestFilter = mapkit.PointOfInterestFilter.excluding([mapkit.PointOfInterestCategory.PublicTransport]); } catch (e) {}
+    this.map = new mapkit.Map("map-apple", opts);
     this.map.getZoom = () => this._zoom();                        /* trainSizePx 등 공용 코드 호환 */
     this.setView(center, zoom);
     this._lastZoom = zoom;
