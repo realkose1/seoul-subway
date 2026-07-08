@@ -1504,7 +1504,7 @@ const appleAdapter = {
     const opts = {
       region: new mapkit.CoordinateRegion(new mapkit.Coordinate(center[0], center[1]), new mapkit.CoordinateSpan(dLat0, dLng0)),
       colorScheme: mapkit.Map.ColorSchemes.Dark,                 /* 다크 테마 유지(유리 대비 그대로) */
-      mapType: mapkit.Map.MapTypes.MutedStandard,                /* POI·도로 배지 억제 — 노선/열차가 주인공 */
+      mapType: new URLSearchParams(location.search).get("_mt") === "std" ? mapkit.Map.MapTypes.Standard : mapkit.Map.MapTypes.MutedStandard,   /* TEMP: _mt=std 비교용 (기본 MutedStandard) */
       isRotationEnabled: false,
       showsCompass: mapkit.FeatureVisibility.Hidden,
       showsScale: mapkit.FeatureVisibility.Hidden,
