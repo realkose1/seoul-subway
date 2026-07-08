@@ -1512,8 +1512,10 @@ const appleAdapter = {
       showsZoomControl: false,
     };
     /* 애플 베이스맵 자체의 지하철역 이름·dot 숨김 — 우리 dot/라벨(줌 임계값 관리)과 이중 표시되고,
-       줌아웃 시 "역이름이 안 사라지는" 원인이 이 기본 POI였다 */
-    try { opts.pointOfInterestFilter = mapkit.PointOfInterestFilter.excluding([mapkit.PointOfInterestCategory.PublicTransport]); } catch (e) {}
+       줌아웃 시 "역이름이 안 사라지는" 원인이 이 기본 POI였다.
+       주의: excluding([PublicTransport])는 MutedStandard의 기본 POI 억제를 풀어 호텔·상점까지
+       쏟아냄 → including([])로 모든 POI를 숨긴다(도시·행정구 지명 라벨은 POI가 아니라 유지됨) */
+    try { opts.pointOfInterestFilter = mapkit.PointOfInterestFilter.including([]); } catch (e) {}
     this.map = new mapkit.Map("map-apple", opts);
     this.map.getZoom = () => this._zoom();                        /* trainSizePx 등 공용 코드 호환 */
     this.setView(center, zoom);
