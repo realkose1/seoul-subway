@@ -1504,7 +1504,7 @@ const appleAdapter = {
     const opts = {
       region: new mapkit.CoordinateRegion(new mapkit.Coordinate(center[0], center[1]), new mapkit.CoordinateSpan(dLat0, dLng0)),
       colorScheme: mapkit.Map.ColorSchemes.Dark,                 /* 다크 테마 유지(유리 대비 그대로) */
-      mapType: new URLSearchParams(location.search).get("_mt") === "std" ? mapkit.Map.MapTypes.Standard : mapkit.Map.MapTypes.MutedStandard,   /* TEMP: _mt=std 비교용 (기본 MutedStandard) */
+      mapType: mapkit.Map.MapTypes.MutedStandard,                /* POI·도로 배지 억제 — 노선/열차가 주인공 */
       isRotationEnabled: false,
       showsCompass: mapkit.FeatureVisibility.Hidden,
       showsScale: mapkit.FeatureVisibility.Hidden,
@@ -1512,10 +1512,14 @@ const appleAdapter = {
       showsZoomControl: false,
     };
     /* 애플 베이스맵 자체의 지하철역 이름·dot 숨김 — 우리 dot/라벨(줌 임계값 관리)과 이중 표시되고,
-       줌아웃 시 "역이름이 안 사라지는" 원인이 이 기본 POI였다.
-       주의: excluding([PublicTransport])는 MutedStandard의 기본 POI 억제를 풀어 호텔·상점까지
-       쏟아냄 → including([])로 모든 POI를 숨긴다(도시·행정구 지명 라벨은 POI가 아니라 유지됨) */
-    try { opts.pointOfInterestFilter = mapkit.PointOfInterestFilter.including([]); } catch (e) {}
+       줌아웃 시 "역이름이 안 사라지는" 원인이 이 기본 POI(PublicTransport)였다.
+       주의: excluding([PublicTransport])만 쓰면 MutedStandard의 기본 POI 억제가 풀려 호텔·상점이
+       쏟아지고, including([])는 no-op → "전 카테고리 excluding"으로 모든 POI를 확실히 숨긴다
+       (도시·행정구 지명은 POI가 아니라 유지됨) */
+    try {
+      const allCats = Object.values(mapkit.PointOfInterestCategory).filter(v => typeof v === "string");
+      if (allCats.length) opts.pointOfInterestFilter = mapkit.PointOfInterestFilter.excluding(allCats);
+    } catch (e) {}
     this.map = new mapkit.Map("map-apple", opts);
     this.map.getZoom = () => this._zoom();                        /* trainSizePx 등 공용 코드 호환 */
     this.setView(center, zoom);
