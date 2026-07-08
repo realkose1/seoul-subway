@@ -1449,6 +1449,7 @@ const appleAdapter = {
   },
   _ann(pos, el, opts) {
     const a = new mapkit.Annotation(new mapkit.Coordinate(pos[0], pos[1]), () => el, Object.assign({ animates: false, enabled: false }, opts || {}));
+    a._el = el; /* MapKit JS의 annotation.visible 세터는 팩토리 DOM에 반영되지 않아, 표시 토글은 el.style.display로 직접 */
     this.map.addAnnotation(a);
     return a;
   },
@@ -1600,17 +1601,19 @@ const appleAdapter = {
     const d = isTerminal ? 13 : 9.6, bw = isTerminal ? 2.5 : 1.6, bc = isTerminal ? color : "#cdd1d7";
     const half = d / 2 + bw;
     const dot = this._ann(pos, this._wrap(
-      `<div style="width:${d}px;height:${d}px;border-radius:50%;background:#fff;border:${bw}px solid ${bc};box-sizing:content-box;"></div>`, -half, -half), { visible: this.dotsOn });
+      `<div style="width:${d}px;height:${d}px;border-radius:50%;background:#fff;border:${bw}px solid ${bc};box-sizing:content-box;"></div>`, -half, -half));
+    dot._el.style.display = this.dotsOn ? "" : "none";
     this.stations.push(dot);
-    const lbl = this._ann(pos, this._wrap(`<div class="stn-label-dark">${name}</div>`, 0, 0), { visible: this.labelsOn });
+    const lbl = this._ann(pos, this._wrap(`<div class="stn-label-dark">${name}</div>`, 0, 0));
+    lbl._el.style.display = this.labelsOn ? "" : "none";
     this.labels.push(lbl);
   },
   syncLabels(force) {
     if (!this.map) return;
     const z = this._zoom();
-    const dots = stationDotsVisible(z), labs = z >= LABEL_ZOOM;
-    if (dots !== this.dotsOn || force) { this.dotsOn = dots; for (const s of this.stations) s.visible = dots; }
-    if (labs !== this.labelsOn || force) { this.labelsOn = labs; for (const l of this.labels) l.visible = labs && dots; }
+    const dots = stationDotsVisible(z), labs = dots && z >= LABEL_ZOOM;
+    if (dots !== this.dotsOn || force) { this.dotsOn = dots; for (const s of this.stations) if (s._el) s._el.style.display = dots ? "" : "none"; }
+    if (labs !== this.labelsOn || force) { this.labelsOn = labs; for (const l of this.labels) if (l._el) l._el.style.display = labs ? "" : "none"; }
   },
   upsertTrain(no, pos, t, heading) {
     const len = trainSizePx(this.map);
@@ -3226,7 +3229,8 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
     setTimeout(() => { try { adapter.setView([37.5, 127.0], 14); } catch (e) {} }, 17000);
     setInterval(() => { try {
       const s0 = adapter.stations && adapter.stations[0];
-      toast(`z=${adapter.getView().zoom.toFixed(2)} dotsOn=${adapter.dotsOn} n=${adapter.stations ? adapter.stations.length : "-"} s0vis=${s0 ? s0.visible : "-"} lbl0vis=${adapter.labels && adapter.labels[0] ? adapter.labels[0].visible : "-"}`);
+      const vis = a => a && a._el ? (a._el.style.display !== "none") : "-";
+      toast(`z=${adapter.getView().zoom.toFixed(2)} dotsOn=${adapter.dotsOn} n=${adapter.stations ? adapter.stations.length : "-"} s0vis=${vis(s0)} lbl0vis=${vis(adapter.labels && adapter.labels[0])}`);
       clearTimeout(toastTimer);
     } catch (e) { toast("zt err " + e.message); } }, 1000);
   }
