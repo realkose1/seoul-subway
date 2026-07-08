@@ -2110,6 +2110,13 @@ if (NATIVE) {
     geoCallbacks.set(id, { success, error });
     try { window.webkit.messageHandlers.ui.postMessage({ type: "geoRequest", id }); } catch (e) { if (error) error({ code: 2, message: "네이티브 브리지 오류" }); }
   };
+  /* watchPosition도 우회 — MapKit JS 등이 내부에서 호출하면 WebKit 실 geolocation을 타서
+     웹사이트 위치 팝업이 다시 떠 버린다. 1회성 위치로 대응(연속 추적은 이 앱에 불필요) */
+  navigator.geolocation.watchPosition = (success, error) => {
+    navigator.geolocation.getCurrentPosition(success, error);
+    return ++geoReqId;
+  };
+  navigator.geolocation.clearWatch = () => {};
   window.__native = {
     chip: n => chipClick(n),
     refresh: () => document.getElementById("refreshBtn").click(),
