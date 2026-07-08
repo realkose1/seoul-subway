@@ -2104,19 +2104,21 @@ if (NATIVE) {
   const geoCallbacks = new Map();
   window.__nativeGeoResolve = (id, lat, lng) => { const cb = geoCallbacks.get(id); if (cb) { geoCallbacks.delete(id); cb.success({ coords: { latitude: lat, longitude: lng } }); } };
   window.__nativeGeoReject = (id, message) => { const cb = geoCallbacks.get(id); if (cb) { geoCallbacks.delete(id); if (cb.error) cb.error({ code: 1, message: message || "위치 권한이 거부되었습니다." }); } };
-  navigator.geolocation.getCurrentPosition = (success, error) => {
-    if (new URLSearchParams(location.search).get("_shots")) { if (error) error({ code: 1, message: "denied" }); return; }   /* TEMP: 캡처 모드에선 위치 프롬프트 차단 */
-    const id = String(++geoReqId);
-    geoCallbacks.set(id, { success, error });
-    try { window.webkit.messageHandlers.ui.postMessage({ type: "geoRequest", id }); } catch (e) { if (error) error({ code: 2, message: "네이티브 브리지 오류" }); }
+  /* navigator.geolocation 자체를 심(shim) 객체로 교체 — WKWebView는 geolocation 메서드에 대한
+     단순 대입을 조용히 무시할 수 있어, defineProperty로 프로퍼티(게터)를 통째로 바꿔야
+     MapKit JS 등 모든 JS 호출이 확실히 네이티브 브리지를 타게 된다 */
+  const geoShim = {
+    getCurrentPosition(success, error) {
+      if (new URLSearchParams(location.search).get("_shots")) { if (error) error({ code: 1, message: "denied" }); return; }   /* TEMP: 캡처 모드에선 위치 프롬프트 차단 */
+      const id = String(++geoReqId);
+      geoCallbacks.set(id, { success, error });
+      try { window.webkit.messageHandlers.ui.postMessage({ type: "geoRequest", id }); } catch (e) { if (error) error({ code: 2, message: "네이티브 브리지 오류" }); }
+    },
+    watchPosition(success, error) { this.getCurrentPosition(success, error); return ++geoReqId; },   /* 연속 추적은 이 앱에 불필요 — 1회성으로 대응 */
+    clearWatch() {},
   };
-  /* watchPosition도 우회 — MapKit JS 등이 내부에서 호출하면 WebKit 실 geolocation을 타서
-     웹사이트 위치 팝업이 다시 떠 버린다. 1회성 위치로 대응(연속 추적은 이 앱에 불필요) */
-  navigator.geolocation.watchPosition = (success, error) => {
-    navigator.geolocation.getCurrentPosition(success, error);
-    return ++geoReqId;
-  };
-  navigator.geolocation.clearWatch = () => {};
+  try { Object.defineProperty(Navigator.prototype, "geolocation", { get: () => geoShim, configurable: true }); } catch (e) {}
+  try { Object.defineProperty(navigator, "geolocation", { value: geoShim, configurable: true }); } catch (e) {}
   window.__native = {
     chip: n => chipClick(n),
     refresh: () => document.getElementById("refreshBtn").click(),
