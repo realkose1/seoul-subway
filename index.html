@@ -2901,6 +2901,12 @@ async function openStationCard(name, opts) {
   document.getElementById("scTitle").textContent = name;
   document.getElementById("scBody").innerHTML = `<div class="sc-empty">불러오는 중...</div>`;
   document.getElementById("stationCard").classList.add("open");
+  if (new URLSearchParams(location.search).get("_zt3")) {   /* TEMP */
+    const cEl = document.getElementById("stationCard");
+    toast(`OSC-inline: ${name} cls="${cEl.className}"`);
+    setTimeout(() => toast(`+500ms cls="${cEl.className}" immersive=${document.documentElement.classList.contains("immersive")}`), 500);
+    setTimeout(() => toast(`+1500ms cls="${cEl.className}"`), 1500);
+  }
   syncFavBtn();
   try {
     const items = await loadArrivals(name, true);
@@ -3270,7 +3276,6 @@ if (new URLSearchParams(location.search).get("_zt3")) {
       const el = document.getElementById("stationCard");
       try {
         const r = _origOSC.apply(this, arguments);
-        toast(`autoOpen#${_n}: ${name} @ ${(performance.now() - _t0).toFixed(0)}ms cls="${el.className}"`);
         return r;
       } catch (e) {
         toast(`autoOpen#${_n} THROW: ${e.message} cls="${el.className}"`);
