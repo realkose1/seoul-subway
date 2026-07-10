@@ -3325,10 +3325,11 @@ state.userPos = null;
    위치가 늦게 잡혀 다시 호출되면, 지금 열려있는 카드가 "우리가 자동으로 연 것"일 때만
    진짜 최단거리 역으로 교체한다 — 사용자가 직접 다른 역을 보고 있으면 절대 건드리지 않는다. */
 function openNearestFavorite() {
-  if (favAutoSuppressed) return;
+  const _zt3 = new URLSearchParams(location.search).get("_zt3");
+  if (favAutoSuppressed) { if (_zt3) toast("ONF: favAutoSuppressed"); return; }
   const f = favList();
-  if (!f.length) return;
-  if (scStation && scStation !== autoFavOpened) return; /* 사용자가 직접 연 역을 보는 중 */
+  if (!f.length) { if (_zt3) toast("ONF: f.length=0"); return; }
+  if (scStation && scStation !== autoFavOpened) { if (_zt3) toast(`ONF: guard scStation=${scStation} auto=${autoFavOpened}`); return; }
   let target = f[0], best = Infinity;
   if (state.userPos) for (const name of f) {
     const s = STN[name] || STN[resolve(name)];
@@ -3336,7 +3337,8 @@ function openNearestFavorite() {
     const d = distM(state.userPos, s);
     if (d < best) { best = d; target = name; }
   }
-  if (target === scStation) return; /* 이미 같은 역이 열려 있음(재요청으로 인한 깜빡임 방지) */
+  if (target === scStation) { if (_zt3) toast(`ONF: noop target===scStation=${target}`); return; }
+  if (_zt3) toast(`ONF: calling openStationCard(${target}) userPos=${state.userPos}`);
   openStationCard(target, { auto: true });
 }
 function locateUser() {
