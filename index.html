@@ -2274,7 +2274,6 @@ function parseCardRow(el, pickCounter) {
   return row;
 }
 function postCard() {
-  if (window._dbgLog) window._dbgLog(`postCard called NATIVE=${NATIVE} bridge=${!!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.ui)} cls="${document.getElementById("stationCard").className}"`);
   if (!NATIVE || !(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.ui)) return;
   try {
     const cardEl = document.getElementById("stationCard");
@@ -2908,12 +2907,6 @@ async function openStationCard(name, opts) {
   document.getElementById("scTitle").textContent = name;
   document.getElementById("scBody").innerHTML = `<div class="sc-empty">불러오는 중...</div>`;
   document.getElementById("stationCard").classList.add("open");
-  if (window._dbgLog) {   /* TEMP */
-    const cEl = document.getElementById("stationCard");
-    window._dbgLog(`OSC-inline: ${name} cls="${cEl.className}"`);
-    setTimeout(() => window._dbgLog(`+500ms cls="${cEl.className}" immersive=${document.documentElement.classList.contains("immersive")}`), 500);
-    setTimeout(() => window._dbgLog(`+1500ms cls="${cEl.className}"`), 1500);
-  }
   syncFavBtn();
   try {
     const items = await loadArrivals(name, true);
@@ -3271,42 +3264,6 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
   }));
 })();
 
-/* TEMP: ?_seedFav=역1,역2 로 favStations를 강제 시드(네이티브 워밍업 검증용) — 검증 후 제거 */
-(() => {
-  const sf = new URLSearchParams(location.search).get("_seedFav");
-  if (sf) localStorage.setItem("favStations", JSON.stringify(sf.split(",")));
-  if (new URLSearchParams(location.search).get("_zt3")) {
-    /* toast()는 몇 초 뒤 사라져 스크린샷 타이밍을 못 맞추면 놓친다 — 절대 안 사라지는 고정 로그 박스 */
-    const box = document.createElement("div");
-    box.id = "_dbgbox";
-    box.style.cssText = "position:fixed;left:4px;right:4px;bottom:4px;z-index:999999;background:#000;color:#0f0;font:10px monospace;padding:6px;max-height:40vh;overflow:hidden;white-space:pre-wrap;pointer-events:none;";
-    document.body.appendChild(box);
-    window._dbgLines = [];
-    window._dbgLog = msg => { window._dbgLines.push(`${(performance.now()).toFixed(0)}ms ${msg}`); box.textContent = window._dbgLines.slice(-14).join("\n"); };
-    window._dbgLog(`seed: sf="${sf}" favLen=${favList().length}`);
-  }
-})();
-/* TEMP: ?_zt3=1 이면 자동 즐겨찾기 오픈 타이밍+예외 계측 — 검증 후 제거 */
-if (new URLSearchParams(location.search).get("_zt3")) {
-  const _t0 = performance.now(); let _n = 0;
-  const _origOSC = openStationCard;
-  window.openStationCard = function (name, opts) {
-    if (opts && opts.auto) {
-      _n++;
-      const el = document.getElementById("stationCard");
-      window._dbgLog(`wrapper: enter #${_n} ${name} cls="${el.className}"`);
-      try {
-        const r = _origOSC.apply(this, arguments);
-        window._dbgLog(`wrapper: sync-return #${_n} cls="${el.className}"`);
-        return r;
-      } catch (e) {
-        window._dbgLog(`wrapper: THROW #${_n} ${e.message} cls="${el.className}"`);
-        throw e;
-      }
-    }
-    return _origOSC.apply(this, arguments);
-  };
-}
 /* 시작: 저장된 지도 설정을 따른다(기본=basic). naver를 고른 적이 있을 때만 시도하고, 실패하면 기본으로. */
 (async () => {
   const savedRaw = new URLSearchParams(location.search).get("_prov") || localStorage.getItem("mapProvider");   /* ?_prov= 개발용 지도 강제 선택 */
@@ -3343,11 +3300,10 @@ state.userPos = null;
    위치가 늦게 잡혀 다시 호출되면, 지금 열려있는 카드가 "우리가 자동으로 연 것"일 때만
    진짜 최단거리 역으로 교체한다 — 사용자가 직접 다른 역을 보고 있으면 절대 건드리지 않는다. */
 function openNearestFavorite() {
-  const dbg = window._dbgLog || (() => {});
-  if (favAutoSuppressed) { dbg("ONF: favAutoSuppressed"); return; }
+  if (favAutoSuppressed) return;
   const f = favList();
-  if (!f.length) { dbg("ONF: f.length=0"); return; }
-  if (scStation && scStation !== autoFavOpened) { dbg(`ONF: guard scStation=${scStation} auto=${autoFavOpened}`); return; }
+  if (!f.length) return;
+  if (scStation && scStation !== autoFavOpened) return; /* 사용자가 직접 연 역을 보는 중 */
   let target = f[0], best = Infinity;
   if (state.userPos) for (const name of f) {
     const s = STN[name] || STN[resolve(name)];
@@ -3355,8 +3311,7 @@ function openNearestFavorite() {
     const d = distM(state.userPos, s);
     if (d < best) { best = d; target = name; }
   }
-  if (target === scStation) { dbg(`ONF: noop target===scStation=${target}`); return; }
-  dbg(`ONF: calling openStationCard(${target}) userPos=${state.userPos}`);
+  if (target === scStation) return; /* 이미 같은 역이 열려 있음(재요청으로 인한 깜빡임 방지) */
   openStationCard(target, { auto: true });
 }
 function locateUser() {
