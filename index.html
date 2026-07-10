@@ -2274,6 +2274,7 @@ function parseCardRow(el, pickCounter) {
   return row;
 }
 function postCard() {
+  if (window._dbgLog) window._dbgLog(`postCard called NATIVE=${NATIVE} bridge=${!!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.ui)} cls="${document.getElementById("stationCard").className}"`);
   if (!NATIVE || !(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.ui)) return;
   try {
     const cardEl = document.getElementById("stationCard");
@@ -2901,11 +2902,11 @@ async function openStationCard(name, opts) {
   document.getElementById("scTitle").textContent = name;
   document.getElementById("scBody").innerHTML = `<div class="sc-empty">불러오는 중...</div>`;
   document.getElementById("stationCard").classList.add("open");
-  if (new URLSearchParams(location.search).get("_zt3")) {   /* TEMP */
+  if (window._dbgLog) {   /* TEMP */
     const cEl = document.getElementById("stationCard");
-    toast(`OSC-inline: ${name} cls="${cEl.className}"`);
-    setTimeout(() => toast(`+500ms cls="${cEl.className}" immersive=${document.documentElement.classList.contains("immersive")}`), 500);
-    setTimeout(() => toast(`+1500ms cls="${cEl.className}"`), 1500);
+    window._dbgLog(`OSC-inline: ${name} cls="${cEl.className}"`);
+    setTimeout(() => window._dbgLog(`+500ms cls="${cEl.className}" immersive=${document.documentElement.classList.contains("immersive")}`), 500);
+    setTimeout(() => window._dbgLog(`+1500ms cls="${cEl.className}"`), 1500);
   }
   syncFavBtn();
   try {
@@ -3268,7 +3269,16 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
 (() => {
   const sf = new URLSearchParams(location.search).get("_seedFav");
   if (sf) localStorage.setItem("favStations", JSON.stringify(sf.split(",")));
-  if (new URLSearchParams(location.search).get("_zt3")) toast(`seed: sf="${sf}" favLen=${favList().length}`);
+  if (new URLSearchParams(location.search).get("_zt3")) {
+    /* toast()는 몇 초 뒤 사라져 스크린샷 타이밍을 못 맞추면 놓친다 — 절대 안 사라지는 고정 로그 박스 */
+    const box = document.createElement("div");
+    box.id = "_dbgbox";
+    box.style.cssText = "position:fixed;left:4px;right:4px;bottom:4px;z-index:999999;background:#000;color:#0f0;font:10px monospace;padding:6px;max-height:40vh;overflow:hidden;white-space:pre-wrap;pointer-events:none;";
+    document.body.appendChild(box);
+    window._dbgLines = [];
+    window._dbgLog = msg => { window._dbgLines.push(`${(performance.now()).toFixed(0)}ms ${msg}`); box.textContent = window._dbgLines.slice(-14).join("\n"); };
+    window._dbgLog(`seed: sf="${sf}" favLen=${favList().length}`);
+  }
 })();
 /* TEMP: ?_zt3=1 이면 자동 즐겨찾기 오픈 타이밍+예외 계측 — 검증 후 제거 */
 if (new URLSearchParams(location.search).get("_zt3")) {
@@ -3278,11 +3288,13 @@ if (new URLSearchParams(location.search).get("_zt3")) {
     if (opts && opts.auto) {
       _n++;
       const el = document.getElementById("stationCard");
+      window._dbgLog(`wrapper: enter #${_n} ${name} cls="${el.className}"`);
       try {
         const r = _origOSC.apply(this, arguments);
+        window._dbgLog(`wrapper: sync-return #${_n} cls="${el.className}"`);
         return r;
       } catch (e) {
-        toast(`autoOpen#${_n} THROW: ${e.message} cls="${el.className}"`);
+        window._dbgLog(`wrapper: THROW #${_n} ${e.message} cls="${el.className}"`);
         throw e;
       }
     }
@@ -3325,11 +3337,11 @@ state.userPos = null;
    위치가 늦게 잡혀 다시 호출되면, 지금 열려있는 카드가 "우리가 자동으로 연 것"일 때만
    진짜 최단거리 역으로 교체한다 — 사용자가 직접 다른 역을 보고 있으면 절대 건드리지 않는다. */
 function openNearestFavorite() {
-  const _zt3 = new URLSearchParams(location.search).get("_zt3");
-  if (favAutoSuppressed) { if (_zt3) toast("ONF: favAutoSuppressed"); return; }
+  const dbg = window._dbgLog || (() => {});
+  if (favAutoSuppressed) { dbg("ONF: favAutoSuppressed"); return; }
   const f = favList();
-  if (!f.length) { if (_zt3) toast("ONF: f.length=0"); return; }
-  if (scStation && scStation !== autoFavOpened) { if (_zt3) toast(`ONF: guard scStation=${scStation} auto=${autoFavOpened}`); return; }
+  if (!f.length) { dbg("ONF: f.length=0"); return; }
+  if (scStation && scStation !== autoFavOpened) { dbg(`ONF: guard scStation=${scStation} auto=${autoFavOpened}`); return; }
   let target = f[0], best = Infinity;
   if (state.userPos) for (const name of f) {
     const s = STN[name] || STN[resolve(name)];
@@ -3337,8 +3349,8 @@ function openNearestFavorite() {
     const d = distM(state.userPos, s);
     if (d < best) { best = d; target = name; }
   }
-  if (target === scStation) { if (_zt3) toast(`ONF: noop target===scStation=${target}`); return; }
-  if (_zt3) toast(`ONF: calling openStationCard(${target}) userPos=${state.userPos}`);
+  if (target === scStation) { dbg(`ONF: noop target===scStation=${target}`); return; }
+  dbg(`ONF: calling openStationCard(${target}) userPos=${state.userPos}`);
   openStationCard(target, { auto: true });
 }
 function locateUser() {
