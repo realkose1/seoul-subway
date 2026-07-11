@@ -3324,8 +3324,14 @@ function locateUser() {
       if (adapter.setUserLocation) adapter.setUserLocation(state.userPos);
       adapter.setView(state.userPos, 14);
     };
+    /* 네이티브 GPS 워밍업으로 위치가 지도 초기화(콜드 스타트 2초+)보다 먼저 확정되는 경우가 흔해졌다
+       — 1.5초 후 1회 재시도로는 그 창을 놓쳐 "처음 실행 시 현재 위치로 이동 안 됨"이 됨.
+       지도가 준비될 때까지 폴링(최대 20초)했다가 적용한다 */
     if (adapter.map) apply();
-    else setTimeout(() => { if (adapter.map) apply(); }, 1500); /* 지도 기동 전이면 잠시 후 적용 */
+    else {
+      const iv = setInterval(() => { if (adapter.map) { clearInterval(iv); apply(); } }, 300);
+      setTimeout(() => clearInterval(iv), 20000);
+    }
     openNearestFavorite(); /* 위치를 잡았으니 가장 가까운 즐겨찾기 역을 연다 */
   }, () => { /* 거부/실패 시 조용히 기본 뷰 유지 */ }, { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 });
 }
