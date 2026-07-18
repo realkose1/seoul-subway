@@ -2169,6 +2169,15 @@ function setStatus(text, live) {
 
 /* ── 네이티브 앱 브리지: 상단바를 SwiftUI 유리로 (?native=1) ── */
 const NATIVE = /[?&]native=1/.test(location.search);
+/* 웹 상호작용 햅틱: 네이티브 앱이면 브리지로 요청(구 빌드는 이 메시지를 무시 → 하위호환),
+   그 외(안드로이드 웹 등)는 navigator.vibrate로 폴백. iOS Safari는 vibrate 미지원이라 조용히 통과. */
+function haptic(style) {
+  if (NATIVE) {
+    try { window.webkit.messageHandlers.ui.postMessage({ type: "haptic", style: style || "light" }); } catch (e) {}
+    return;
+  }
+  try { if (navigator.vibrate) navigator.vibrate(8); } catch (e) {}
+}
 if (NATIVE) {
   document.documentElement.classList.add("native-app");
   /* navigator.geolocation을 네이티브 CoreLocation으로 우회 — WKWebView의 JS geolocation은
@@ -3161,6 +3170,7 @@ function onMapClick(pos) {
     .sort((a, b) => a.d - b.d)
     .slice(0, 4)
     .map(x => x.st.train);
+  haptic(); /* 어떤 탭이든(여백 토글·역·열차 선택) 피드백 */
   if (!stn && !trains.length) { document.documentElement.classList.toggle("immersive"); return; } /* 여백 탭: 상/하단 레이어 토글 */
   document.documentElement.classList.remove("immersive"); /* 역·열차 선택 시 크롬 복귀 */
   if (stn && !trains.length) return openStationCard(stn);
@@ -3365,7 +3375,7 @@ function recenterToUser() {
 function setLocate(on) {
   document.getElementById("locateBtn").classList.toggle("on", on);
 }
-document.getElementById("locateBtn").addEventListener("click", () => { recenterToUser(); setLocate(true); });
+document.getElementById("locateBtn").addEventListener("click", () => { haptic(); recenterToUser(); setLocate(true); });
 if (window.innerWidth < 768) locateUser();
 
 /* 배포 환경 프록시 감지: 키가 없어도 /api/position 이 살아 있으면 실시간으로 자동 전환 */
