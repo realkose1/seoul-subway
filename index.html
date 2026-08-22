@@ -324,6 +324,31 @@
   .sc-linetabs button { flex: none; display: flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--muted); font-family: var(--font); font-size: 11.5px; font-weight: 600; cursor: pointer; white-space: nowrap; }
   .sc-linetabs button .lt-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--lc, #8a8d93); flex: none; }
   .sc-linetabs button.on { color: var(--text); background: rgba(255,255,255,.07); border-color: var(--lc, rgba(255,255,255,.25)); }
+  /* 경로 찾기 */
+  .route-go { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; margin-top: 4px; padding: 11px; border-radius: 12px; border: none; background: var(--line, #3b82f6); color: var(--line-ink, #fff); font-family: var(--font); font-size: 14px; font-weight: 700; cursor: pointer; }
+  .route-search { width: 100%; padding: 11px 13px; border-radius: 11px; border: 1px solid var(--border); background: rgba(255,255,255,.05); color: var(--text); font-family: var(--font); font-size: 14px; box-sizing: border-box; }
+  .route-search::placeholder { color: var(--faint-text); }
+  .route-hint { font-size: 11.5px; color: var(--faint-text); padding: 8px 2px 4px; text-align: center; }
+  .route-opts { max-height: 40vh; overflow-y: auto; margin-top: 6px; }
+  .route-opt { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 10px 6px; border-radius: 8px; cursor: pointer; border-bottom: 1px solid var(--border); }
+  .route-opt:active { background: rgba(255,255,255,.06); }
+  .route-opt b { font-size: 14px; font-weight: 600; color: var(--text); }
+  .route-opt span { font-size: 10.5px; color: var(--faint-text); text-align: right; }
+  .route-sum { display: flex; align-items: baseline; gap: 8px; padding: 2px 2px 10px; }
+  .route-sum .rt-total { font-size: 24px; font-weight: 800; color: var(--text); letter-spacing: -0.02em; }
+  .route-sum .rt-meta { font-size: 12.5px; color: var(--muted); }
+  .route-sum .rt-arr { font-size: 12.5px; color: #FBBF24; font-weight: 600; margin-left: auto; }
+  .route-legs { position: relative; }
+  .route-leg { display: flex; gap: 11px; padding: 3px 2px; }
+  .route-leg .rl-rail { display: flex; flex-direction: column; align-items: center; padding-top: 3px; }
+  .route-leg .rl-dot { width: 12px; height: 12px; border-radius: 50%; border: 3px solid var(--rl, #888); background: var(--bg, #16181c); box-sizing: border-box; flex: none; }
+  .route-leg .rl-line { flex: 1; width: 3px; background: var(--rl, #888); margin: 1px 0; min-height: 14px; border-radius: 2px; }
+  .route-leg .rl-body { flex: 1; padding-bottom: 12px; }
+  .route-leg .rl-stn { font-size: 14.5px; font-weight: 700; color: var(--text); }
+  .route-leg .rl-info { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .route-leg .rl-info .rl-badge { display: inline-block; padding: 1px 7px; border-radius: 999px; background: var(--rl, #888); color: #fff; font-size: 10.5px; font-weight: 700; margin-right: 5px; }
+  .route-xfer { font-size: 11.5px; color: var(--faint-text); padding: 1px 0 11px; }
+  .route-back { background: none; border: none; color: var(--muted); font-family: var(--font); font-size: 12.5px; font-weight: 600; cursor: pointer; padding: 2px 0 8px; }
   .tt-fb-note { font-size: 10px; color: var(--faint-text); padding: 5px 4px 3px; }
   .tt-fb-eta { color: var(--muted) !important; }
   .tt-fb-rel { font-size: 11.5px; color: #FBBF24; font-weight: 600; margin-left: 5px; }
@@ -1734,6 +1759,70 @@ function stationPath(line, a, b) {
   while (c) { path.push(c); c = parent[c]; }
   return path.reverse();
 }
+/* ════════════════ 경로 탐색 (환승 포함 다중 노선) ════════════════ */
+const ROUTE_HOP_MIN = 2;       /* 정거장 간 평균 소요(분) */
+const ROUTE_TRANSFER_MIN = 5;  /* 환승 1회 평균(도보+대기, 분) — 시간 동점이면 환승 적은 경로 선호 */
+/* 역 → 그 역이 속한 노선들 (환승 판정용) */
+const STATION_LINES = {};
+for (const [ln, def] of Object.entries(LINES)) {
+  for (const seg of def.segments) for (const s of seg) {
+    (STATION_LINES[s] = STATION_LINES[s] || new Set()).add(ln);
+  }
+}
+/* 최소 힙 (경로 다익스트라용) */
+function makeMinHeap() {
+  const a = [];
+  return {
+    size: () => a.length,
+    push(x) { a.push(x); let i = a.length - 1; while (i > 0) { const p = (i - 1) >> 1; if (a[p].c <= a[i].c) break; [a[p], a[i]] = [a[i], a[p]]; i = p; } },
+    pop() {
+      const top = a[0], last = a.pop();
+      if (a.length) { a[0] = last; let i = 0; for (;;) { const l = i * 2 + 1, r = i * 2 + 2; let m = i; if (l < a.length && a[l].c < a[m].c) m = l; if (r < a.length && a[r].c < a[m].c) m = r; if (m === i) break; [a[m], a[i]] = [a[i], a[m]]; i = m; } }
+      return top;
+    }
+  };
+}
+/* 출발 from → 도착 to 최적 경로(소요시간 최소, 환승엔 가중치).
+   반환 {totalMin, transfers, segments:[{line,color,from,to,stations,stops,min}]} 또는 null.
+   상태 = (역,노선): 승차(HOP)·환승(TRANSFER) 엣지로 다익스트라. */
+function findRoute(from, to) {
+  from = resolve(from) || from; to = resolve(to) || to;
+  if (!from || !to || from === to) return null;
+  if (!STATION_LINES[from] || !STATION_LINES[to]) return null;
+  const SEP = "", key = (s, l) => s + SEP + l;
+  const dist = new Map(), parent = new Map(), heap = makeMinHeap();
+  for (const l of STATION_LINES[from]) { dist.set(key(from, l), 0); heap.push({ s: from, l, c: 0 }); }
+  let goalKey = null;
+  while (heap.size()) {
+    const { s, l, c } = heap.pop();
+    const k = key(s, l);
+    if (c > (dist.get(k) ?? Infinity)) continue;
+    if (s === to) { goalKey = k; break; }              /* 첫 도달 pop = 최소 비용 */
+    const g = graphOf(l);
+    if (g[s]) for (const n of g[s]) {                  /* 승차 */
+      const nk = key(n, l), nc = c + ROUTE_HOP_MIN;
+      if (nc < (dist.get(nk) ?? Infinity)) { dist.set(nk, nc); parent.set(nk, k); heap.push({ s: n, l, c: nc }); }
+    }
+    for (const l2 of STATION_LINES[s]) if (l2 !== l) { /* 환승 */
+      const nk = key(s, l2), nc = c + ROUTE_TRANSFER_MIN;
+      if (nc < (dist.get(nk) ?? Infinity)) { dist.set(nk, nc); parent.set(nk, k); heap.push({ s, l: l2, c: nc }); }
+    }
+  }
+  if (!goalKey) return null;
+  const states = [];
+  for (let k = goalKey; k; k = parent.get(k)) { const i = k.indexOf(SEP); states.push({ s: k.slice(0, i), l: k.slice(i + 1) }); }
+  states.reverse();
+  const segments = [];
+  let transfers = 0;
+  for (const st of states) {
+    const last = segments[segments.length - 1];
+    if (last && last.line === st.l) last.stations.push(st.s);
+    else { if (last) transfers++; segments.push({ line: st.l, color: (LINES[st.l] && LINES[st.l].color) || "#8a8d93", stations: [st.s] }); }
+  }
+  for (const seg of segments) { seg.from = seg.stations[0]; seg.to = seg.stations[seg.stations.length - 1]; seg.stops = seg.stations.length - 1; seg.min = seg.stops * ROUTE_HOP_MIN; }
+  const rideMin = segments.reduce((a, s) => a + s.min, 0);
+  return { totalMin: rideMin + transfers * ROUTE_TRANSFER_MIN, transfers, segments };
+}
 /* 노선별 경계 상자 (화면 기반 조회용) */
 const LINE_BBOX = {};
 for (const [nm, def] of Object.entries(LINES)) {
@@ -2618,6 +2707,8 @@ let scStation = null;
    위치가 늦게 잡혀 재호출되면 이 값이 현재 카드와 일치할 때만 최단거리 역으로 교체한다.
    favAutoSuppressed = 사용자가 자동 카드를 닫았으면 이후 자동 오픈을 완전히 중단. */
 let autoFavOpened = null, favAutoSuppressed = false;
+/* 경로 찾기 상태: null=일반, "select"=도착역 선택 중, "result"=경로 표시 중 */
+let routeMode = null, routeFrom = null, routeTo = null, routeResult = null;
 function lineNameOfArrival(a) { return SUBWAY_ID[Number(a.subwayId)] || ""; }
 function colorOfArrival(a) {
   const nm = lineNameOfArrival(a);
@@ -2876,9 +2967,108 @@ function renderArrival(items, elapsed = 0) {
   const valid = all.sort((a, b) => a.etaSec - b.etaSec);
   const up = valid.filter(a => a.updn === "상행" || a.updn === "내선");
   const down = valid.filter(a => a.updn === "하행" || a.updn === "외선");
-  body.innerHTML = tabs + `<div class="sc-cols">${arrivalColHtml(up, "상행", elapsed, "1")}${arrivalColHtml(down, "하행", elapsed, "2")}</div>`;
+  body.innerHTML = tabs + `<div class="sc-cols">${arrivalColHtml(up, "상행", elapsed, "1")}${arrivalColHtml(down, "하행", elapsed, "2")}</div>`
+    + `<button class="route-go" id="routeGo"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>여기서 출발</button>`;
   body.querySelectorAll(".sc-linetabs button").forEach(b => b.addEventListener("click", () => { scLineFilter = b.dataset.line; renderArrival(scList, (Date.now() - scFetchedAt) / 1000); }));
   body.querySelectorAll(".sc-tt-btn").forEach(b => b.addEventListener("click", () => openTimetable(scStation, b.dataset.inout)));
+  const rg = document.getElementById("routeGo"); if (rg) rg.addEventListener("click", () => { haptic(); startRoute(); });
+}
+/* ── 경로 찾기 UI ── */
+function startRoute() {
+  if (!scStation) return;
+  routeFrom = scStation; routeTo = null; routeResult = null; routeMode = "select";
+  stopScTimer();
+  renderRoute();
+}
+function exitRoute() {
+  routeMode = null; routeTo = null; routeResult = null;
+  if (scStation) openStationCard(scStation); else document.getElementById("scClose").click();
+}
+function routeNextWaitMin() {
+  /* 출발역 실시간 도착에서 가장 빠른 열차까지 대기(분). 없으면 null */
+  if (!scList || !scList.length || !routeResult) return null;
+  const firstLine = routeResult.segments[0] && routeResult.segments[0].line;
+  let best = Infinity;
+  for (const it of scList) {
+    if (typeof it.etaSec !== "number" || it.etaSec < 0) continue;
+    if (firstLine && it.line && it.line !== firstLine) continue;
+    best = Math.min(best, it.etaSec);
+  }
+  return best === Infinity ? null : Math.round(best / 60);
+}
+function clockAfter(min) {
+  const d = new Date(Date.now() + min * 60000);
+  let h = d.getHours(), m = d.getMinutes();
+  const ap = h < 12 ? "오전" : "오후"; h = h % 12 || 12;
+  return `${ap} ${h}:${String(m).padStart(2, "0")}`;
+}
+function renderRoute() {
+  const body = document.getElementById("scBody");
+  const titleEl = document.getElementById("scTitle");
+  if (routeMode === "select") {
+    titleEl.textContent = "도착역 선택";
+    body.innerHTML = `<button class="route-back" id="routeBack">← ${routeFrom}에서 출발</button>
+      <input class="route-search" id="routeSearch" type="search" inputmode="search" placeholder="도착역 이름 검색" autocomplete="off">
+      <div class="route-hint">또는 지도에서 역을 탭하세요</div>
+      <div class="route-opts" id="routeOpts"></div>`;
+    document.getElementById("routeBack").addEventListener("click", () => { haptic(); exitRoute(); });
+    const inp = document.getElementById("routeSearch");
+    inp.addEventListener("input", () => routeSearchInput(inp.value));
+    setTimeout(() => { try { inp.focus(); } catch (e) {} }, 60);
+    return;
+  }
+  if (routeMode === "result") {
+    titleEl.textContent = `${routeFrom} → ${routeTo}`;
+    if (!routeResult) {
+      body.innerHTML = `<button class="route-back" id="routeBack">← 도착역 다시 선택</button>
+        <div class="sc-empty">경로를 찾지 못했습니다.<br>다른 역을 선택해 주세요.</div>`;
+      document.getElementById("routeBack").addEventListener("click", () => { haptic(); routeMode = "select"; renderRoute(); });
+      return;
+    }
+    const wait = routeNextWaitMin();
+    const arrMin = routeResult.totalMin + (wait || 0);
+    const legs = routeResult.segments.map((s, i) => {
+      const isLast = i === routeResult.segments.length - 1;
+      return `<div class="route-leg" style="--rl:${s.color}">
+          <div class="rl-rail"><div class="rl-dot"></div><div class="rl-line"></div></div>
+          <div class="rl-body">
+            <div class="rl-stn">${s.from}</div>
+            <div class="rl-info"><span class="rl-badge">${s.line}</span>${s.to}까지 ${s.stops}개 역 · 약 ${s.min}분</div>
+          </div>
+        </div>` + (isLast ? `<div class="route-leg" style="--rl:${s.color}">
+          <div class="rl-rail"><div class="rl-dot"></div></div>
+          <div class="rl-body"><div class="rl-stn">${s.to}</div><div class="rl-info">도착</div></div>
+        </div>` : `<div class="route-xfer">↕ ${s.to} 환승</div>`);
+    }).join("");
+    body.innerHTML = `<button class="route-back" id="routeBack">← 도착역 다시 선택</button>
+      <div class="route-sum">
+        <span class="rt-total">${routeResult.totalMin}분</span>
+        <span class="rt-meta">환승 ${routeResult.transfers}회${wait != null ? " · 다음 열차 " + (wait <= 0 ? "곧" : wait + "분") : ""}</span>
+        <span class="rt-arr">${clockAfter(arrMin)} 도착</span>
+      </div>
+      <div class="route-legs">${legs}</div>`;
+    document.getElementById("routeBack").addEventListener("click", () => { haptic(); routeMode = "select"; renderRoute(); });
+    return;
+  }
+}
+function routeSearchInput(q) {
+  const list = document.getElementById("routeOpts");
+  if (!list) return;
+  q = (q || "").trim();
+  if (!q) { list.innerHTML = ""; return; }
+  const matches = Object.keys(STATION_LINES).filter(n => n.includes(q) && n !== routeFrom).slice(0, 40);
+  list.innerHTML = matches.length
+    ? matches.map(n => `<div class="route-opt" data-name="${n}"><b>${n}</b><span>${[...STATION_LINES[n]].sort((a, b) => lineSortKey(a) - lineSortKey(b)).join(" · ")}</span></div>`).join("")
+    : `<div class="sc-empty small">검색 결과 없음</div>`;
+  list.querySelectorAll(".route-opt").forEach(el => el.addEventListener("click", () => { haptic(); pickDest(el.dataset.name); }));
+}
+function pickDest(name) {
+  if (!name || name === routeFrom) return;
+  routeTo = name;
+  routeResult = findRoute(routeFrom, routeTo);
+  routeMode = "result";
+  if (routeResult && adapter.setSelectedStation) { const p = STN[name] || STN[resolve(name)]; if (p && adapter.map) { try { adapter.setSelectedStation(p); adapter.setView(p, Math.max(adapter.getView ? adapter.getView().zoom : 12, 12)); } catch (e) {} } }
+  renderRoute();
 }
 let scList = [], scFetchedAt = 0, scTimer = null, scFetching = false, scMode = "arrival", ttCtx = null, scTimetable = null, scLineFilter = null;
 function stopScTimer() { clearInterval(scTimer); scTimer = null; }
@@ -2900,6 +3090,7 @@ function scTick() {
 async function openStationCard(name, opts) {
   if (NATIVE) { if (closeSettingsSheet) closeSettingsSheet(); closeTrainPanelIfOpen(); }   /* 다른 네이티브 레이어가 떠 있으면 먼저 내림(중복 표시 방지) */
   scStation = name;
+  routeMode = null;   /* 새 역 카드를 열면 경로 모드 해제 */
   autoFavOpened = (opts && opts.auto) ? name : null;   /* 자동 오픈이 아니면(사용자 조작) 이후 자동 교체 금지 */
   const selPos = STN[name] || STN[resolve(name)];
   const wantPan = !!(opts && opts.pan);   /* 즐겨찾기 목록에서 열 때 등: 해당 역으로 지도 이동까지 */
@@ -2946,6 +3137,7 @@ document.getElementById("scClose").addEventListener("click", () => {
   document.getElementById("stationCard").classList.remove("open");
   scStation = null;
   scMode = "arrival";
+  routeMode = null;   /* 경로 모드도 해제 */
   stopScTimer();
   if (adapter.clearSelectedStation) adapter.clearSelectedStation();   /* 카드 닫으면 역 핀 제거 */
   favAutoSuppressed = true;   /* 사용자가 닫았으면 위치가 뒤늦게 잡혀도 다시 열지 않음 */
@@ -3162,6 +3354,10 @@ function onMapClick(pos) {
     if (d < stnD) { stnD = d; stn = nm; }
   }
   if (!(stn && stnD <= 46 * mpp)) stn = null;   /* 역 터치 판정 반경 46px (Apple HIG 최소 터치 타겟 44pt 기준 여유) */
+  if (routeMode === "select") {   /* 도착역 선택 중: 역을 탭하면 도착역으로 지정 (여백 탭은 무시) */
+    if (stn && stn !== routeFrom) { haptic(); pickDest(stn); }
+    return;
+  }
   /* 열차 후보 (탭 지점 주변, 가까운 순 최대 4대) */
   const trainHit = Math.max(20, trainSizePx(adapter.map) * 0.55) * mpp;
   const trains = [...animState.values()]
