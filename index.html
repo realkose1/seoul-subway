@@ -351,6 +351,13 @@
   .route-leg .rl-info .rl-badge { display: inline-block; padding: 1px 7px; border-radius: 999px; background: var(--rl, #888); color: #fff; font-size: 10.5px; font-weight: 700; margin-right: 5px; }
   .route-xfer { font-size: 11.5px; color: var(--faint-text); padding: 1px 0 11px; }
   .route-back { background: none; border: none; color: var(--muted); font-family: var(--font); font-size: 12.5px; font-weight: 600; cursor: pointer; padding: 2px 0 8px; }
+  /* 경로 대안 탭: 최단시간 / 최소환승 */
+  .route-tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+  .route-tab { flex: 1; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 11px; border-radius: 11px; border: 1px solid var(--border); background: transparent; color: var(--muted); font-family: var(--font); cursor: pointer; text-align: left; }
+  .route-tab b { font-size: 13px; font-weight: 700; }
+  .route-tab span { font-size: 10.5px; color: var(--faint-text); }
+  .route-tab.on { background: rgba(255,255,255,.10); border-color: rgba(255,255,255,.32); color: var(--text); }
+  .route-tab.on span { color: var(--muted); }
   /* 주행(trip) 모드 */
   .trip-live { display: flex; align-items: baseline; gap: 7px; padding: 2px 2px 9px; }
   .trip-live .tl-dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; align-self: center; animation: tlPulse 1.6s ease-in-out infinite; }
@@ -1809,7 +1816,9 @@ function makeMinHeap() {
 /* 출발 from → 도착 to 최적 경로(소요시간 최소, 환승엔 가중치).
    반환 {totalMin, transfers, segments:[{line,color,from,to,stations,stops,min}]} 또는 null.
    상태 = (역,노선): 승차(HOP)·환승(TRANSFER) 엣지로 다익스트라. */
-function findRoute(from, to) {
+function findRoute(from, to, mode) {
+  /* mode "min" = 환승 최소: 환승 가중치를 아주 크게 줘 환승 1회 줄이는 게 항상 이득이 되게 한다 */
+  const xferCost = mode === "min" ? 999 : ROUTE_TRANSFER_MIN;
   from = resolve(from) || from; to = resolve(to) || to;
   if (!from || !to || from === to) return null;
   if (!STATION_LINES[from] || !STATION_LINES[to]) return null;
@@ -1828,7 +1837,7 @@ function findRoute(from, to) {
       if (nc < (dist.get(nk) ?? Infinity)) { dist.set(nk, nc); parent.set(nk, k); heap.push({ s: n, l, c: nc }); }
     }
     for (const l2 of STATION_LINES[s]) if (l2 !== l) { /* 환승 */
-      const nk = key(s, l2), nc = c + ROUTE_TRANSFER_MIN;
+      const nk = key(s, l2), nc = c + xferCost;
       if (nc < (dist.get(nk) ?? Infinity)) { dist.set(nk, nc); parent.set(nk, k); heap.push({ s, l: l2, c: nc }); }
     }
   }
@@ -1845,7 +1854,7 @@ function findRoute(from, to) {
   }
   for (const seg of segments) { seg.from = seg.stations[0]; seg.to = seg.stations[seg.stations.length - 1]; seg.stops = seg.stations.length - 1; seg.min = seg.stops * ROUTE_HOP_MIN; }
   const rideMin = segments.reduce((a, s) => a + s.min, 0);
-  return { totalMin: rideMin + transfers * ROUTE_TRANSFER_MIN, transfers, segments };
+  return { totalMin: rideMin + transfers * ROUTE_TRANSFER_MIN, transfers, segments };  /* 표시 시간은 실제 환승시간 기준 */
 }
 /* 노선별 경계 상자 (화면 기반 조회용) */
 const LINE_BBOX = {};
@@ -2356,6 +2365,7 @@ if (NATIVE) {
       routeSearch: q => routeSearchInput(q),
       routePick: name => pickDest(name),
       routeBack: () => { if (routeMode === "result") gotoSelect(); else exitRoute(); if (NATIVE) postCard(); },
+      routeTab: t => setRouteTab(t),
       tripStart: () => { startTrip(); if (NATIVE) postCard(); },
       tripStop: () => { endTrip(); if (NATIVE) postCard(); },
     },
@@ -2422,6 +2432,10 @@ function postCard() {
         type: "card", mode: "route", open: true,
         routeMode, from: routeFrom, to: routeTo,
         results: routeMode === "select" ? routeSearchResults.map(n => ({ name: n, lines: [...STATION_LINES[n]].sort((a, b) => lineSortKey(a) - lineSortKey(b)).join(" · ") })) : [],
+        tabs: routeHasAlts() ? [
+          { key: "fast", label: "최단시간", total: routeAlts.fast.totalMin, transfers: routeAlts.fast.transfers, on: routeTab === "fast" },
+          { key: "min", label: "최소환승", total: routeAlts.min.totalMin, transfers: routeAlts.min.transfers, on: routeTab === "min" },
+        ] : [],
         route: rr ? {
           total: rr.totalMin, transfers: rr.transfers,
           wait: wait == null ? -1 : wait,
@@ -2773,6 +2787,8 @@ let scStation = null;
 let autoFavOpened = null, favAutoSuppressed = false;
 /* 경로 찾기 상태: null=일반, "select"=도착역 선택 중, "result"=경로 표시 중 */
 let routeMode = null, routeFrom = null, routeTo = null, routeResult = null, routeSearchResults = [];
+/* 경로 대안: fast=최단시간(기본), min=최소환승. 두 결과가 같으면 탭을 숨긴다. */
+let routeAlts = { fast: null, min: null }, routeTab = "fast";
 /* 주행(trip) 모드: "지금 출발하기"를 누른 뒤 목적지까지 실시간 안내.
    { from, to, result, startedAt, lines:Set(경로 노선), stations:Set(경로 역), legIdx } */
 let trip = null;
@@ -3104,7 +3120,30 @@ function clockAfter(min) {
   const ap = h < 12 ? "오전" : "오후"; h = h % 12 || 12;
   return `${ap} ${h}:${String(m).padStart(2, "0")}`;
 }
+/* 경로 탭(최단시간/최소환승) — 두 대안이 동일하면 표시하지 않는다 */
+function sameRoute(a, b) {
+  if (!a || !b) return false;
+  if (a.transfers !== b.transfers || a.totalMin !== b.totalMin) return false;
+  return a.segments.map(s => s.line + s.from + s.to).join("|") === b.segments.map(s => s.line + s.from + s.to).join("|");
+}
+function routeHasAlts() { return !!(routeAlts.fast && routeAlts.min) && !sameRoute(routeAlts.fast, routeAlts.min); }
+function routeTabsHtml() {
+  if (!routeHasAlts()) return "";
+  const t = (k, label, r) => `<button class="route-tab${routeTab === k ? " on" : ""}" data-tab="${k}">
+      <b>${label}</b><span>${r.totalMin}분 · 환승 ${r.transfers}회</span></button>`;
+  return `<div class="route-tabs">${t("fast", "최단시간", routeAlts.fast)}${t("min", "최소환승", routeAlts.min)}</div>`;
+}
+function setRouteTab(tab) {
+  if (!routeAlts[tab] || routeTab === tab) return;
+  routeTab = tab;
+  routeResult = routeAlts[tab];
+  renderRoute();
+  if (NATIVE) postCard();
+}
 function renderRoute() {
+  /* 경로 화면은 그릴 때마다 네이티브로도 직접 push — DOM MutationObserver는 rAF 배칭·스로틀에
+     걸려 누락될 수 있어(선택→결과 전환이 네이티브에 반영되지 않던 문제) 의존하지 않는다. */
+  if (NATIVE) setTimeout(postCard, 0);
   const body = document.getElementById("scBody");
   const titleEl = document.getElementById("scTitle");
   if (routeMode === "select") {
@@ -3145,15 +3184,15 @@ function renderRoute() {
           <div class="rl-body"><div class="rl-stn">${s.to}</div><div class="rl-info">도착</div></div>
         </div>` : `<div class="route-xfer">↕ ${s.to} 환승</div>`);
     }).join("");
-    body.innerHTML = `<button class="route-back" id="routeBack">← 도착역 다시 선택</button>
-      <div class="route-sum">
+    body.innerHTML = routeTabsHtml()
+      + `<div class="route-sum">
         <span class="rt-total">${routeResult.totalMin}분</span>
         <span class="rt-meta">환승 ${routeResult.transfers}회${wait != null ? " · 다음 열차 " + (wait <= 0 ? "곧" : wait + "분") : ""}</span>
         <span class="rt-arr">${clockAfter(arrMin)} 도착</span>
       </div>
       <div class="route-legs">${legs}</div>
       <button class="route-go" id="tripGo">지금 출발하기 →</button>`;
-    document.getElementById("routeBack").addEventListener("click", () => { haptic(); gotoSelect(); });
+    body.querySelectorAll(".route-tab").forEach(b => b.addEventListener("click", () => { haptic(); setRouteTab(b.dataset.tab); }));
     document.getElementById("tripGo").addEventListener("click", () => { haptic("medium"); startTrip(); });
     return;
   }
@@ -3203,7 +3242,10 @@ function routeSearchInput(q) {
 function pickDest(name) {
   if (!name || name === routeFrom) return;
   routeTo = name;
-  routeResult = findRoute(routeFrom, routeTo);
+  routeAlts = { fast: findRoute(routeFrom, routeTo, "fast"), min: findRoute(routeFrom, routeTo, "min") };
+  /* 두 경로가 같으면(대개 직통) 탭을 숨긴다 */
+  routeTab = "fast";
+  routeResult = routeAlts.fast;
   routeMode = "result";
   exitSelectMap(false);   /* 선택 종료: 노선/열차 복구(뷰는 아래에서 도착역으로 이동) */
   if (routeResult && adapter.setSelectedStation) { const p = STN[name] || STN[resolve(name)]; if (p && adapter.map) { try { adapter.setSelectedStation(p); adapter.setView(p, Math.max(adapter.getView ? adapter.getView().zoom : 12, 12)); } catch (e) {} } }
