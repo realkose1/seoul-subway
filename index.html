@@ -350,6 +350,17 @@
   .route-leg .rl-info .rl-badge { display: inline-block; padding: 1px 7px; border-radius: 999px; background: var(--rl, #888); color: #fff; font-size: 10.5px; font-weight: 700; margin-right: 5px; }
   .route-xfer { font-size: 11.5px; color: var(--faint-text); padding: 1px 0 11px; }
   .route-back { background: none; border: none; color: var(--muted); font-family: var(--font); font-size: 12.5px; font-weight: 600; cursor: pointer; padding: 2px 0 8px; }
+  /* 주행(trip) 모드 */
+  .trip-live { display: flex; align-items: baseline; gap: 7px; padding: 2px 2px 9px; }
+  .trip-live .tl-dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; align-self: center; animation: tlPulse 1.6s ease-in-out infinite; }
+  @keyframes tlPulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+  .trip-live .tl-remain { font-size: 26px; font-weight: 800; color: var(--text); letter-spacing: -0.02em; }
+  .trip-live .tl-label { font-size: 12.5px; color: var(--muted); }
+  .trip-live .tl-arr { font-size: 12.5px; color: #FBBF24; font-weight: 600; margin-left: auto; }
+  .trip-next { font-size: 13.5px; color: var(--text); padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,.06); margin-bottom: 10px; }
+  .trip-next b { font-weight: 800; }
+  .route-leg.on .rl-stn { color: var(--rl); }
+  .route-stop { width: 100%; margin-top: 4px; padding: 11px; border-radius: 12px; border: 1px solid var(--border); background: transparent; color: var(--muted); font-family: var(--font); font-size: 13.5px; font-weight: 700; cursor: pointer; }
   .tt-fb-note { font-size: 10px; color: var(--faint-text); padding: 5px 4px 3px; }
   .tt-fb-eta { color: var(--muted) !important; }
   .tt-fb-rel { font-size: 11.5px; color: #FBBF24; font-weight: 600; margin-left: 5px; }
@@ -2006,6 +2017,7 @@ function renderTrains() {
   const dur = currentRefreshSec();
   updateTrackOffset();
   for (const t of state.trains) {
+    if (!tripTrainVisible(t)) continue;   /* 주행 중: 경로와 무관한 열차 숨김 */
     const r = trainCoord(t);
     if (!r) continue;
     seen.add(t.trainNo);
@@ -2732,6 +2744,9 @@ let scStation = null;
 let autoFavOpened = null, favAutoSuppressed = false;
 /* 경로 찾기 상태: null=일반, "select"=도착역 선택 중, "result"=경로 표시 중 */
 let routeMode = null, routeFrom = null, routeTo = null, routeResult = null, routeSearchResults = [];
+/* 주행(trip) 모드: "지금 출발하기"를 누른 뒤 목적지까지 실시간 안내.
+   { from, to, result, startedAt, lines:Set(경로 노선), stations:Set(경로 역), legIdx } */
+let trip = null;
 function lineNameOfArrival(a) { return SUBWAY_ID[Number(a.subwayId)] || ""; }
 function colorOfArrival(a) {
   const nm = lineNameOfArrival(a);
@@ -3075,8 +3090,37 @@ function renderRoute() {
         <span class="rt-meta">환승 ${routeResult.transfers}회${wait != null ? " · 다음 열차 " + (wait <= 0 ? "곧" : wait + "분") : ""}</span>
         <span class="rt-arr">${clockAfter(arrMin)} 도착</span>
       </div>
-      <div class="route-legs">${legs}</div>`;
+      <div class="route-legs">${legs}</div>
+      <button class="route-go" id="tripGo">지금 출발하기 →</button>`;
     document.getElementById("routeBack").addEventListener("click", () => { haptic(); routeMode = "select"; renderRoute(); });
+    document.getElementById("tripGo").addEventListener("click", () => { haptic("medium"); startTrip(); });
+    return;
+  }
+  if (routeMode === "trip" && trip) {
+    const p = tripProgress();
+    titleEl.textContent = `${trip.from} → ${trip.to}`;
+    const legs = trip.result.segments.map((s, i) => {
+      const cur = i === p.legIdx;
+      return `<div class="route-leg${cur ? " on" : ""}" style="--rl:${s.color}">
+        <div class="rl-rail"><div class="rl-dot"></div>${i < trip.result.segments.length - 1 ? '<div class="rl-line"></div>' : ""}</div>
+        <div class="rl-body">
+          <div class="rl-stn">${s.from} → ${s.to}</div>
+          <div class="rl-info"><span class="rl-badge">${s.line}</span>${s.stops}개 역 · 약 ${s.min}분${cur ? " · 진행 중" : ""}</div>
+        </div></div>`;
+    }).join("");
+    body.innerHTML = `<div class="trip-live">
+        <span class="tl-dot"></span>
+        <span class="tl-remain">${p.done ? "도착" : p.remain + "분"}</span>
+        <span class="tl-label">${p.done ? "목적지 도착" : "남음"}</span>
+        <span class="tl-arr">${p.arriveAt} 도착</span>
+      </div>
+      <div class="trip-next" style="--rl:${p.color}">
+        <span class="rl-badge">${p.line}</span>
+        ${p.done ? `${trip.to} 도착했습니다` : `다음 <b>${p.nextStation}</b>${p.isLast ? "" : ` · ${p.legTo} 환승`}`}
+      </div>
+      <div class="route-legs">${legs}</div>
+      <button class="route-stop" id="tripStop">안내 종료</button>`;
+    document.getElementById("tripStop").addEventListener("click", () => { haptic(); endTrip(); });
     return;
   }
 }
@@ -3103,6 +3147,97 @@ function pickDest(name) {
   if (routeResult && adapter.setSelectedStation) { const p = STN[name] || STN[resolve(name)]; if (p && adapter.map) { try { adapter.setSelectedStation(p); adapter.setView(p, Math.max(adapter.getView ? adapter.getView().zoom : 12, 12)); } catch (e) {} } }
   renderRoute();
 }
+/* ── 주행(trip) 모드: 지금 출발하기 → 목적지까지 실시간 안내 ── */
+function startTrip() {
+  if (!routeResult) return;
+  const lines = new Set(), stations = new Set();
+  for (const s of routeResult.segments) { lines.add(s.line); for (const st of s.stations) stations.add(st); }
+  trip = { from: routeFrom, to: routeTo, result: routeResult, startedAt: Date.now(), lines, stations, legIdx: 0 };
+  routeMode = "trip";
+  drawTripRoute();              /* 지도엔 경로 구간만 강조(열차 필터는 tripTrainVisible) */
+  renderTrains();               /* 무관한 열차 즉시 정리 */
+  renderRoute();
+  postTrip();
+  if (!tripTimer) tripTimer = setInterval(tripTick, 1000);
+}
+function endTrip() {
+  trip = null;
+  routeMode = routeResult ? "result" : null;
+  clearInterval(tripTimer); tripTimer = null;
+  if (adapter.clearLine) { adapter.clearLine(); drawLine(state.line); }   /* 경로 강조 해제 */
+  renderTrains();               /* 숨겼던 열차 복구 */
+  renderRoute();
+  postTrip();
+}
+let tripTimer = null;
+/* 경로와 무관한 열차는 숨긴다 — 같은 노선이면서, 경로 구간의 역들 근처를 지나는 열차만 표시 */
+function tripTrainVisible(t) {
+  if (!trip) return true;
+  const ln = lineOfTrain(t);
+  if (!trip.lines.has(ln)) return false;
+  const cur = resolve(t.statnNm);
+  return !cur || trip.stations.has(cur);
+}
+/* 남은 시간·현재 구간 계산: 경과 시간 기반 추정 + (가능하면) 실시간 위치 보정 */
+function tripProgress() {
+  if (!trip) return null;
+  const elapsedMin = (Date.now() - trip.startedAt) / 60000;
+  const total = trip.result.totalMin;
+  const remain = Math.max(0, Math.round(total - elapsedMin));
+  /* 현재 구간: 누적 소요로 판정 */
+  let acc = 0, legIdx = 0;
+  for (let i = 0; i < trip.result.segments.length; i++) {
+    const s = trip.result.segments[i];
+    const legEnd = acc + s.min + (i < trip.result.segments.length - 1 ? ROUTE_TRANSFER_MIN : 0);
+    if (elapsedMin < legEnd) { legIdx = i; break; }
+    acc = legEnd; legIdx = i;
+  }
+  const seg = trip.result.segments[legIdx];
+  /* 구간 내 진행률로 다음 역 추정 */
+  let segElapsed = elapsedMin;
+  for (let i = 0; i < legIdx; i++) segElapsed -= trip.result.segments[i].min + ROUTE_TRANSFER_MIN;
+  const idx = Math.min(seg.stations.length - 1, Math.max(0, Math.floor(segElapsed / ROUTE_HOP_MIN) + 1));
+  return {
+    remain, total, legIdx, arriveAt: clockAfter(remain),
+    line: seg.line, color: seg.color,
+    nextStation: seg.stations[idx] || seg.to,
+    legTo: seg.to,
+    isLast: legIdx === trip.result.segments.length - 1,
+    done: remain <= 0,
+  };
+}
+function tripTick() {
+  if (!trip) { clearInterval(tripTimer); tripTimer = null; return; }
+  renderRoute();
+  postTrip();
+}
+/* 경로 구간을 지도에 굵게 강조 */
+function drawTripRoute() {
+  if (!trip || !adapter.map || !adapter.addPolyline) return;
+  try {
+    adapter.clearLine();
+    for (const s of trip.result.segments) {
+      const pts = s.stations.map(n => STN[n] || STN[resolve(n)]).filter(Boolean);
+      if (pts.length > 1) adapter.addPolyline(pts, s.color);
+      if (adapter.addStation) for (const n of s.stations) { const p = STN[n] || STN[resolve(n)]; if (p) adapter.addStation(n, p, n === s.from || n === s.to, s.color); }
+    }
+  } catch (e) {}
+}
+function postTrip() {
+  if (!NATIVE || !(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.ui)) return;
+  try {
+    const p = tripProgress();
+    window.webkit.messageHandlers.ui.postMessage({
+      type: "trip", active: !!trip,
+      from: trip ? trip.from : "", to: trip ? trip.to : "",
+      remain: p ? p.remain : 0, total: p ? p.total : 0,
+      arriveAt: p ? p.arriveAt : "", line: p ? p.line : "", color: p ? colorHex(p.color) : "",
+      nextStation: p ? p.nextStation : "", legTo: p ? p.legTo : "", isLast: p ? p.isLast : true,
+      transfers: trip ? trip.result.transfers : 0, done: p ? p.done : false,
+    });
+  } catch (e) {}
+}
+function colorHex(c) { return String(c || "#8a8d93"); }
 let scList = [], scFetchedAt = 0, scTimer = null, scFetching = false, scMode = "arrival", ttCtx = null, scTimetable = null, scLineFilter = null;
 function stopScTimer() { clearInterval(scTimer); scTimer = null; }
 function scTick() {
