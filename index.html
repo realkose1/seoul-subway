@@ -325,7 +325,8 @@
   .sc-linetabs button .lt-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--lc, #8a8d93); flex: none; }
   .sc-linetabs button.on { color: var(--text); background: rgba(255,255,255,.07); border-color: var(--lc, rgba(255,255,255,.25)); }
   /* 경로 찾기 */
-  .route-go { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; margin-top: 4px; padding: 11px; border-radius: 12px; border: none; background: var(--line, #3b82f6); color: var(--line-ink, #fff); font-family: var(--font); font-size: 14px; font-weight: 700; cursor: pointer; }
+  .route-go { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; margin-top: 4px; padding: 11px; border-radius: 12px; border: none; background: #fff; color: #111317; font-family: var(--font); font-size: 14px; font-weight: 700; cursor: pointer; }
+  .route-go:active { background: #e6e8ea; }
   .route-search { width: 100%; padding: 11px 13px; border-radius: 11px; border: 1px solid var(--border); background: rgba(255,255,255,.05); color: var(--text); font-family: var(--font); font-size: 14px; box-sizing: border-box; }
   .route-search::placeholder { color: var(--faint-text); }
   .route-hint { font-size: 11.5px; color: var(--faint-text); padding: 8px 2px 4px; text-align: center; }
@@ -3081,6 +3082,7 @@ function exitRoute() {
   const wasSelect = routeMode === "select";
   routeMode = null; routeTo = null; routeResult = null;
   if (wasSelect) exitSelectMap(true);
+  else renderTrains();   /* 결과 화면에서 나온 경우: 숨겼던 열차 복구 */
   if (scStation) openStationCard(scStation); else document.getElementById("scClose").click();
 }
 function routeNextWaitMin() {
@@ -3257,9 +3259,12 @@ function endTrip() {
   postTrip();
 }
 let tripTimer = null;
-/* 지금 화면에 열차를 그릴지: 도착역 선택 중엔 전부 숨기고, 주행 중엔 경로 관련만 */
+/* 지금 화면에 열차를 그릴지.
+   - 도착역 선택/경로 결과 화면: 전부 숨김(역 선택·경로 확인에 방해되지 않도록)
+   - 주행 중: 경로와 관련된 열차만
+   - 그 외: 전부 표시 */
 function trainVisibleNow(t) {
-  if (routeMode === "select") return false;
+  if (routeMode === "select" || routeMode === "result") return false;
   return tripTrainVisible(t);
 }
 /* 경로와 무관한 열차는 숨긴다 — 같은 노선이면서, 경로 구간의 역들 근처를 지나는 열차만 표시 */
@@ -3398,7 +3403,7 @@ document.getElementById("scClose").addEventListener("click", () => {
   document.getElementById("stationCard").classList.remove("open");
   scStation = null;
   scMode = "arrival";
-  routeMode = null;   /* 경로 모드도 해제 */
+  if (routeMode) { routeMode = null; renderTrains(); }   /* 경로 모드 해제 + 숨겼던 열차 복구 */
   stopScTimer();
   if (adapter.clearSelectedStation) adapter.clearSelectedStation();   /* 카드 닫으면 역 핀 제거 */
   favAutoSuppressed = true;   /* 사용자가 닫았으면 위치가 뒤늦게 잡혀도 다시 열지 않음 */
@@ -3615,7 +3620,9 @@ function onMapClick(pos) {
     if (d < stnD) { stnD = d; stn = nm; }
   }
   if (!(stn && stnD <= 46 * mpp)) stn = null;   /* 역 터치 판정 반경 46px (Apple HIG 최소 터치 타겟 44pt 기준 여유) */
-  if (routeMode === "select") {   /* 도착역 선택 중: 역을 탭하면 도착역으로 지정 (여백 탭은 무시) */
+  /* 도착역 선택 중 / 경로 결과를 보는 중: 역을 탭하면 (새) 도착역으로 지정 → 경로 갱신
+     (결과 화면에서 잘못 고른 역을 지도에서 바로 다시 고를 수 있게) */
+  if (routeMode === "select" || routeMode === "result") {
     if (stn && stn !== routeFrom) { haptic(); pickDest(stn); }
     return;
   }
