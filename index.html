@@ -2318,6 +2318,11 @@ if (NATIVE) {
       follow: () => { const b = document.getElementById("scFollow"); if (b) b.click(); },
       ttBack: () => { const b = document.getElementById("ttBack"); if (b) b.click(); },
       ttWeek: w => { const b = document.querySelector('.tt-weeks button[data-w="' + w + '"]'); if (b) b.click(); },
+      /* 경로 찾기 */
+      routeStart: () => startRoute(),
+      routeSearch: q => routeSearchInput(q),
+      routePick: name => pickDest(name),
+      routeBack: () => { if (routeMode === "result") { routeMode = "select"; renderRoute(); } else exitRoute(); if (NATIVE) postCard(); },
     },
     settingsPanel: {
       selectMap: prov => { const b = document.querySelector('#mapSeg button[data-prov="' + prov + '"]'); if (b) b.click(); },
@@ -2374,6 +2379,23 @@ function parseCardRow(el, pickCounter) {
 function postCard() {
   if (!NATIVE || !(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.ui)) return;
   try {
+    /* 경로 모드: 웹 DOM 파싱 대신 상태를 직접 직렬화 */
+    if (routeMode) {
+      const wait = routeNextWaitMin();
+      const rr = routeResult;
+      window.webkit.messageHandlers.ui.postMessage({
+        type: "card", mode: "route", open: true,
+        routeMode, from: routeFrom, to: routeTo,
+        results: routeMode === "select" ? routeSearchResults.map(n => ({ name: n, lines: [...STATION_LINES[n]].sort((a, b) => lineSortKey(a) - lineSortKey(b)).join(" · ") })) : [],
+        route: rr ? {
+          total: rr.totalMin, transfers: rr.transfers,
+          wait: wait == null ? -1 : wait,
+          arrive: clockAfter(rr.totalMin + (wait || 0)),
+          segments: rr.segments.map(s => ({ line: s.line, color: s.color, from: s.from, to: s.to, stops: s.stops, min: s.min })),
+        } : null,
+      });
+      return;
+    }
     const cardEl = document.getElementById("stationCard");
     const body = document.getElementById("scBody");
     const favEl0 = document.getElementById("scFav");
@@ -2708,7 +2730,7 @@ let scStation = null;
    favAutoSuppressed = 사용자가 자동 카드를 닫았으면 이후 자동 오픈을 완전히 중단. */
 let autoFavOpened = null, favAutoSuppressed = false;
 /* 경로 찾기 상태: null=일반, "select"=도착역 선택 중, "result"=경로 표시 중 */
-let routeMode = null, routeFrom = null, routeTo = null, routeResult = null;
+let routeMode = null, routeFrom = null, routeTo = null, routeResult = null, routeSearchResults = [];
 function lineNameOfArrival(a) { return SUBWAY_ID[Number(a.subwayId)] || ""; }
 function colorOfArrival(a) {
   const nm = lineNameOfArrival(a);
@@ -3052,15 +3074,16 @@ function renderRoute() {
   }
 }
 function routeSearchInput(q) {
-  const list = document.getElementById("routeOpts");
-  if (!list) return;
   q = (q || "").trim();
-  if (!q) { list.innerHTML = ""; return; }
-  const matches = Object.keys(STATION_LINES).filter(n => n.includes(q) && n !== routeFrom).slice(0, 40);
-  list.innerHTML = matches.length
-    ? matches.map(n => `<div class="route-opt" data-name="${n}"><b>${n}</b><span>${[...STATION_LINES[n]].sort((a, b) => lineSortKey(a) - lineSortKey(b)).join(" · ")}</span></div>`).join("")
-    : `<div class="sc-empty small">검색 결과 없음</div>`;
-  list.querySelectorAll(".route-opt").forEach(el => el.addEventListener("click", () => { haptic(); pickDest(el.dataset.name); }));
+  routeSearchResults = q ? Object.keys(STATION_LINES).filter(n => n.includes(q) && n !== routeFrom).slice(0, 40) : [];
+  const list = document.getElementById("routeOpts");
+  if (list) {
+    list.innerHTML = !q ? "" : (routeSearchResults.length
+      ? routeSearchResults.map(n => `<div class="route-opt" data-name="${n}"><b>${n}</b><span>${[...STATION_LINES[n]].sort((a, b) => lineSortKey(a) - lineSortKey(b)).join(" · ")}</span></div>`).join("")
+      : `<div class="sc-empty small">검색 결과 없음</div>`);
+    list.querySelectorAll(".route-opt").forEach(el => el.addEventListener("click", () => { haptic(); pickDest(el.dataset.name); }));
+  }
+  if (NATIVE) postCard();   /* 네이티브 검색 결과 갱신 */
 }
 function pickDest(name) {
   if (!name || name === routeFrom) return;
