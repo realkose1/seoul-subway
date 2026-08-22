@@ -3102,17 +3102,27 @@ function exitRoute() {
   else renderTrains();   /* 결과 화면에서 나온 경우: 숨겼던 열차 복구 */
   if (scStation) openStationCard(scStation); else document.getElementById("scClose").click();
 }
-function routeNextWaitMin() {
-  /* 출발역 실시간 도착에서 가장 빠른 열차까지 대기(분). 없으면 null */
-  if (!scList || !scList.length || !routeResult) return null;
-  const firstLine = routeResult.segments[0] && routeResult.segments[0].line;
+/* 출발역에서 '경로 첫 구간 노선'의 다음 열차까지 대기(초). 실시간 정보가 없으면 null.
+   방향까지 맞추면 정확하지만, 도착 목록의 방향 표기가 노선마다 달라 노선 일치까지만 본다. */
+function routeNextWaitSec(list, res) {
+  const L = list || scList, R = res || routeResult;
+  if (!L || !L.length || !R) return null;
+  const firstLine = R.segments[0] && R.segments[0].line;
+  /* etaSec은 '조회 시점' 기준이라, 결과 화면에 머문 시간만큼 빼야 실제 대기시간이 된다 */
+  const since = scFetchedAt ? (Date.now() - scFetchedAt) / 1000 : 0;
   let best = Infinity;
-  for (const it of scList) {
-    if (typeof it.etaSec !== "number" || it.etaSec < 0) continue;
+  for (const it of L) {
+    if (typeof it.etaSec !== "number") continue;
+    const eta = it.etaSec - since;
+    if (eta < 0) continue;                 /* 이미 지나간 열차 */
     if (firstLine && it.line && it.line !== firstLine) continue;
-    best = Math.min(best, it.etaSec);
+    best = Math.min(best, eta);
   }
-  return best === Infinity ? null : Math.round(best / 60);
+  return best === Infinity ? null : best;
+}
+function routeNextWaitMin() {
+  const sec = routeNextWaitSec();
+  return sec == null ? null : Math.round(sec / 60);
 }
 function clockAfter(min) {
   const d = new Date(Date.now() + min * 60000);
@@ -3216,7 +3226,9 @@ function renderRoute() {
       </div>
       <div class="trip-next" style="--rl:${p.color}">
         <span class="rl-badge">${p.line}</span>
-        ${p.done ? `${trip.to} 도착했습니다` : `다음 <b>${p.nextStation}</b>${p.isLast ? "" : ` · ${p.legTo} 환승`}`}
+        ${p.done ? `${trip.to} 도착했습니다`
+          : p.waiting ? `열차 대기 중 · <b>${p.waitMin}분</b> 후 출발`
+          : `다음 <b>${p.nextStation}</b>${p.isLast ? "" : ` · ${p.legTo} 환승`}`}
       </div>
       <div class="route-legs">${legs}</div>
       <button class="route-stop" id="tripStop">안내 종료</button>`;
@@ -3256,7 +3268,15 @@ function startTrip() {
   if (!routeResult) return;
   const lines = new Set(), stations = new Set();
   for (const s of routeResult.segments) { lines.add(s.line); for (const st of s.stations) stations.add(st); }
-  trip = { from: routeFrom, to: routeTo, result: routeResult, startedAt: Date.now(), lines, stations, legIdx: 0 };
+  /* 실제 남은 시간 = (다음 열차가 출발역을 떠날 때까지 대기) + (승차 후 이동시간).
+     한 정거장이라고 무조건 2분이 아니라, 지금 들어올 차가 없으면 그 차를 기다리는 시간부터 센다. */
+  const waitSec = routeNextWaitSec();
+  trip = {
+    from: routeFrom, to: routeTo, result: routeResult, startedAt: Date.now(),
+    boardAt: Date.now() + (waitSec == null ? 0 : waitSec * 1000),   /* 승차(=출발) 예정 시각 */
+    waitKnown: waitSec != null,
+    lines, stations, legIdx: 0,
+  };
   routeMode = "trip";
   drawTripRoute();              /* 지도엔 경로 구간만 강조(열차 필터는 tripTrainVisible) */
   renderTrains();               /* 무관한 열차 즉시 정리 */
@@ -3321,9 +3341,14 @@ function tripTrainVisible(t) {
 /* 남은 시간·현재 구간 계산: 경과 시간 기반 추정 + (가능하면) 실시간 위치 보정 */
 function tripProgress() {
   if (!trip) return null;
-  const elapsedMin = (Date.now() - trip.startedAt) / 60000;
+  /* 승차 전에는 '대기 중' — 남은 시간 = 다음 열차까지 대기 + 전체 이동시간.
+     승차 후에는 그 열차가 출발한 시각(boardAt)부터 경과를 센다. */
+  const waitMs = trip.boardAt - Date.now();
+  const waiting = waitMs > 0;
+  const waitMin = waiting ? Math.max(1, Math.round(waitMs / 60000)) : 0;
+  const elapsedMin = waiting ? 0 : (Date.now() - trip.boardAt) / 60000;
   const total = trip.result.totalMin;
-  const remain = Math.max(0, Math.round(total - elapsedMin));
+  const remain = Math.max(0, Math.round(total - elapsedMin) + waitMin);
   /* 현재 구간: 누적 소요로 판정 */
   let acc = 0, legIdx = 0;
   for (let i = 0; i < trip.result.segments.length; i++) {
@@ -3342,8 +3367,10 @@ function tripProgress() {
     line: seg.line, color: seg.color,
     nextStation: seg.stations[idx] || seg.to,
     legTo: seg.to,
+    waiting, waitMin,                                  /* 승차 대기 중 여부/남은 대기(분) */
+    waitKnown: !!trip.waitKnown,
     isLast: legIdx === trip.result.segments.length - 1,
-    done: remain <= 0,
+    done: !waiting && remain <= 0,
   };
 }
 function tripTick() {
@@ -3375,6 +3402,7 @@ function postTrip() {
       arriveAt: p ? p.arriveAt : "", line: p ? p.line : "", color: p ? colorHex(p.color) : "",
       nextStation: p ? p.nextStation : "", legTo: p ? p.legTo : "", isLast: p ? p.isLast : true,
       transfers: trip ? trip.result.transfers : 0, done: p ? p.done : false,
+      waiting: p ? !!p.waiting : false, waitMin: p ? (p.waitMin || 0) : 0,
     });
   } catch (e) {}
 }
