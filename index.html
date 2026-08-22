@@ -3407,6 +3407,9 @@ function postTrip() {
       nextStation: p ? p.nextStation : "", legTo: p ? p.legTo : "", isLast: p ? p.isLast : true,
       transfers: trip ? trip.result.transfers : 0, done: p ? p.done : false,
       waiting: p ? !!p.waiting : false, waitMin: p ? (p.waitMin || 0) : 0,
+      /* 도착역이 속한(경로 마지막 구간) 노선 — 라이브 액티비티의 도착역 배지용 */
+      toLine: trip ? trip.result.segments[trip.result.segments.length - 1].line : "",
+      toColor: trip ? colorHex(trip.result.segments[trip.result.segments.length - 1].color) : "",
     });
   } catch (e) {}
 }
