@@ -354,10 +354,13 @@
   /* 경로 대안 탭: 최단시간 / 최소환승 */
   .route-tabs { display: flex; gap: 6px; margin-bottom: 10px; }
   .route-tab { flex: 1; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 11px; border-radius: 11px; border: 1px solid var(--border); background: transparent; color: var(--muted); font-family: var(--font); cursor: pointer; text-align: left; }
-  .route-tab b { font-size: 13px; font-weight: 700; }
-  .route-tab span { font-size: 10.5px; color: var(--faint-text); }
-  .route-tab.on { background: rgba(255,255,255,.10); border-color: rgba(255,255,255,.32); color: var(--text); }
-  .route-tab.on span { color: var(--muted); }
+  .route-tab .rt-label { font-size: 11px; font-weight: 600; color: var(--faint-text); letter-spacing: -0.01em; }
+  .route-tab .rt-val { font-size: 12px; color: var(--muted); }
+  .route-tab .rt-val b { font-size: 18px; font-weight: 800; color: var(--muted); letter-spacing: -0.02em; margin-right: 2px; }
+  .route-tab.on { background: rgba(255,255,255,.10); border-color: rgba(255,255,255,.32); }
+  .route-tab.on .rt-label { color: var(--muted); }
+  .route-tab.on .rt-val { color: var(--text); }
+  .route-tab.on .rt-val b { color: var(--text); }
   /* 주행(trip) 모드 */
   .trip-live { display: flex; align-items: baseline; gap: 7px; padding: 2px 2px 9px; }
   .trip-live .tl-dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; align-self: center; animation: tlPulse 1.6s ease-in-out infinite; }
@@ -3140,7 +3143,8 @@ function routeHasAlts() { return !!(routeAlts.fast && routeAlts.min) && !sameRou
 function routeTabsHtml() {
   if (!routeHasAlts()) return "";
   const t = (k, label, r) => `<button class="route-tab${routeTab === k ? " on" : ""}" data-tab="${k}">
-      <b>${label}</b><span>${r.totalMin}분 · 환승 ${r.transfers}회</span></button>`;
+      <span class="rt-label">${label}</span>
+      <span class="rt-val"><b>${r.totalMin}분</b> · 환승 ${r.transfers}회</span></button>`;
   return `<div class="route-tabs">${t("fast", "최단시간", routeAlts.fast)}${t("min", "최소환승", routeAlts.min)}</div>`;
 }
 function setRouteTab(tab) {
