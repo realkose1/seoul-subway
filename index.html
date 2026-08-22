@@ -2336,6 +2336,8 @@ if (NATIVE) {
       routeSearch: q => routeSearchInput(q),
       routePick: name => pickDest(name),
       routeBack: () => { if (routeMode === "result") { routeMode = "select"; renderRoute(); } else exitRoute(); if (NATIVE) postCard(); },
+      tripStart: () => { startTrip(); if (NATIVE) postCard(); },
+      tripStop: () => { endTrip(); if (NATIVE) postCard(); },
     },
     settingsPanel: {
       selectMap: prov => { const b = document.querySelector('#mapSeg button[data-prov="' + prov + '"]'); if (b) b.click(); },
@@ -2406,6 +2408,13 @@ function postCard() {
           arrive: clockAfter(rr.totalMin + (wait || 0)),
           segments: rr.segments.map(s => ({ line: s.line, color: s.color, from: s.from, to: s.to, stops: s.stops, min: s.min })),
         } : null,
+        /* 주행 중이면 실시간 진행 정보도 함께(네이티브 카드가 같은 메시지로 렌더) */
+        tripLive: (() => {
+          if (routeMode !== "trip") return null;
+          const p = tripProgress();
+          return p ? { remain: p.remain, arriveAt: p.arriveAt, line: p.line, color: p.color,
+                       nextStation: p.nextStation, legTo: p.legTo, isLast: p.isLast, done: p.done, legIdx: p.legIdx } : null;
+        })(),
       });
       return;
     }
@@ -3210,6 +3219,7 @@ function tripTick() {
   if (!trip) { clearInterval(tripTimer); tripTimer = null; return; }
   renderRoute();
   postTrip();
+  postCard();   /* 네이티브 카드의 남은 시간도 매초 갱신 */
 }
 /* 경로 구간을 지도에 굵게 강조 */
 function drawTripRoute() {
