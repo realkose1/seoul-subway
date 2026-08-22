@@ -329,7 +329,8 @@
   .route-search { width: 100%; padding: 11px 13px; border-radius: 11px; border: 1px solid var(--border); background: rgba(255,255,255,.05); color: var(--text); font-family: var(--font); font-size: 14px; box-sizing: border-box; }
   .route-search::placeholder { color: var(--faint-text); }
   .route-hint { font-size: 11.5px; color: var(--faint-text); padding: 8px 2px 4px; text-align: center; }
-  .route-opts { max-height: 40vh; overflow-y: auto; margin-top: 6px; }
+  .route-opts { max-height: 34vh; overflow-y: auto; margin-bottom: 8px; }
+  .route-opts:empty { display: none; }
   .route-opt { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 10px 6px; border-radius: 8px; cursor: pointer; border-bottom: 1px solid var(--border); }
   .route-opt:active { background: rgba(255,255,255,.06); }
   .route-opt b { font-size: 14px; font-weight: 600; color: var(--text); }
@@ -2971,6 +2972,9 @@ function arrivalColHtml(items, fallback, elapsed, inout) {
 }
 function lineSortKey(ln) { const m = String(ln).match(/^(\d+)호선/); return m ? Number(m[1]) : 100 + (ln.charCodeAt(0) || 0); }
 function renderArrival(items, elapsed = 0) {
+  /* 경로 화면(도착역 선택·결과)일 땐 카드 본문을 도착정보로 덮어쓰지 않는다 —
+     1초 카운트다운 타이머·20초 재조회·시간표 폴백 등 비동기 콜백이 경로 UI를 지우던 버그 */
+  if (routeMode) return;
   const body = document.getElementById("scBody");
   let all = (items || []).slice();
   /* 환승역: 항목에 들어있는 노선들로 상단 필터 탭 구성 (2개 이상일 때만) */
@@ -3029,10 +3033,13 @@ function renderRoute() {
   const titleEl = document.getElementById("scTitle");
   if (routeMode === "select") {
     titleEl.textContent = "도착역 선택";
+    /* 결과가 입력창 "위"로 쌓이는 순서 — 카드가 하단 고정이라 입력창은 제자리에 머물고
+       결과 목록만 위로 자란다(타이핑 중 입력창이 흔들리지 않음). 목록은 최신순 위 정렬을 위해
+       column-reverse가 아니라, 아래(입력창)에 가까운 항목이 1순위가 되도록 렌더에서 뒤집는다. */
     body.innerHTML = `<button class="route-back" id="routeBack">← ${routeFrom}에서 출발</button>
+      <div class="route-opts" id="routeOpts"></div>
       <input class="route-search" id="routeSearch" type="search" inputmode="search" placeholder="도착역 이름 검색" autocomplete="off">
-      <div class="route-hint">또는 지도에서 역을 탭하세요</div>
-      <div class="route-opts" id="routeOpts"></div>`;
+      <div class="route-hint">또는 지도에서 역을 탭하세요</div>`;
     document.getElementById("routeBack").addEventListener("click", () => { haptic(); exitRoute(); });
     const inp = document.getElementById("routeSearch");
     inp.addEventListener("input", () => routeSearchInput(inp.value));
@@ -3078,10 +3085,13 @@ function routeSearchInput(q) {
   routeSearchResults = q ? Object.keys(STATION_LINES).filter(n => n.includes(q) && n !== routeFrom).slice(0, 40) : [];
   const list = document.getElementById("routeOpts");
   if (list) {
-    list.innerHTML = !q ? "" : (routeSearchResults.length
-      ? routeSearchResults.map(n => `<div class="route-opt" data-name="${n}"><b>${n}</b><span>${[...STATION_LINES[n]].sort((a, b) => lineSortKey(a) - lineSortKey(b)).join(" · ")}</span></div>`).join("")
+    /* 입력창이 목록 아래에 있으므로, 가장 관련도 높은 항목이 입력창과 가깝도록 역순 렌더 */
+    const ordered = routeSearchResults.slice().reverse();
+    list.innerHTML = !q ? "" : (ordered.length
+      ? ordered.map(n => `<div class="route-opt" data-name="${n}"><b>${n}</b><span>${[...STATION_LINES[n]].sort((a, b) => lineSortKey(a) - lineSortKey(b)).join(" · ")}</span></div>`).join("")
       : `<div class="sc-empty small">검색 결과 없음</div>`);
     list.querySelectorAll(".route-opt").forEach(el => el.addEventListener("click", () => { haptic(); pickDest(el.dataset.name); }));
+    list.scrollTop = list.scrollHeight;   /* 1순위(맨 아래)가 보이도록 */
   }
   if (NATIVE) postCard();   /* 네이티브 검색 결과 갱신 */
 }
