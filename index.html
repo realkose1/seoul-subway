@@ -3534,6 +3534,13 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
   showUsage();
   syncProviderSeg();
   /* 자동 역 카드는 locateUser가 위치를 잡은 뒤 openNearestStationCard로 연다(위치 없으면 안 엶) */
+  /* TEMP: ?_rtdemo=1 이면 경로 흐름 자동 재현(네이티브 렌더 검증용) — 제거 필요 */
+  if (new URLSearchParams(location.search).get("_rtdemo")) {
+    setTimeout(() => { try { openStationCard("상일동"); } catch (e) {} }, 5000);
+    setTimeout(() => { try { startRoute(); } catch (e) {} }, 7000);
+    setTimeout(() => { try { routeSearchInput("복정"); } catch (e) {} }, 8500);
+    setTimeout(() => { try { pickDest("복정"); } catch (e) {} }, 10500);
+  }
 })();
 
 /* 모바일: 현재 위치를 얻어 지도 중심 이동 (수도권 내일 때만) */
