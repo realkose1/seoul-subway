@@ -533,6 +533,8 @@
   .stn-label-dark { color: #c9ccd1; font-size: 10px; font-weight: 700; font-family: var(--font); white-space: nowrap; text-shadow: 0 0 3px #0d0e10, 0 0 6px #0d0e10; transform: translate(8px, -6px); }  /* 애플(다크) 지도용 역명 */
   .stn-dot-html { width: 9px; height: 9px; border-radius: 50%; background: #fff; border: 2px solid #8a8d93; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
   .stn-dot-html.terminal { border-color: var(--line); width: 11px; height: 11px; }
+  /* 도착역 선택(전역 뷰): 역이 수백 개라 작게 */
+  .stn-dot-html.small, .stn-dot-html.small.terminal { width: 5px; height: 5px; border-width: 1px; box-shadow: none; }
   .naver-pp { font-family: var(--font); color: var(--text); font-size: 12.5px; line-height: 1.7; padding: 12px 14px; min-width: 150px; }
 
   /* ── 토스트 ───────────────────────── */
@@ -854,6 +856,8 @@ function stationDotsVisible(z) {
   if (typeof routeMode !== "undefined" && routeMode === "select") return true;
   return z >= (state.line === "ALL" ? STATION_DOT_ZOOM_ALL : STATION_DOT_ZOOM_LINE);
 }
+/* 선택 모드는 전역 뷰라 역이 수백 개 겹쳐 보인다 → dot을 작게 그려 부담을 줄인다 */
+function selectingDest() { return typeof routeMode !== "undefined" && routeMode === "select"; }
 /* 전체(또는 복수 노선) 보기에서 줌아웃하면 열차 수백 대의 120ms DOM 갱신·보간이 메인 스레드를
    포화시켜 저사양 기기에선 멈추기까지 한다 → 줌에 따라 3단계로 부하를 낮춘다.
    - anim   (z≥11)      : 평소처럼 이동 애니메이션
@@ -1267,9 +1271,10 @@ const basicAdapter = {
     L.polyline(pts, { color, weight: 3.5, opacity: 0.85, lineJoin: "round" }).addTo(this.lineLayer);
   },
   addStation(name, pos, isTerminal, color) {
+    const sm = selectingDest();   /* 선택 모드: 전역 뷰라 작게 */
     const m = L.circleMarker(pos, {
-      radius: isTerminal ? 6.5 : 4.8, color: isTerminal ? color : "#cdd1d7",
-      weight: isTerminal ? 2.5 : 1.6, fillColor: "#ffffff", fillOpacity: 1
+      radius: sm ? (isTerminal ? 3.4 : 2.6) : (isTerminal ? 6.5 : 4.8), color: isTerminal ? color : "#cdd1d7",
+      weight: sm ? 1 : (isTerminal ? 2.5 : 1.6), fillColor: "#ffffff", fillOpacity: 1
     }).addTo(this.stationLayer);
     m.on("click", () => onMapClick(pos));
     this.labelLayer.addLayer(
@@ -1401,8 +1406,8 @@ const naverAdapter = {
     const m = new naver.maps.Marker({
       map: this.dotsOn ? this.map : null, position: ll,
       icon: {
-        content: `<div class="stn-dot-html${isTerminal ? " terminal" : ""}"></div>`,
-        anchor: new naver.maps.Point(isTerminal ? 7 : 6, isTerminal ? 7 : 6)
+        content: `<div class="stn-dot-html${isTerminal ? " terminal" : ""}${selectingDest() ? " small" : ""}"></div>`,
+        anchor: selectingDest() ? new naver.maps.Point(3, 3) : new naver.maps.Point(isTerminal ? 7 : 6, isTerminal ? 7 : 6)
       },
       zIndex: 1
     });
@@ -1670,7 +1675,8 @@ const appleAdapter = {
     const z = this._zoom();
     this.dotsOn = stationDotsVisible(z); this.labelsOn = this.dotsOn && z >= LABEL_ZOOM;   /* 초기 표시여부 O(1) — ALL 뷰 590개 draw 때 O(n²) 방지 */
     /* 기본 지도(circleMarker)와 동일한 룩: 흰 원 + 회색 테두리, 종점은 노선색 굵은 테두리 */
-    const d = isTerminal ? 13 : 9.6, bw = isTerminal ? 2.5 : 1.6, bc = isTerminal ? color : "#cdd1d7";
+    const sm = selectingDest();   /* 선택 모드: 전역 뷰라 작게 */
+    const d = sm ? 4 : (isTerminal ? 13 : 9.6), bw = sm ? 1 : (isTerminal ? 2.5 : 1.6), bc = isTerminal ? color : "#cdd1d7";
     const half = d / 2 + bw;
     const dot = this._ann(pos, this._wrap(
       `<div style="width:${d}px;height:${d}px;border-radius:50%;background:#fff;border:${bw}px solid ${bc};box-sizing:content-box;"></div>`, -half, -half));
