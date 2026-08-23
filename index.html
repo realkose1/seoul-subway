@@ -347,7 +347,7 @@
   .route-leg .rl-line { flex: 1; width: 3px; background: var(--rl, #888); margin: 1px 0; min-height: 14px; border-radius: 2px; }
   .route-leg .rl-body { flex: 1; padding-bottom: 12px; }
   .route-leg .rl-stn { font-size: 14.5px; font-weight: 700; color: var(--text); }
-  .route-leg .rl-info { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .route-leg .rl-info { font-size: 12px; color: var(--muted); margin-top: 2px; text-align: right; }
   .route-leg .rl-info .rl-badge { display: inline-block; padding: 1px 7px; border-radius: 999px; background: var(--rl, #888); color: #fff; font-size: 10.5px; font-weight: 700; margin-right: 5px; }
   .route-xfer { font-size: 11.5px; color: var(--faint-text); padding: 1px 0 11px; }
   .route-back { background: none; border: none; color: var(--muted); font-family: var(--font); font-size: 12.5px; font-weight: 600; cursor: pointer; padding: 2px 0 8px; }
@@ -3483,10 +3483,19 @@ document.getElementById("scClose").addEventListener("click", () => {
   document.getElementById("stationCard").classList.remove("open");
   scStation = null;
   scMode = "arrival";
-  if (routeMode) { routeMode = null; renderTrains(); }   /* 경로 모드 해제 + 숨겼던 열차 복구 */
+  /* 주행 중이었다면 안내도 함께 종료 — 카드만 닫고 타이머·라이브 액티비티가 남지 않도록 */
+  if (trip) endTrip();
+  if (routeMode) {
+    routeMode = null;
+    /* 경로 화면에선 지도에 경로 구간만 그려져 있을 수 있다 → 원래 노선 표시로 복구 */
+    if (adapter.map) { try { drawLine(state.line); } catch (e) {} }
+    renderTrains();   /* 숨겼던 열차 복구 */
+  }
+  routeTo = null; routeResult = null; routeAlts = { fast: null, min: null };
   stopScTimer();
   if (adapter.clearSelectedStation) adapter.clearSelectedStation();   /* 카드 닫으면 역 핀 제거 */
   favAutoSuppressed = true;   /* 사용자가 닫았으면 위치가 뒤늦게 잡혀도 다시 열지 않음 */
+  if (NATIVE) setTimeout(postCard, 0);
 });
 document.getElementById("scRefresh").addEventListener("click", () => {
   const btn = document.getElementById("scRefresh");
