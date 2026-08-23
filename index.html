@@ -2372,6 +2372,8 @@ if (NATIVE) {
       tripStart: () => { startTrip(); if (NATIVE) postCard(); },
       tripStop: () => { endTrip(); if (NATIVE) postCard(); },
     },
+    /* 미니 카드 탭 → 몰입 모드 해제(전체 카드 복귀) */
+    exitImmersive: () => { document.documentElement.classList.remove("immersive"); },
     settingsPanel: {
       selectMap: prov => { const b = document.querySelector('#mapSeg button[data-prov="' + prov + '"]'); if (b) b.click(); },
       favTap: name => { const el = document.querySelector('.fav-row[data-name="' + CSS.escape(name) + '"]'); if (el) el.click(); },
@@ -3480,6 +3482,8 @@ async function openStationCard(name, opts) {
   catch (e) { document.getElementById("scBody").innerHTML = `<div class="sc-empty">도착 정보를 가져오지 못했습니다.<br>${e.message}</div>`; }
 }
 document.getElementById("scClose").addEventListener("click", () => {
+  /* 주행 중엔 실수로 안내가 끊기지 않도록 확인 (네이티브는 SwiftUI 알럿으로 별도 처리) */
+  if (trip && !NATIVE && !confirm("안내를 종료할까요?\n진행 중인 경로 안내가 종료됩니다.")) return;
   document.getElementById("stationCard").classList.remove("open");
   scStation = null;
   scMode = "arrival";
@@ -3868,6 +3872,13 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
   showUsage();
   syncProviderSeg();
   /* 자동 역 카드는 locateUser가 위치를 잡은 뒤 openNearestStationCard로 연다(위치 없으면 안 엶) */
+  /* TEMP: 미니카드/종료확인 검증용 — 제거 필요 */
+  if (new URLSearchParams(location.search).get("_mini")) {
+    setTimeout(() => { try {
+      openStationCard("천호");
+      setTimeout(() => { startRoute(); pickDest("대공원"); setTimeout(() => startTrip(), 900); }, 1500);
+    } catch (e) {} }, 5000);
+  }
 })();
 
 /* 모바일: 현재 위치를 얻어 지도 중심 이동 (수도권 내일 때만) */
