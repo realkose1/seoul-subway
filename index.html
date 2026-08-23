@@ -3713,6 +3713,13 @@ function onMapClick(pos) {
     if (d < stnD) { stnD = d; stn = nm; }
   }
   if (!(stn && stnD <= 46 * mpp)) stn = null;   /* 역 터치 판정 반경 46px (Apple HIG 최소 터치 타겟 44pt 기준 여유) */
+  /* 주행 안내 중: 지도를 탭해도 역/열차 카드로 전환하지 않는다(안내가 조용히 풀리는 것 방지).
+     여백이든 역이든 탭은 몰입 모드 토글로만 동작 — 몰입 중에도 미니 카드로 안내가 계속 보인다 */
+  if (trip) {
+    haptic();
+    document.documentElement.classList.toggle("immersive");
+    return;
+  }
   /* 도착역 선택 중 / 경로 결과를 보는 중: 역을 탭하면 (새) 도착역으로 지정 → 경로 갱신
      (결과 화면에서 잘못 고른 역을 지도에서 바로 다시 고를 수 있게) */
   if (routeMode === "select" || routeMode === "result") {
@@ -3890,6 +3897,7 @@ state.userPos = null;
      직접 연 역이나, 닫은 카드는 절대 건드리지 않는다.
    위치는 locateUser가 수도권 범위 안에서만 잡으므로, 여기 도달하면 항상 수도권 내 좌표다. */
 function openNearestStationCard() {
+  if (trip) return;                 /* 주행 안내 중엔 자동으로 다른 역 카드를 열지 않는다 */
   if (favAutoSuppressed) return;                          /* 사용자가 자동 카드를 닫았으면 다시 안 엶 */
   if (!state.userPos) return;                             /* 위치 없으면 자동으로 아무것도 안 엶 */
   if (scStation && scStation !== autoFavOpened) return;   /* 사용자가 직접 연 역을 보는 중 */
