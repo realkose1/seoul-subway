@@ -3407,6 +3407,8 @@ function postTrip() {
       nextStation: p ? p.nextStation : "", legTo: p ? p.legTo : "", isLast: p ? p.isLast : true,
       transfers: trip ? trip.result.transfers : 0, done: p ? p.done : false,
       waiting: p ? !!p.waiting : false, waitMin: p ? (p.waitMin || 0) : 0,
+      /* 도착 예정 시각(ms) — 라이브 액티비티가 앱 없이도 스스로 카운트다운/자동 소멸하는 기준 */
+      endEpoch: p ? (Date.now() + p.remain * 60000) : 0,
       /* 도착역이 속한(경로 마지막 구간) 노선 — 라이브 액티비티의 도착역 배지용 */
       toLine: trip ? trip.result.segments[trip.result.segments.length - 1].line : "",
       toColor: trip ? colorHex(trip.result.segments[trip.result.segments.length - 1].color) : "",
@@ -3857,6 +3859,13 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
   showUsage();
   syncProviderSeg();
   /* 자동 역 카드는 locateUser가 위치를 잡은 뒤 openNearestStationCard로 연다(위치 없으면 안 엶) */
+  /* TEMP: 라이브 액티비티 자동소멸 검증용 — 제거 필요 */
+  if (new URLSearchParams(location.search).get("_x3")) {
+    setTimeout(() => { try {
+      openStationCard("천호");
+      setTimeout(() => { startRoute(); pickDest("잠실"); setTimeout(() => startTrip(), 900); }, 1500);
+    } catch (e) {} }, 5000);
+  }
 })();
 
 /* 모바일: 현재 위치를 얻어 지도 중심 이동 (수도권 내일 때만) */
