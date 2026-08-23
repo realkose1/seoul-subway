@@ -2370,7 +2370,7 @@ if (NATIVE) {
       routeBack: () => { if (routeMode === "result") gotoSelect(); else exitRoute(); if (NATIVE) postCard(); },
       routeTab: t => setRouteTab(t),
       tripStart: () => { startTrip(); if (NATIVE) postCard(); },
-      tripStop: () => { endTrip(); if (NATIVE) postCard(); },
+      tripStop: () => { closeCardReset(); },
     },
     /* 미니 카드 탭 → 몰입 모드 해제(전체 카드 복귀) */
     exitImmersive: () => { document.documentElement.classList.remove("immersive"); },
@@ -3238,7 +3238,7 @@ function renderRoute() {
       </div>
       <div class="route-legs">${legs}</div>
       <button class="route-stop" id="tripStop">안내 종료</button>`;
-    document.getElementById("tripStop").addEventListener("click", () => { haptic(); endTrip(); });
+    document.getElementById("tripStop").addEventListener("click", () => { haptic(); closeCardReset(); });
     return;
   }
 }
@@ -3481,9 +3481,8 @@ async function openStationCard(name, opts) {
   }
   catch (e) { document.getElementById("scBody").innerHTML = `<div class="sc-empty">도착 정보를 가져오지 못했습니다.<br>${e.message}</div>`; }
 }
-document.getElementById("scClose").addEventListener("click", () => {
-  /* 주행 중엔 실수로 안내가 끊기지 않도록 확인 (네이티브는 SwiftUI 알럿으로 별도 처리) */
-  if (trip && !NATIVE && !confirm("안내를 종료할까요?\n진행 중인 경로 안내가 종료됩니다.")) return;
+/* 카드 닫기 + 경로/주행 상태 완전 초기화 — X 버튼과 '안내 종료'가 같은 결과가 되도록 공유 */
+function closeCardReset() {
   document.getElementById("stationCard").classList.remove("open");
   scStation = null;
   scMode = "arrival";
@@ -3500,6 +3499,11 @@ document.getElementById("scClose").addEventListener("click", () => {
   if (adapter.clearSelectedStation) adapter.clearSelectedStation();   /* 카드 닫으면 역 핀 제거 */
   favAutoSuppressed = true;   /* 사용자가 닫았으면 위치가 뒤늦게 잡혀도 다시 열지 않음 */
   if (NATIVE) setTimeout(postCard, 0);
+}
+document.getElementById("scClose").addEventListener("click", () => {
+  /* 주행 중엔 실수로 안내가 끊기지 않도록 확인 (네이티브는 SwiftUI 알럿으로 별도 처리) */
+  if (trip && !NATIVE && !confirm("안내를 종료할까요?\n진행 중인 경로 안내가 종료됩니다.")) return;
+  closeCardReset();
 });
 document.getElementById("scRefresh").addEventListener("click", () => {
   const btn = document.getElementById("scRefresh");
@@ -3879,13 +3883,6 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
   showUsage();
   syncProviderSeg();
   /* 자동 역 카드는 locateUser가 위치를 잡은 뒤 openNearestStationCard로 연다(위치 없으면 안 엶) */
-  /* TEMP: 같은 노선 배지 검증용 — 제거 필요 */
-  if (new URLSearchParams(location.search).get("_same")) {
-    setTimeout(() => { try {
-      openStationCard("천호");
-      setTimeout(() => { startRoute(); pickDest("잠실"); setTimeout(() => startTrip(), 900); }, 1500);
-    } catch (e) {} }, 5000);
-  }
 })();
 
 /* 모바일: 현재 위치를 얻어 지도 중심 이동 (수도권 내일 때만) */
