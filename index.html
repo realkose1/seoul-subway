@@ -106,6 +106,9 @@
     overflow-x: auto; scrollbar-width: none;
   }
   .chips::-webkit-scrollbar { display: none; }
+  /* 주행 중 잠긴 조작: 좌우로 짧게 흔들어 알림 */
+  @keyframes ssl-shake { 0%,100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(4px); } }
+  .shake { animation: ssl-shake .34s ease-in-out; }
   .chip {
     flex: none;
     display: flex; align-items: center; gap: 6px;
@@ -2639,7 +2642,11 @@ function syncChips() {
   postTopbar();
 }
 function chipClick(name) {
-  if (trip) { haptic(); return; }   /* 주행 안내 중엔 노선 전환으로 안내가 깨지지 않도록 */
+  if (trip) {   /* 주행 안내 중엔 노선 전환 잠금 — 왜 안 바뀌는지 흔들림+토스트로 알림 */
+    haptic();
+    if (!NATIVE) { toast("안내 중입니다"); const t = document.querySelector(".topbar") || document.getElementById("lineChips"); if (t) { t.classList.remove("shake"); void t.offsetWidth; t.classList.add("shake"); } }
+    return;
+  }
   if (name === "ALL") { selectLine("ALL"); return; }
   let cur = state.line === "ALL" ? [] : state.line.split(",").filter(Boolean);
   const i = cur.indexOf(name);
@@ -3902,6 +3909,13 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
   showUsage();
   syncProviderSeg();
   /* 자동 역 카드는 locateUser가 위치를 잡은 뒤 openNearestStationCard로 연다(위치 없으면 안 엶) */
+  /* TEMP: 칩 잠금 피드백 검증용 — 제거 필요 */
+  if (new URLSearchParams(location.search).get("_lock")) {
+    setTimeout(() => { try {
+      openStationCard("상일동");
+      setTimeout(() => { startRoute(); pickDest("녹사평"); setTimeout(() => startTrip(), 900); }, 1500);
+    } catch (e) {} }, 5000);
+  }
 })();
 
 /* 모바일: 현재 위치를 얻어 지도 중심 이동 (수도권 내일 때만) */
