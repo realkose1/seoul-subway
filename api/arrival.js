@@ -14,7 +14,7 @@ async function callUpstream(scheme, key, station) {
 }
 
 module.exports = async (req, res) => {
-  res.setHeader("Cache-Control", "s-maxage=12, stale-while-revalidate=20");
+  res.setHeader("Cache-Control", "s-maxage=5, stale-while-revalidate=10");   /* 도착 정보는 신선도가 생명 */
   const key = process.env.SUBWAY_API_KEY;
   if (!key) return res.status(500).json({ code: "ERROR-ENV", message: "서버에 SUBWAY_API_KEY 환경변수가 설정되지 않았습니다." });
 

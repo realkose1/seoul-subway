@@ -1894,7 +1894,10 @@ function visibleLines() {
 }
 function currentRefreshSec() {
   if (state.mode === "mock") return 5;
-  return (state.line === "ALL" || state.line.includes(",")) ? 30 : 15; /* 활용사례 승인으로 한도 해제됨 */
+  /* 실시간 반영이 늦다는 피드백 → 갱신 주기 단축. 주행 중엔 더 자주 + 캐시 우회(아래 restartTimer).
+     (프록시 s-maxage도 함께 줄여 CDN 캐시가 지연에 얹히지 않게 했다) */
+  if (typeof trip !== "undefined" && trip) return 8;
+  return (state.line === "ALL" || state.line.includes(",")) ? 15 : 10; /* 활용사례 승인으로 한도 해제됨 */
 }
 const animState = new Map(); /* trainNo → { cur, goal, speed, heading, train } */
 const REDUCED_MOTION = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -2296,7 +2299,8 @@ function mockStep() {
 function refresh(force) { return state.mode === "live" ? fetchLive(force) : mockStep(); }
 function restartTimer() {
   clearInterval(state.timer);
-  state.timer = setInterval(refresh, currentRefreshSec() * 1000);
+  /* 주행 중엔 force로 호출해 CDN 캐시를 건너뛴다(캐시 나이가 지연에 더해지지 않도록) */
+  state.timer = setInterval(() => refresh(!!trip), currentRefreshSec() * 1000);
 }
 
 /* ════════════════ UI ════════════════ */
@@ -3313,6 +3317,8 @@ function startTrip() {
   renderRoute();
   postTrip();
   syncChips();                  /* 상단 칩도 경로 노선만 활성으로 */
+  restartTimer();               /* 주행 중 갱신 주기(8초, 캐시 우회)로 전환 */
+  refresh(true);                /* 즉시 최신 데이터 한 번 */
   startTripFollow();            /* 내 위치를 계속 따라가기 */
   if (!tripTimer) tripTimer = setInterval(tripTick, 1000);
 }
@@ -3352,6 +3358,7 @@ function endTrip() {
   renderRoute();
   postTrip();
   syncChips();                  /* 칩도 원래(선택 노선) 상태로 */
+  restartTimer();               /* 평상시 갱신 주기로 복귀 */
 }
 let tripTimer = null;
 /* 지금 화면에 열차를 그릴지.
