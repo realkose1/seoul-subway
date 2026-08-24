@@ -2626,7 +2626,20 @@ function toast(msg) {
   toastTimer = setTimeout(() => el.classList.remove("show"), 4500);
 }
 /* 칩 클릭: '전체'는 단독, 나머지는 복수 토글(다시 누르면 해제, 모두 해제 시 전체) */
+/* 상단 노선 칩을 지도 상태와 동기화.
+   주행 중이면 '안내 중인 노선'만 활성 — 지도에 경로 구간만 그려지는 것과 짝을 맞춘다. */
+function syncChips() {
+  const tripLines = trip ? [...trip.lines] : null;
+  document.querySelectorAll("#lineChips .chip").forEach(c => {
+    const n = c.dataset.line;
+    if (tripLines) c.classList.toggle("on", n !== "ALL" && tripLines.includes(n));
+    else if (n === "ALL") c.classList.toggle("on", state.line === "ALL");
+    else c.classList.toggle("on", state.line !== "ALL" && state.line.split(",").includes(n));
+  });
+  postTopbar();
+}
 function chipClick(name) {
+  if (trip) { haptic(); return; }   /* 주행 안내 중엔 노선 전환으로 안내가 깨지지 않도록 */
   if (name === "ALL") { selectLine("ALL"); return; }
   let cur = state.line === "ALL" ? [] : state.line.split(",").filter(Boolean);
   const i = cur.indexOf(name);
@@ -3292,6 +3305,7 @@ function startTrip() {
   renderTrains();               /* 무관한 열차 즉시 정리 */
   renderRoute();
   postTrip();
+  syncChips();                  /* 상단 칩도 경로 노선만 활성으로 */
   startTripFollow();            /* 내 위치를 계속 따라가기 */
   if (!tripTimer) tripTimer = setInterval(tripTick, 1000);
 }
@@ -3330,6 +3344,7 @@ function endTrip() {
   renderTrains();               /* 숨겼던 열차 복구 */
   renderRoute();
   postTrip();
+  syncChips();                  /* 칩도 원래(선택 노선) 상태로 */
 }
 let tripTimer = null;
 /* 지금 화면에 열차를 그릴지.
@@ -3887,6 +3902,13 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
   showUsage();
   syncProviderSeg();
   /* 자동 역 카드는 locateUser가 위치를 잡은 뒤 openNearestStationCard로 연다(위치 없으면 안 엶) */
+  /* TEMP: 칩 동기화 검증용 — 제거 필요 */
+  if (new URLSearchParams(location.search).get("_chip")) {
+    setTimeout(() => { try {
+      openStationCard("상일동");
+      setTimeout(() => { startRoute(); pickDest("녹사평"); setTimeout(() => startTrip(), 900); }, 1500);
+    } catch (e) {} }, 5000);
+  }
 })();
 
 /* 모바일: 현재 위치를 얻어 지도 중심 이동 (수도권 내일 때만) */
