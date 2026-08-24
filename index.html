@@ -341,10 +341,12 @@
   .route-sum .rt-meta { font-size: 12.5px; color: var(--muted); }
   .route-sum .rt-arr { font-size: 12.5px; color: #FBBF24; font-weight: 600; margin-left: auto; }
   .route-legs { position: relative; }
-  .route-leg { display: flex; gap: 11px; padding: 2px 2px; }
+  .route-leg { display: flex; gap: 11px; padding: 7px 2px; }
   .route-leg .rl-rail { display: flex; flex-direction: column; align-items: center; padding-top: 3px; }
   .route-leg .rl-dot { width: 12px; height: 12px; border-radius: 50%; border: 3px solid var(--rl, #888); background: var(--bg, #16181c); box-sizing: border-box; flex: none; }
   .route-leg .rl-line { flex: 1; width: 3px; background: var(--rl, #888); margin: 1px 0; min-height: 14px; border-radius: 2px; }
+  /* 구간 사이를 점선으로 연결 — 마지막(도착) 행은 제외 */
+  .route-leg .rl-dash { flex: 1; width: 0; min-height: 16px; margin: 3px 0 0; border-left: 2px dotted var(--rl, #888); opacity: .75; }
   .route-leg .rl-body { flex: 1; padding-bottom: 12px; }
   .route-leg .rl-stn { font-size: 14.5px; font-weight: 700; color: var(--text); }
   .route-leg .rl-info { font-size: 12px; color: var(--muted); margin-top: 3px; }
@@ -3192,7 +3194,7 @@ function renderRoute() {
     const legs = routeResult.segments.map((s, i) => {
       const isLast = i === routeResult.segments.length - 1;
       return `<div class="route-leg" style="--rl:${s.color}">
-          <div class="rl-rail"><div class="rl-dot"></div></div>
+          <div class="rl-rail"><div class="rl-dot"></div><div class="rl-dash"></div></div>
           <div class="rl-body">
             <div class="rl-stn">${s.from}</div>
             <div class="rl-info"><span class="rl-badge">${s.line}</span>${s.to}까지 ${s.stops}개 역 · 약 ${s.min}분</div>
