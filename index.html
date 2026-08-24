@@ -341,13 +341,13 @@
   .route-sum .rt-meta { font-size: 12.5px; color: var(--muted); }
   .route-sum .rt-arr { font-size: 12.5px; color: #FBBF24; font-weight: 600; margin-left: auto; }
   .route-legs { position: relative; }
-  .route-leg { display: flex; gap: 11px; padding: 3px 2px; }
+  .route-leg { display: flex; gap: 11px; padding: 7px 2px; }
   .route-leg .rl-rail { display: flex; flex-direction: column; align-items: center; padding-top: 3px; }
   .route-leg .rl-dot { width: 12px; height: 12px; border-radius: 50%; border: 3px solid var(--rl, #888); background: var(--bg, #16181c); box-sizing: border-box; flex: none; }
   .route-leg .rl-line { flex: 1; width: 3px; background: var(--rl, #888); margin: 1px 0; min-height: 14px; border-radius: 2px; }
   .route-leg .rl-body { flex: 1; padding-bottom: 12px; }
   .route-leg .rl-stn { font-size: 14.5px; font-weight: 700; color: var(--text); }
-  .route-leg .rl-info { font-size: 12px; color: var(--muted); margin-top: 2px; text-align: right; }
+  .route-leg .rl-info { font-size: 12px; color: var(--muted); margin-top: 3px; }
   .route-leg .rl-info .rl-badge { display: inline-block; padding: 1px 7px; border-radius: 999px; background: var(--rl, #888); color: #fff; font-size: 10.5px; font-weight: 700; margin-right: 5px; }
   .route-xfer { font-size: 11.5px; color: var(--faint-text); padding: 1px 0 11px; }
   .route-back { background: none; border: none; color: var(--muted); font-family: var(--font); font-size: 12.5px; font-weight: 600; cursor: pointer; padding: 2px 0 8px; }
@@ -3187,18 +3187,20 @@ function renderRoute() {
     }
     const wait = routeNextWaitMin();
     const arrMin = routeResult.totalMin + (wait || 0);
+    /* 구간 목록: [역명] 아래에 [노선] N개 역 · 약 M분.
+       다음 줄의 역명이 곧 환승역이라 별도 '환승' 줄은 두지 않는다(중복 정보) */
     const legs = routeResult.segments.map((s, i) => {
       const isLast = i === routeResult.segments.length - 1;
       return `<div class="route-leg" style="--rl:${s.color}">
-          <div class="rl-rail"><div class="rl-dot"></div><div class="rl-line"></div></div>
+          <div class="rl-rail"><div class="rl-dot"></div></div>
           <div class="rl-body">
             <div class="rl-stn">${s.from}</div>
             <div class="rl-info"><span class="rl-badge">${s.line}</span>${s.to}까지 ${s.stops}개 역 · 약 ${s.min}분</div>
           </div>
-        </div>` + (isLast ? `<div class="route-leg" style="--rl:${s.color}">
+        </div>` + (isLast ? `<div class="route-leg last" style="--rl:${s.color}">
           <div class="rl-rail"><div class="rl-dot"></div></div>
           <div class="rl-body"><div class="rl-stn">${s.to}</div><div class="rl-info">도착</div></div>
-        </div>` : `<div class="route-xfer">↕ ${s.to} 환승</div>`);
+        </div>` : "");
     }).join("");
     body.innerHTML = routeTabsHtml()
       + `<div class="route-sum">
