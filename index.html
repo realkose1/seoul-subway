@@ -3541,6 +3541,7 @@ const BOARD_ASK_MAX_SCORE = 2;   /* 0 승강장 / 1 진입·막 출발 / 2 다�
 function askBoarding(legIdx, isTransfer) {
   if (!trip) return;
   trip.askBoard = { legIdx, transfer: !!isTransfer, no: "", dest: "", pending: true, declined: false, askedNo: "" };
+  renderRoute(); if (NATIVE) postCard();   /* '열차가 들어오면 여쭤볼게요' 즉시 표시 */
   refreshBoardAsk();
 }
 let boardAskBusy = false;
