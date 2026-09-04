@@ -380,7 +380,7 @@
   /* 탄 열차 추적 상태 / 승차 확인 */
   .trip-track { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); padding: 2px 2px 4px; }
   .trip-track .tt-dot { width: 6px; height: 6px; border-radius: 50%; background: #34d399; box-shadow: 0 0 0 3px rgba(52,211,153,.18); }
-  .trip-track.lost { color: var(--faint-text); }
+  .trip-track.lost, .trip-track.wait { color: var(--faint-text); }
   .route-board { width: 100%; margin: 2px 0 4px; padding: 11px; border-radius: 12px; border: none; background: #FBBF24; color: #111317; font-family: var(--font); font-size: 13.5px; font-weight: 800; cursor: pointer; }
   .route-board:active { background: #e8ad14; }
   .board-ask { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.45); }
@@ -3301,7 +3301,8 @@ function renderRoute() {
           : `다음 <b>${p.nextStation}</b>${p.isLast ? "" : ` · ${p.legTo} 환승`}`}
       </div>
       ${p.tracking ? `<div class="trip-track"><span class="tt-dot"></span>${p.trainDest ? p.trainDest + "행 " : ""}열차 실시간 추적 중${p.trackStale ? " · 위치 갱신 대기" : ""}</div>`
-        : p.askBoard && !p.done ? `<button class="route-board" id="tripBoardBtn">${p.askBoard.transfer ? "환승 후 " : "지금 "}${p.askBoard.dest}행 열차를 탔어요</button>`
+        : p.askBoard && !p.done && p.askBoard.no ? `<button class="route-board" id="tripBoardBtn">${p.askBoard.transfer ? "환승 후 " : "지금 "}${p.askBoard.dest}행 열차를 탔어요</button>`
+        : p.askBoard && !p.done ? `<div class="trip-track wait">열차가 승강장에 들어오면 탔는지 여쭤볼게요</div>`
         : p.trackLost ? `<div class="trip-track lost">열차 신호가 끊겨 시간 기준으로 안내 중</div>` : ""}
       <div class="route-legs">${legs}</div>
       <button class="route-stop" id="tripStop">안내 종료</button>`;
@@ -3533,19 +3534,42 @@ async function findBoardCandidate(legIdx) {
   }
   return best;
 }
-/* "지금 OO행 열차를 타셨나요?" — 후보를 찾아 물어본다(네이티브: 알럿, 웹: 모달). 후보가 없으면 조용히 시간 기준 유지 */
+/* "지금 OO행 열차를 타셨나요?" — 승강장에(또는 막 출발한) 열차가 있을 때만 묻는다.
+   출발 시점에 열차가 없으면 '대기' 상태로 두고, 폴링 중 후보가 나타나는 순간 묻는다.
+   '아니요' 뒤에 다른 열차가 들어오면 그 열차로 다시 한 번 묻고, 카드엔 언제든 누를 수 있는 '탔어요' 버튼을 둔다. */
+const BOARD_ASK_MAX_SCORE = 2;   /* 0 승강장 / 1 진입·막 출발 / 2 다음 역으로 막 지나감 — 그 이상(1~2역 전)은 아직 묻지 않음 */
 function askBoarding(legIdx, isTransfer) {
   if (!trip) return;
-  findBoardCandidate(legIdx).then(c => {
-    if (!trip || trip.track) return;
-    if (!c) { trip.askBoard = null; if (!isTransfer && !NATIVE) toast("승강장 열차 정보를 찾지 못해 시간 기준으로 안내합니다"); return; }
-    trip.askBoard = { no: c.no, dest: c.dest, legIdx, transfer: !!isTransfer, line: c.line, color: c.color, at: Date.now() };
-    renderRoute();
-    if (NATIVE) {
-      try { window.webkit.messageHandlers.ui.postMessage({ type: "boardAsk", trainNo: c.no, dest: c.dest, line: c.line, color: colorHex(c.color), legIdx, transfer: !!isTransfer }); } catch (e) {}
-      postCard();
-    } else showBoardModal(trip.askBoard);
-  });
+  trip.askBoard = { legIdx, transfer: !!isTransfer, no: "", dest: "", pending: true, declined: false, askedNo: "" };
+  refreshBoardAsk();
+}
+let boardAskBusy = false;
+async function refreshBoardAsk() {
+  if (!trip || trip.track || !trip.askBoard || boardAskBusy) return;
+  boardAskBusy = true;
+  const ask = trip.askBoard;
+  try {
+    const c = await findBoardCandidate(ask.legIdx);
+    if (!trip || trip.track || trip.askBoard !== ask) return;
+    if (!c || c.score > BOARD_ASK_MAX_SCORE) {
+      /* 아직 탈 열차가 승강장에 없음 → 버튼/팝업 없이 대기 */
+      if (ask.no) { ask.no = ""; ask.dest = ""; ask.pending = true; renderRoute(); if (NATIVE) postCard(); }
+      return;
+    }
+    const isNew = c.no !== ask.no;
+    ask.no = c.no; ask.dest = c.dest; ask.line = c.line; ask.color = c.color; ask.pending = false;
+    if (isNew) {
+      ask.declined = false;
+      renderRoute(); if (NATIVE) postCard();
+      if (ask.askedNo !== c.no) {   /* 같은 열차로 두 번 묻지 않는다 */
+        ask.askedNo = c.no;
+        haptic("medium");
+        if (NATIVE) {
+          try { window.webkit.messageHandlers.ui.postMessage({ type: "boardAsk", trainNo: c.no, dest: c.dest, line: c.line, color: colorHex(c.color), legIdx: ask.legIdx, transfer: ask.transfer }); } catch (e) {}
+        } else showBoardModal(ask);
+      }
+    }
+  } finally { boardAskBusy = false; }
 }
 /* '네, 탔어요'(no 있음) → 그 열차 추적 시작 / '아니요'(no 없음) → 카드에 '탔어요' 버튼만 남김 */
 function tripBoard(no, legIdx) {
@@ -3553,7 +3577,7 @@ function tripBoard(no, legIdx) {
   hideBoardModal();
   const ask = trip.askBoard;
   if (!no) {
-    if (ask && ask.legIdx === legIdx) trip.askBoard = { ...ask, declined: true };
+    if (ask && ask.legIdx === legIdx) ask.declined = true;   /* 카드의 '탔어요' 버튼은 계속 유효 */
     renderRoute(); if (NATIVE) postCard();
     return;
   }
@@ -3604,13 +3628,7 @@ async function pollTrackedTrain() {
         trip.track = null; trip.trackLost = true;
       }
     } else if (trip.askBoard) {
-      /* 아직 안 탄 상태: 후보 열차를 최신으로 유지(먼저 온 차가 떠나면 다음 차로) */
-      const ask = trip.askBoard;
-      const c = await findBoardCandidate(ask.legIdx);
-      if (trip && trip.askBoard === ask && c && c.no !== ask.no) {
-        trip.askBoard = { ...ask, no: c.no, dest: c.dest, at: Date.now() };
-        renderRoute(); if (NATIVE) postCard();
-      }
+      await refreshBoardAsk();   /* 아직 안 탄 상태: 열차가 들어오면 묻고, 떠나면 버튼을 거둔다 */
     }
   } finally { trackPolling = false; }
 }
@@ -4139,6 +4157,9 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
     setTimeout(() => { try {
       openStationCard("천호");
       setTimeout(() => { startRoute(); pickDest("대공원"); setTimeout(() => {
+        /* 가짜 후보(모란행, 승강장) + 가짜 위치 피드 — 자정엔 실제 열차가 없어서 */
+        findBoardCandidate = async () => ({ score: 0, no: "8999", dest: "모란", cur: "천호", sttus: "1", line: "8호선", color: LINES["8호선"].color, express: false });
+        fetchPosition = async () => ({ realtimePositionList: [{ trainNo: "8999", statnNm: "강동구청", trainSttus: "0", statnTnm: "모란", updnLine: "1" }] });
         startTrip();
         /* 12초 뒤 자동으로 '탔어요' — 알럿 스크린샷 후 추적 카드 확인용 */
         setTimeout(() => { if (trip && trip.askBoard && !trip.track) tripBoard(trip.askBoard.no, 0); }, 12000);
