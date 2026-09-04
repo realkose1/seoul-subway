@@ -377,6 +377,20 @@
   .trip-next b { font-weight: 800; }
   .route-leg.on .rl-stn { color: var(--rl); }
   .route-stop { width: 100%; margin-top: 4px; padding: 11px; border-radius: 12px; border: none; background: #fff; color: #111317; font-family: var(--font); font-size: 13.5px; font-weight: 700; cursor: pointer; }
+  /* 탄 열차 추적 상태 / 승차 확인 */
+  .trip-track { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); padding: 2px 2px 4px; }
+  .trip-track .tt-dot { width: 6px; height: 6px; border-radius: 50%; background: #34d399; box-shadow: 0 0 0 3px rgba(52,211,153,.18); }
+  .trip-track.lost { color: var(--faint-text); }
+  .route-board { width: 100%; margin: 2px 0 4px; padding: 11px; border-radius: 12px; border: none; background: #FBBF24; color: #111317; font-family: var(--font); font-size: 13.5px; font-weight: 800; cursor: pointer; }
+  .route-board:active { background: #e8ad14; }
+  .board-ask { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.45); }
+  .board-ask[hidden] { display: none; }
+  .ba-box { width: min(320px, 86vw); padding: 18px 16px 14px; border-radius: 16px; background: #1c1e24; border: 1px solid rgba(255,255,255,.12); box-shadow: 0 18px 40px rgba(0,0,0,.5); }
+  .ba-title { font-size: 16px; font-weight: 700; color: var(--text); text-align: center; }
+  .ba-sub { font-size: 12px; color: var(--muted); text-align: center; margin-top: 6px; }
+  .ba-btns { display: flex; gap: 8px; margin-top: 14px; }
+  .ba-btns button { flex: 1; padding: 11px; border-radius: 11px; border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.06); color: var(--text); font-family: var(--font); font-size: 13.5px; font-weight: 700; cursor: pointer; }
+  .ba-btns button.primary { background: #fff; color: #111317; border-color: #fff; }
   .route-stop:active { background: #e6e8ea; }
   .tt-fb-note { font-size: 10px; color: var(--faint-text); padding: 5px 4px 3px; }
   .tt-fb-eta { color: var(--muted) !important; }
@@ -2380,6 +2394,7 @@ if (NATIVE) {
       routeTab: t => setRouteTab(t),
       tripStart: () => { startTrip(); if (NATIVE) postCard(); },
       tripStop: () => { closeCardReset(); },
+      tripBoard: (no, leg) => tripBoard(no ? String(no) : "", Number(leg) || 0),   /* 승차 확인 응답 */
     },
     /* 미니 카드 탭 → 몰입 모드 해제(전체 카드 복귀) */
     exitImmersive: () => { document.documentElement.classList.remove("immersive"); },
@@ -2461,7 +2476,11 @@ function postCard() {
           if (routeMode !== "trip") return null;
           const p = tripProgress();
           return p ? { remain: p.remain, arriveAt: p.arriveAt, line: p.line, color: p.color,
-                       nextStation: p.nextStation, legTo: p.legTo, isLast: p.isLast, done: p.done, legIdx: p.legIdx } : null;
+                       nextStation: p.nextStation, legTo: p.legTo, isLast: p.isLast, done: p.done, legIdx: p.legIdx,
+                       waiting: !!p.waiting, waitMin: p.waitMin || 0,
+                       tracking: !!p.tracking, trainDest: p.trainDest || "", trackStale: !!p.trackStale, trackLost: !!p.trackLost,
+                       askNo: p.askBoard && !p.done ? p.askBoard.no : "", askDest: p.askBoard ? p.askBoard.dest : "",
+                       askLeg: p.askBoard ? p.askBoard.legIdx : 0, askTransfer: !!(p.askBoard && p.askBoard.transfer) } : null;
         })(),
       });
       return;
@@ -3281,9 +3300,14 @@ function renderRoute() {
           : p.waiting ? `열차 대기 중 · <b>${p.waitMin}분</b> 후 출발`
           : `다음 <b>${p.nextStation}</b>${p.isLast ? "" : ` · ${p.legTo} 환승`}`}
       </div>
+      ${p.tracking ? `<div class="trip-track"><span class="tt-dot"></span>${p.trainDest ? p.trainDest + "행 " : ""}열차 실시간 추적 중${p.trackStale ? " · 위치 갱신 대기" : ""}</div>`
+        : p.askBoard && !p.done ? `<button class="route-board" id="tripBoardBtn">${p.askBoard.transfer ? "환승 후 " : "지금 "}${p.askBoard.dest}행 열차를 탔어요</button>`
+        : p.trackLost ? `<div class="trip-track lost">열차 신호가 끊겨 시간 기준으로 안내 중</div>` : ""}
       <div class="route-legs">${legs}</div>
       <button class="route-stop" id="tripStop">안내 종료</button>`;
     document.getElementById("tripStop").addEventListener("click", () => { haptic(); closeCardReset(); });
+    const bb = document.getElementById("tripBoardBtn");
+    if (bb) bb.addEventListener("click", () => { haptic(); tripBoard(p.askBoard.no, p.askBoard.legIdx); });
     return;
   }
 }
@@ -3327,6 +3351,7 @@ function startTrip() {
     boardAt: Date.now() + (waitSec == null ? 0 : waitSec * 1000),   /* 승차(=출발) 예정 시각 */
     waitKnown: waitSec != null,
     lines, stations, legIdx: 0,
+    baseLeg: 0, track: null, askBoard: null, trackLost: false, arrived: false,   /* 탄 열차 추적 상태 */
   };
   routeMode = "trip";
   drawTripRoute();              /* 지도엔 경로 구간만 강조(열차 필터는 tripTrainVisible) */
@@ -3338,6 +3363,8 @@ function startTrip() {
   refresh(true);                /* 즉시 최신 데이터 한 번 */
   startTripFollow();            /* 내 위치를 계속 따라가기 */
   if (!tripTimer) tripTimer = setInterval(tripTick, 1000);
+  startTrackPoll();             /* 탄 열차 위치 폴링(8초) */
+  askBoarding(0, false);        /* "지금 OO행 열차를 타셨나요?" */
 }
 /* 주행 중 내 위치 추적: 위치를 주기적으로 갱신하고 지도를 내 위치 중심으로 유지.
    사용자가 지도를 직접 조작하면(markInteracting) 잠시 따라가기를 멈춰 방해하지 않는다. */
@@ -3369,6 +3396,7 @@ function endTrip() {
   trip = null;
   routeMode = routeResult ? "result" : null;
   clearInterval(tripTimer); tripTimer = null;
+  stopTrackPoll(); hideBoardModal();
   stopTripFollow();
   if (adapter.clearLine) { adapter.clearLine(); drawLine(state.line); }   /* 경로 강조 해제 */
   renderTrains();               /* 숨겼던 열차 복구 */
@@ -3395,40 +3423,212 @@ function tripTrainVisible(t) {
   return !cur || trip.stations.has(cur);
 }
 /* 남은 시간·현재 구간 계산: 경과 시간 기반 추정 + (가능하면) 실시간 위치 보정 */
-function tripProgress() {
-  if (!trip) return null;
-  /* 승차 전에는 '대기 중' — 남은 시간 = 다음 열차까지 대기 + 전체 이동시간.
-     승차 후에는 그 열차가 출발한 시각(boardAt)부터 경과를 센다. */
-  const waitMs = trip.boardAt - Date.now();
+/* ── 탄 열차 추적 ──
+   출발/환승 때 "지금 OO행 열차를 타셨나요?"로 확인받은 열차번호를 위치 피드에서 따라간다.
+   현재 역이 곧 그 열차의 statnNm이라 지연·정차가 그대로 반영되고, GPS가 안 터지는 지하에서도 동작한다.
+   추적이 없거나 끊기면 시간 기준 추정으로 자연스럽게 내려간다. */
+const TRACK_POLL_MS = 8000, TRACK_LOST_MS = 4 * 60 * 1000;
+/* k번째 구간부터 끝까지의 이동+환승 합계(분) */
+function tripMinFromLeg(k) {
+  const segs = trip.result.segments;
+  let m = 0;
+  for (let i = k; i < segs.length; i++) m += segs[i].min + (i < segs.length - 1 ? ROUTE_TRANSFER_MIN : 0);
+  return m;
+}
+/* 시간 기준 추정: baseLeg 구간을 boardAt에 출발했다고 보고 경과 시간으로 진행률 계산 */
+function tripTimeProgress(baseLeg, boardAt) {
+  const segs = trip.result.segments;
+  const waitMs = boardAt - Date.now();
   const waiting = waitMs > 0;
   const waitMin = waiting ? Math.max(1, Math.round(waitMs / 60000)) : 0;
-  const elapsedMin = waiting ? 0 : (Date.now() - trip.boardAt) / 60000;
-  const total = trip.result.totalMin;
+  const elapsedMin = waiting ? 0 : (Date.now() - boardAt) / 60000;
+  const total = tripMinFromLeg(baseLeg);
   const remain = Math.max(0, Math.round(total - elapsedMin) + waitMin);
-  /* 현재 구간: 누적 소요로 판정 */
-  let acc = 0, legIdx = 0;
-  for (let i = 0; i < trip.result.segments.length; i++) {
-    const s = trip.result.segments[i];
-    const legEnd = acc + s.min + (i < trip.result.segments.length - 1 ? ROUTE_TRANSFER_MIN : 0);
+  let acc = 0, legIdx = baseLeg;
+  for (let i = baseLeg; i < segs.length; i++) {
+    const legEnd = acc + segs[i].min + (i < segs.length - 1 ? ROUTE_TRANSFER_MIN : 0);
     if (elapsedMin < legEnd) { legIdx = i; break; }
     acc = legEnd; legIdx = i;
   }
-  const seg = trip.result.segments[legIdx];
-  /* 구간 내 진행률로 다음 역 추정 */
+  const seg = segs[legIdx];
   let segElapsed = elapsedMin;
-  for (let i = 0; i < legIdx; i++) segElapsed -= trip.result.segments[i].min + ROUTE_TRANSFER_MIN;
+  for (let i = baseLeg; i < legIdx; i++) segElapsed -= segs[i].min + ROUTE_TRANSFER_MIN;
   const idx = Math.min(seg.stations.length - 1, Math.max(0, Math.floor(segElapsed / ROUTE_HOP_MIN) + 1));
+  return { remain, legIdx, seg, nextStation: seg.stations[idx] || seg.to, waiting, waitMin, done: !waiting && remain <= 0 };
+}
+/* 추적 기준: 열차의 실제 현재 역으로 진행률 계산. 위치를 아직 못 받았거나 경로 밖이면 null(→시간 기준) */
+function tripTrackProgress() {
+  const tr = trip.track;
+  const segs = trip.result.segments, seg = segs[tr.legIdx];
+  const idx = tr.cur ? seg.stations.indexOf(tr.cur) : -1;
+  if (idx < 0) return null;
+  const last = seg.stations.length - 1;
+  const atEnd = idx >= last && tr.sttus !== "0";
+  /* 다음 도착 역: 진입 중이면 현재 역, 도착/출발이면 그 다음 역 */
+  const nextIdx = tr.sttus === "0" ? idx : Math.min(last, idx + 1);
+  /* 남은 정거장: 진입 중이면 반 정거장 더, 막 출발했으면 조금 덜 */
+  const extra = tr.sttus === "0" ? 0.5 : (tr.sttus === "2" ? -0.4 : 0);
+  const legRemainMin = atEnd ? 0 : Math.max(0, last - idx + extra) * ROUTE_HOP_MIN;
+  const laterMin = tr.legIdx < segs.length - 1 ? ROUTE_TRANSFER_MIN + tripMinFromLeg(tr.legIdx + 1) : 0;
+  /* 마지막 수신 후 흐른 시간만큼 매초 줄여 표시(다음 수신 때 실제 위치로 다시 맞춤) */
+  const sinceMin = Math.max(0, (Date.now() - tr.seenAt) / 60000);
+  const base = legRemainMin + laterMin;
+  const remain = Math.max(0, Math.round(base - Math.min(sinceMin, base)));
+  const isLast = tr.legIdx === segs.length - 1;
+  return { remain, legIdx: tr.legIdx, seg, nextStation: atEnd ? seg.to : seg.stations[nextIdx],
+           waiting: false, waitMin: 0, done: isLast && atEnd,
+           tracking: true, trainDest: tr.dest || "", stale: Date.now() - tr.seenAt > TRACK_LOST_MS };
+}
+function tripProgress() {
+  if (!trip) return null;
+  const segs = trip.result.segments;
+  let p = trip.track ? tripTrackProgress() : null;
+  if (!p) p = tripTimeProgress(trip.baseLeg || 0, trip.boardAt);
+  if (trip.arrived) p = { ...p, remain: 0, done: true, waiting: false, waitMin: 0, legIdx: segs.length - 1, seg: segs[segs.length - 1], nextStation: trip.to };
+  const seg = p.seg, legIdx = p.legIdx;
   return {
-    remain, total, legIdx, arriveAt: clockAfter(remain),
+    remain: p.remain, total: trip.result.totalMin, legIdx, arriveAt: clockAfter(p.remain),
     line: seg.line, color: seg.color,
-    nextStation: seg.stations[idx] || seg.to,
-    legTo: seg.to,
-    waiting, waitMin,                                  /* 승차 대기 중 여부/남은 대기(분) */
-    waitKnown: !!trip.waitKnown,
-    isLast: legIdx === trip.result.segments.length - 1,
-    done: !waiting && remain <= 0,
+    nextStation: p.nextStation, legTo: seg.to,
+    waiting: p.waiting, waitMin: p.waitMin, waitKnown: !!trip.waitKnown,
+    isLast: legIdx === segs.length - 1, done: p.done,
+    tracking: !!p.tracking, trainDest: p.trainDest || "", trackStale: !!p.stale, trackLost: !!trip.trackLost,
+    askBoard: trip.askBoard || null,
   };
 }
+/* 승차 후보 열차: 구간 출발역에 서 있거나(도착) 진입/막 출발한 열차, 또는 1~2역 전에서 오는 열차 중
+   진행 방향이 구간 방향과 맞는 것. 점수가 낮을수록 '지금 탔을' 가능성이 높다. */
+async function findBoardCandidate(legIdx) {
+  if (!trip) return null;
+  const seg = trip.result.segments[legIdx];
+  if (!seg || !LINES[seg.line]) return null;
+  const origin = resolve(seg.from), next = resolve(seg.stations[1] || seg.to);
+  if (!origin || !next) return null;
+  let list = [];
+  try { const d = await fetchPosition(seg.line, true); list = dropStaleTrains((d && d.realtimePositionList) || []); }
+  catch (e) { return null; }
+  let best = null;
+  for (const t of list) {
+    const cur = resolve(t.statnNm), term = resolve(t.statnTnm);
+    if (!cur || !term || !t.trainNo) continue;
+    const st = String(t.trainSttus);
+    let score = null;
+    if (cur === origin) score = st === "1" ? 0 : 1;                 /* 승강장에 있음 / 진입·막 출발 */
+    else if (cur === next) {
+      /* 출발역을 막 지나 다음 역으로 가는 중이어야 함 — 진행 방향에 출발역이 없어야(되돌아오는 열차 제외) */
+      const back = stationsToX(seg.line, t, origin, cur, term);
+      if (back < 0 || back > 2) score = 2;
+    } else {
+      const away = stationsToX(seg.line, t, origin, cur, term);
+      if (away === 1) score = 3; else if (away === 2) score = 4;
+    }
+    if (score == null) continue;
+    /* 방향 검증: 이 열차가 가는 쪽에 구간의 다음 역이 있어야 한다(출발역에 선 반대 방향 열차 제외) */
+    if (cur === origin || score >= 3) {
+      const ahead = stationsToX(seg.line, t, next, cur, term);
+      if (ahead < 0 || ahead > 3) continue;
+    }
+    if (!best || score < best.score)
+      best = { score, no: String(t.trainNo), dest: t.statnTnm, cur, sttus: st, line: seg.line, color: seg.color, express: isExpress(t) };
+  }
+  return best;
+}
+/* "지금 OO행 열차를 타셨나요?" — 후보를 찾아 물어본다(네이티브: 알럿, 웹: 모달). 후보가 없으면 조용히 시간 기준 유지 */
+function askBoarding(legIdx, isTransfer) {
+  if (!trip) return;
+  findBoardCandidate(legIdx).then(c => {
+    if (!trip || trip.track) return;
+    if (!c) { trip.askBoard = null; if (!isTransfer && !NATIVE) toast("승강장 열차 정보를 찾지 못해 시간 기준으로 안내합니다"); return; }
+    trip.askBoard = { no: c.no, dest: c.dest, legIdx, transfer: !!isTransfer, line: c.line, color: c.color, at: Date.now() };
+    renderRoute();
+    if (NATIVE) {
+      try { window.webkit.messageHandlers.ui.postMessage({ type: "boardAsk", trainNo: c.no, dest: c.dest, line: c.line, color: colorHex(c.color), legIdx, transfer: !!isTransfer }); } catch (e) {}
+      postCard();
+    } else showBoardModal(trip.askBoard);
+  });
+}
+/* '네, 탔어요'(no 있음) → 그 열차 추적 시작 / '아니요'(no 없음) → 카드에 '탔어요' 버튼만 남김 */
+function tripBoard(no, legIdx) {
+  if (!trip) return;
+  hideBoardModal();
+  const ask = trip.askBoard;
+  if (!no) {
+    if (ask && ask.legIdx === legIdx) trip.askBoard = { ...ask, declined: true };
+    renderRoute(); if (NATIVE) postCard();
+    return;
+  }
+  const seg = trip.result.segments[legIdx];
+  if (!seg) return;
+  trip.track = { no: String(no), legIdx, line: seg.line, dest: ask && ask.no === String(no) ? ask.dest : "", cur: null, sttus: "", seenAt: Date.now() };
+  trip.askBoard = null; trip.trackLost = false;
+  trip.baseLeg = legIdx; trip.boardAt = Date.now();   /* 탔다고 했으니 대기 끝 — 시간 기준 폴백도 여기서부터 */
+  haptic("medium");
+  renderRoute(); postTrip(); if (NATIVE) postCard();
+  pollTrackedTrain();
+}
+let trackPollTimer = null, trackPolling = false;
+function startTrackPoll() { stopTrackPoll(); trackPollTimer = setInterval(pollTrackedTrain, TRACK_POLL_MS); }
+function stopTrackPoll() { clearInterval(trackPollTimer); trackPollTimer = null; trackPolling = false; }
+async function pollTrackedTrain() {
+  if (!trip || trackPolling) return;
+  trackPolling = true;
+  try {
+    if (trip.track) {
+      const tr = trip.track;
+      let list = null;
+      try { const d = await fetchPosition(tr.line, true); list = (d && d.realtimePositionList) || []; } catch (e) {}
+      if (!trip || trip.track !== tr) return;
+      if (list) {
+        const t = list.find(x => String(x.trainNo) === tr.no);
+        if (t) {
+          const cur = resolve(t.statnNm);
+          if (cur) { tr.cur = cur; tr.sttus = String(t.trainSttus); tr.seenAt = Date.now(); if (!tr.dest) tr.dest = t.statnTnm; }
+        }
+      }
+      const seg = trip.result.segments[tr.legIdx];
+      const atEnd = !!tr.cur && resolve(seg.to) === tr.cur && tr.sttus !== "0";
+      if (atEnd) {
+        if (tr.legIdx >= trip.result.segments.length - 1) {
+          trip.arrived = true; trip.track = null; haptic("heavy");          /* 목적지 도착 */
+        } else {
+          /* 환승역 도착: 이 열차 추적 종료 → 환승 시간 뒤 승차로 가정하고 다음 열차를 다시 확인 */
+          const nextLeg = tr.legIdx + 1;
+          trip.track = null; trip.baseLeg = nextLeg; trip.boardAt = Date.now() + ROUTE_TRANSFER_MIN * 60000;
+          haptic("medium");
+          askBoarding(nextLeg, true);
+        }
+      } else if (Date.now() - tr.seenAt > TRACK_LOST_MS) {
+        /* 피드에서 사라짐(운행 종료·데이터 공백) → 마지막 위치 기준 시간 추정으로 전환 */
+        const idx = tr.cur ? Math.max(0, seg.stations.indexOf(tr.cur)) : 0;
+        trip.baseLeg = tr.legIdx; trip.boardAt = tr.seenAt - idx * ROUTE_HOP_MIN * 60000;
+        trip.track = null; trip.trackLost = true;
+      }
+    } else if (trip.askBoard) {
+      /* 아직 안 탄 상태: 후보 열차를 최신으로 유지(먼저 온 차가 떠나면 다음 차로) */
+      const ask = trip.askBoard;
+      const c = await findBoardCandidate(ask.legIdx);
+      if (trip && trip.askBoard === ask && c && c.no !== ask.no) {
+        trip.askBoard = { ...ask, no: c.no, dest: c.dest, at: Date.now() };
+        renderRoute(); if (NATIVE) postCard();
+      }
+    }
+  } finally { trackPolling = false; }
+}
+/* 웹(브라우저) 전용 확인 모달 — 네이티브 앱은 SwiftUI 알럿을 쓴다 */
+function showBoardModal(ask) {
+  let el = document.getElementById("boardAsk");
+  if (!el) {
+    el = document.createElement("div"); el.id = "boardAsk"; el.className = "board-ask";
+    el.innerHTML = `<div class="ba-box"><div class="ba-title"></div><div class="ba-sub">탔다고 하시면 그 열차의 실제 위치로 안내합니다</div>
+      <div class="ba-btns"><button id="baNo">아니요</button><button id="baYes" class="primary">네, 탔어요</button></div></div>`;
+    document.body.appendChild(el);
+  }
+  el.querySelector(".ba-title").innerHTML = `${ask.transfer ? "환승 — " : "지금 "}<b>${ask.dest}행</b> 열차를 타셨나요?`;
+  el.querySelector("#baYes").onclick = () => { haptic(); tripBoard(ask.no, ask.legIdx); };
+  el.querySelector("#baNo").onclick = () => { haptic(); tripBoard("", ask.legIdx); };
+  el.hidden = false;
+}
+function hideBoardModal() { const el = document.getElementById("boardAsk"); if (el) el.hidden = true; }
 function tripTick() {
   if (!trip) { clearInterval(tripTimer); tripTimer = null; return; }
   renderRoute();
@@ -3459,6 +3659,7 @@ function postTrip() {
       nextStation: p ? p.nextStation : "", legTo: p ? p.legTo : "", isLast: p ? p.isLast : true,
       transfers: trip ? trip.result.transfers : 0, done: p ? p.done : false,
       waiting: p ? !!p.waiting : false, waitMin: p ? (p.waitMin || 0) : 0,
+      tracking: p ? !!p.tracking : false, trainDest: p ? (p.trainDest || "") : "",
       /* 도착 예정 시각(ms) — 라이브 액티비티가 앱 없이도 스스로 카운트다운/자동 소멸하는 기준 */
       endEpoch: p ? (Date.now() + p.remain * 60000) : 0,
       /* 도착역이 속한(경로 마지막 구간) 노선 — 라이브 액티비티의 도착역 배지용 */
@@ -3933,6 +4134,17 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
   showUsage();
   syncProviderSeg();
   /* 자동 역 카드는 locateUser가 위치를 잡은 뒤 openNearestStationCard로 연다(위치 없으면 안 엶) */
+  /* TEMP: 승차 확인/추적 검증용 — 제거 필요 */
+  if (new URLSearchParams(location.search).get("_brd")) {
+    setTimeout(() => { try {
+      openStationCard("천호");
+      setTimeout(() => { startRoute(); pickDest("대공원"); setTimeout(() => {
+        startTrip();
+        /* 12초 뒤 자동으로 '탔어요' — 알럿 스크린샷 후 추적 카드 확인용 */
+        setTimeout(() => { if (trip && trip.askBoard && !trip.track) tripBoard(trip.askBoard.no, 0); }, 12000);
+      }, 900); }, 1500);
+    } catch (e) {} }, 5000);
+  }
 })();
 
 /* 모바일: 현재 위치를 얻어 지도 중심 이동 (수도권 내일 때만) */
