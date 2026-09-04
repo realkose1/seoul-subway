@@ -4153,20 +4153,6 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
   showUsage();
   syncProviderSeg();
   /* 자동 역 카드는 locateUser가 위치를 잡은 뒤 openNearestStationCard로 연다(위치 없으면 안 엶) */
-  /* TEMP: 승차 확인/추적 검증용 — 제거 필요 */
-  if (new URLSearchParams(location.search).get("_brd")) {
-    setTimeout(() => { try {
-      openStationCard("천호");
-      setTimeout(() => { startRoute(); pickDest("대공원"); setTimeout(() => {
-        /* 가짜 후보(모란행, 승강장) + 가짜 위치 피드 — 자정엔 실제 열차가 없어서 */
-        findBoardCandidate = async () => ({ score: 0, no: "8999", dest: "모란", cur: "천호", sttus: "1", line: "8호선", color: LINES["8호선"].color, express: false });
-        fetchPosition = async () => ({ realtimePositionList: [{ trainNo: "8999", statnNm: "강동구청", trainSttus: "0", statnTnm: "모란", updnLine: "1" }] });
-        startTrip();
-        /* 12초 뒤 자동으로 '탔어요' — 알럿 스크린샷 후 추적 카드 확인용 */
-        setTimeout(() => { if (trip && trip.askBoard && !trip.track) tripBoard(trip.askBoard.no, 0); }, 12000);
-      }, 900); }, 1500);
-    } catch (e) {} }, 5000);
-  }
 })();
 
 /* 모바일: 현재 위치를 얻어 지도 중심 이동 (수도권 내일 때만) */
