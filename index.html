@@ -2404,6 +2404,18 @@ if (NATIVE) {
     },
     /* 미니 카드 탭 → 몰입 모드 해제(전체 카드 복귀) */
     exitImmersive: () => { document.documentElement.classList.remove("immersive"); },
+    /* 백그라운드에서 네이티브가 추적한 결과를 복귀 시 반영: 마지막 위치 / 구간 끝 도달 */
+    tripEvent: ev => {
+      try {
+        if (!trip || !ev) return;
+        if (ev.type === "position" && trip.track && trip.track.legIdx === ev.legIdx && trip.track.no === String(ev.no)) {
+          const cur = resolve(ev.cur);
+          if (cur) { trip.track.cur = cur; trip.track.sttus = String(ev.sttus || ""); trip.track.seenAt = Number(ev.at) || Date.now(); }
+        }
+        if (ev.type === "legEnd") tripLegReached(Number(ev.legIdx));
+        renderRoute(); postTrip(); postCard();
+      } catch (e) {}
+    },
     settingsPanel: {
       selectMap: prov => { const b = document.querySelector('#mapSeg button[data-prov="' + prov + '"]'); if (b) b.click(); },
       favTap: name => { const el = document.querySelector('.fav-row[data-name="' + CSS.escape(name) + '"]'); if (el) el.click(); },
@@ -3601,6 +3613,29 @@ function tripBoard(no, legIdx) {
   renderRoute(); postTrip(); if (NATIVE) postCard();
   pollTrackedTrain();
 }
+/* 추적 중인 열차가 구간 끝(환승역/목적지)에 도착했을 때의 전환 — 폴러와 네이티브 백그라운드 이벤트가 공유 */
+function tripLegReached(legIdx) {
+  if (!trip || !trip.track || trip.track.legIdx !== legIdx) return;
+  if (legIdx >= trip.result.segments.length - 1) {
+    trip.arrived = true; trip.track = null; haptic("heavy");          /* 목적지 도착 */
+  } else {
+    /* 환승역 도착: 이 열차 추적 종료 → 환승 시간 뒤 승차로 가정하고 다음 열차를 다시 고르게 */
+    const nextLeg = legIdx + 1;
+    trip.track = null; trip.baseLeg = nextLeg; trip.boardAt = Date.now() + ROUTE_TRANSFER_MIN * 60000;
+    haptic("medium");
+    startPick(nextLeg, true);
+  }
+}
+/* 네이티브 백그라운드 추적용 페이로드: 탄 열차·이번 구간 역 목록·이후 구간 소요 */
+function tripTrackPayload() {
+  if (!trip || !trip.track) return null;
+  const segs = trip.result.segments, k = trip.track.legIdx, seg = segs[k];
+  if (!seg) return null;
+  return { no: trip.track.no, line: seg.line, legIdx: k, stations: seg.stations.slice(), legTo: seg.to,
+           isLast: k === segs.length - 1, dest: trip.track.dest || "",
+           laterMin: k < segs.length - 1 ? ROUTE_TRANSFER_MIN + tripMinFromLeg(k + 1) : 0,
+           legs: segs.map(x => ({ line: x.line, to: x.to, min: x.min })) };
+}
 let trackPollTimer = null, trackPolling = false;
 function startTrackPoll() { stopTrackPoll(); trackPollTimer = setInterval(pollTrackedTrain, TRACK_POLL_MS); }
 function stopTrackPoll() { clearInterval(trackPollTimer); trackPollTimer = null; trackPolling = false; }
@@ -3623,15 +3658,7 @@ async function pollTrackedTrain() {
       const seg = trip.result.segments[tr.legIdx];
       const atEnd = !!tr.cur && resolve(seg.to) === tr.cur && tr.sttus !== "0";
       if (atEnd) {
-        if (tr.legIdx >= trip.result.segments.length - 1) {
-          trip.arrived = true; trip.track = null; haptic("heavy");          /* 목적지 도착 */
-        } else {
-          /* 환승역 도착: 이 열차 추적 종료 → 환승 시간 뒤 승차로 가정하고 다음 열차를 다시 확인 */
-          const nextLeg = tr.legIdx + 1;
-          trip.track = null; trip.baseLeg = nextLeg; trip.boardAt = Date.now() + ROUTE_TRANSFER_MIN * 60000;
-          haptic("medium");
-          startPick(nextLeg, true);
-        }
+        tripLegReached(tr.legIdx);
       } else if (Date.now() - tr.seenAt > TRACK_LOST_MS) {
         /* 피드에서 사라짐(운행 종료·데이터 공백) → 마지막 위치 기준 시간 추정으로 전환 */
         const idx = tr.cur ? Math.max(0, seg.stations.indexOf(tr.cur)) : 0;
@@ -3681,6 +3708,8 @@ function postTrip() {
       /* 하차 예상 시각(ms)·하차역·구간 — 네이티브가 백그라운드 대비 로컬 알림을 미리 예약한다 */
       alightAt: p && p.alightInMin != null && !p.done ? Date.now() + p.alightInMin * 60000 : 0,
       alightStation: p ? p.legTo : "", legIdx: p ? p.legIdx : 0,
+      /* 앱이 백그라운드로 가면 네이티브가 이 정보로 열차를 직접 따라간다 */
+      track: tripTrackPayload(),
       /* 도착 예정 시각(ms) — 라이브 액티비티가 앱 없이도 스스로 카운트다운/자동 소멸하는 기준 */
       endEpoch: p ? (Date.now() + p.remain * 60000) : 0,
       /* 도착역이 속한(경로 마지막 구간) 노선 — 라이브 액티비티의 도착역 배지용 */
