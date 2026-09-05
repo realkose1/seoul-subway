@@ -3473,8 +3473,10 @@ function tripTimeProgress(baseLeg, boardAt) {
   let segElapsed = elapsedMin;
   for (let i = baseLeg; i < legIdx; i++) segElapsed -= segs[i].min + ROUTE_TRANSFER_MIN;
   const idx = Math.min(seg.stations.length - 1, Math.max(0, Math.floor(segElapsed / ROUTE_HOP_MIN) + 1));
+  const legRemainMin = waiting ? waitMin + seg.min : Math.max(0, seg.min - segElapsed);
   return { remain, legIdx, seg, nextStation: seg.stations[idx] || seg.to, waiting, waitMin, done: !waiting && remain <= 0,
-           alight: !waiting && idx >= seg.stations.length - 1 && remain > 0 };
+           alight: !waiting && idx >= seg.stations.length - 1 && remain > 0,
+           alightInMin: Math.max(0, legRemainMin - ROUTE_HOP_MIN) };
 }
 /* 추적 기준: 열차의 실제 현재 역으로 진행률 계산. 위치를 아직 못 받았거나 경로 밖이면 null(→시간 기준) */
 function tripTrackProgress() {
@@ -3498,6 +3500,7 @@ function tripTrackProgress() {
   return { remain, legIdx: tr.legIdx, seg, nextStation: atEnd ? seg.to : seg.stations[nextIdx],
            waiting: false, waitMin: 0, done: isLast && atEnd,
            alight: !atEnd && nextIdx >= last,          /* 다음 역이 이 구간의 끝(환승/도착) → 내릴 준비 */
+           alightInMin: atEnd ? null : Math.max(0, legRemainMin - ROUTE_HOP_MIN),   /* 하차 알림 예약용(네이티브가 미리 예약) */
            tracking: true, trainDest: tr.dest || "", stale: Date.now() - tr.seenAt > TRACK_LOST_MS };
 }
 function tripProgress() {
@@ -3515,6 +3518,7 @@ function tripProgress() {
     isLast: legIdx === segs.length - 1, done: p.done,
     tracking: !!p.tracking, trainDest: p.trainDest || "", trackStale: !!p.stale, trackLost: !!trip.trackLost,
     alight: !!p.alight && !p.done,
+    alightInMin: p.done || trip.arrived ? null : (p.alightInMin == null ? null : p.alightInMin),
     pick: trip.pick && !trip.track ? trip.pick : null,
   };
 }
@@ -3674,6 +3678,9 @@ function postTrip() {
       waiting: p ? !!p.waiting : false, waitMin: p ? (p.waitMin || 0) : 0,
       tracking: p ? !!p.tracking : false, trainDest: p ? (p.trainDest || "") : "",
       alight: p ? !!p.alight : false,
+      /* 하차 예상 시각(ms)·하차역·구간 — 네이티브가 백그라운드 대비 로컬 알림을 미리 예약한다 */
+      alightAt: p && p.alightInMin != null && !p.done ? Date.now() + p.alightInMin * 60000 : 0,
+      alightStation: p ? p.legTo : "", legIdx: p ? p.legIdx : 0,
       /* 도착 예정 시각(ms) — 라이브 액티비티가 앱 없이도 스스로 카운트다운/자동 소멸하는 기준 */
       endEpoch: p ? (Date.now() + p.remain * 60000) : 0,
       /* 도착역이 속한(경로 마지막 구간) 노선 — 라이브 액티비티의 도착역 배지용 */
