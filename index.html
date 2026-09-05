@@ -386,10 +386,33 @@
     max-width: min(420px, calc(100vw - 28px));
     padding: 8px 10px 8px 12px; border-radius: 999px;
     background: rgba(14,16,19,.92); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-    border: 1px solid rgba(255,255,255,.14); box-shadow: 0 6px 18px rgba(0,0,0,.4);
+    border: 1px solid transparent; box-shadow: 0 6px 18px rgba(0,0,0,.4);
     font-size: 12px; font-weight: 600; color: var(--text); white-space: nowrap;
+    isolation: isolate;
   }
   .trip-pill[hidden] { display: none; }
+  /* 실시간 느낌: 테두리를 따라 도는 그라디언트 + 은은한 발광 */
+  @property --pill-ang { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
+  .trip-pill::before {
+    content: ""; position: absolute; inset: -1.5px; border-radius: 999px; padding: 1.5px; z-index: -1;
+    background: conic-gradient(from var(--pill-ang), #34d399, #22d3ee, #60a5fa, #a78bfa, #f472b6, #fbbf24, #34d399);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite: exclude;
+    animation: pill-spin 3.2s linear infinite;
+  }
+  .trip-pill::after {
+    content: ""; position: absolute; inset: -3px; border-radius: 999px; z-index: -2;
+    background: conic-gradient(from var(--pill-ang), #34d399, #22d3ee, #60a5fa, #a78bfa, #f472b6, #fbbf24, #34d399);
+    filter: blur(7px); opacity: .35;
+    animation: pill-spin 3.2s linear infinite;
+  }
+  @keyframes pill-spin { to { --pill-ang: 360deg; } }
+  /* @property 미지원 브라우저 폴백: 정적 테두리 */
+  @supports not (background: conic-gradient(from var(--pill-ang), #000, #fff)) {
+    .trip-pill { border-color: rgba(255,255,255,.16); }
+    .trip-pill::before, .trip-pill::after { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { .trip-pill::before, .trip-pill::after { animation: none; } }
   .trip-track .tt-dot { width: 6px; height: 6px; border-radius: 50%; background: #34d399; box-shadow: 0 0 0 3px rgba(52,211,153,.18); }
   .trip-track.lost, .trip-track.wait { color: var(--faint-text); }
   .trip-track .tt-change { margin-left: auto; border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.06); color: var(--muted); border-radius: 999px; padding: 3px 9px; font-family: var(--font); font-size: 11px; font-weight: 600; cursor: pointer; }
@@ -4314,6 +4337,18 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
   showUsage();
   syncProviderSeg();
   /* 자동 역 카드는 locateUser가 위치를 잡은 뒤 openNearestStationCard로 연다(위치 없으면 안 엶) */
+  /* TEMP: 알약 발광 검증용 — 제거 필요 */
+  if (new URLSearchParams(location.search).get("_glow")) {
+    setTimeout(() => { try {
+      openStationCard("천호");
+      setTimeout(() => { startRoute(); pickDest("대공원"); setTimeout(() => {
+        fetchPosition = async (line) => ({ realtimePositionList: line !== "8호선" ? [] : [
+          { trainNo: "8001", statnNm: "천호", trainSttus: "1", statnTnm: "모란", updnLine: "1" } ] });
+        startTrip();
+        setTimeout(() => { if (trip && trip.pick && trip.pick.rows[0]) tripBoard(trip.pick.rows[0].no, 0); }, 3000);
+      }, 900); }, 1500);
+    } catch (e) {} }, 5000);
+  }
 })();
 
 /* 모바일: 현재 위치를 얻어 지도 중심 이동 (수도권 내일 때만) */
