@@ -387,21 +387,27 @@
   .pick-head.collapsed { color: var(--muted); font-weight: 600; padding-bottom: 8px; }
   .pick-toggle { border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.06); color: var(--muted); border-radius: 999px; padding: 4px 10px; font-family: var(--font); font-size: 11.5px; font-weight: 600; cursor: pointer; }
   .pick-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
-  /* 노선 띠 선택기 */
-  .pick-strip { position: relative; height: 128px; margin: 2px 0 2px; }
-  .pick-strip .ps-track { position: absolute; left: 6%; right: 6%; top: 74px; height: 5px; border-radius: 3px; background: var(--rl); opacity: .9; }
-  .pick-strip .ps-arrow { position: absolute; right: -10px; top: -11px; font-size: 22px; line-height: 1; color: var(--rl); font-weight: 800; }
-  .pick-strip .ps-stn { position: absolute; top: 68px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  /* 노선 띠 선택기(좌우 스크롤, 출발역 앞뒤 3역) */
+  .pick-scroll { overflow-x: auto; overflow-y: hidden; margin: 0 -14px; padding: 0 14px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .pick-scroll::-webkit-scrollbar { display: none; }
+  .pick-strip { position: relative; height: 176px; }
+  .pick-strip .ps-track { position: absolute; top: 112px; height: 5px; border-radius: 3px; background: var(--rl); opacity: .9; }
+  .pick-strip .ps-arrow { position: absolute; right: -12px; top: -11px; font-size: 22px; line-height: 1; color: var(--rl); font-weight: 800; }
+  .pick-strip .ps-stn { position: absolute; top: 106px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 4px; }
   .pick-strip .ps-stn i { width: 13px; height: 13px; border-radius: 50%; background: var(--bg, #16181c); border: 3px solid var(--rl); box-sizing: border-box; }
   .pick-strip .ps-stn.here i { background: var(--rl); width: 15px; height: 15px; border-color: #fff; }
+  .pick-strip .ps-stn.none { display: none; }
   .pick-strip .ps-stn b { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; }
   .pick-strip .ps-stn.here b { color: var(--text); font-weight: 800; font-size: 13px; }
   .pick-strip .ps-stn small { font-size: 10px; color: var(--faint-text); margin-top: -3px; }
-  .pick-strip .ps-trains { position: absolute; inset: 0 0 auto 0; height: 70px; }
-  .pick-strip .ps-train { position: absolute; bottom: calc(6px + var(--lane) * 30px); transform: translateX(-50%); display: flex; align-items: center; gap: 4px; padding: 5px 9px 5px 6px; border-radius: 999px; border: 1.5px solid var(--rl); background: #1c1e24; color: var(--text); font-family: var(--font); font-size: 12px; font-weight: 800; white-space: nowrap; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,.35); }
+  .pick-strip .ps-trains { position: absolute; inset: 0 0 auto 0; height: 108px; }
+  .pick-strip .ps-train { position: absolute; bottom: calc(6px + var(--lane) * 46px); transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 5px 9px 4px; border-radius: 12px; border: 1.5px solid var(--rl); background: #1c1e24; color: var(--text); font-family: var(--font); font-size: 12px; font-weight: 800; white-space: nowrap; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,.35); }
   .pick-strip .ps-train:active { background: var(--rl); color: #fff; }
+  .pick-strip .ps-train .ps-row { display: flex; align-items: center; gap: 4px; }
   .pick-strip .ps-train .ps-ico { font-size: 13px; }
-  .pick-strip .ps-empty { position: absolute; left: 0; right: 0; top: 22px; text-align: center; font-size: 12px; color: var(--muted); }
+  .pick-strip .ps-train .ps-st { font-size: 10px; font-weight: 600; color: var(--muted); }
+  .pick-strip .ps-train:active .ps-st { color: rgba(255,255,255,.85); }
+  .pick-strip .ps-empty { position: absolute; left: 0; right: 0; top: 40px; text-align: center; font-size: 12px; color: var(--muted); }
   .ps-hint { font-size: 11.5px; color: var(--faint-text); text-align: center; margin: 0 0 8px; min-height: 14px; }
   .pick-row { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 10px 11px; border-radius: 12px; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.06); color: var(--text); font-family: var(--font); font-size: 13.5px; cursor: pointer; }
   .pick-row:active { background: rgba(255,255,255,.14); }
@@ -2515,8 +2521,9 @@ function postCard() {
                        tracking: !!p.tracking, trainDest: p.trainDest || "", trackStale: !!p.trackStale, trackLost: !!p.trackLost,
                        alight: !!p.alight,
                        pick: p.pick && !p.done ? { legIdx: p.pick.legIdx, transfer: !!p.pick.transfer, dismissed: !!p.pick.dismissed, loaded: !!p.pick.loaded,
-                         strip: p.pick.strip ? { prev: p.pick.strip.prev || "", origin: p.pick.strip.origin || "", next: p.pick.strip.next || "", line: p.pick.strip.line, color: p.pick.strip.color } : null,
-                         rows: p.pick.rows.map(r => ({ no: r.no, dest: r.dest, line: r.line, color: r.color, status: r.status, express: !!r.express, pos: r.pos })) } : null } : null;
+                         strip: p.pick.strip ? { prev: p.pick.strip.prev || "", origin: p.pick.strip.origin || "", next: p.pick.strip.next || "", line: p.pick.strip.line, color: p.pick.strip.color,
+                                                 stations: (p.pick.strip.stations || []).map(x => x || ""), originIdx: p.pick.strip.originIdx } : null,
+                         rows: p.pick.rows.map(r => ({ no: r.no, dest: r.dest, line: r.line, color: r.color, status: r.status, short: r.short || "", express: !!r.express, pos: r.pos })) } : null } : null;
         })(),
       });
       return;
@@ -3254,27 +3261,39 @@ function setRouteTab(tab) {
   renderRoute();
   if (NATIVE) postCard();
 }
-/* 탈 열차 선택 — 이전역·출발역·다음역 노선 띠 위에 열차를 그려 눌러 고르게 */
+/* 탈 열차 선택 — 출발역 앞뒤 3역 노선 띠(좌우 스크롤) 위에 열차를 위치대로 그려 눌러 고르게 */
+const PS_STEP = 108, PS_PAD = 56;
+function psX(pos) { return PS_PAD + pos * PS_STEP; }
 function pickListHtml(pick) {
   const title = pick.transfer ? "환승 열차를 선택하세요" : "탈 열차를 선택하세요";
   if (pick.dismissed) return `<div class="pick-head collapsed"><span>${title}</span><button class="pick-toggle" id="pickToggle">열차 선택</button></div>`;
-  const m = pick.strip || {};
-  const xOf = pos => Math.max(5, Math.min(95, 15 + pos * 35));   /* 역: 15% / 50% / 85% */
+  const m = pick.strip || { stations: [], originIdx: 3 };
+  const sts = m.stations || [];
+  const width = PS_PAD * 2 + Math.max(0, sts.length - 1) * PS_STEP;
+  let first = 0; while (first < sts.length && !sts[first]) first++;
+  let last = sts.length - 1; while (last > 0 && !sts[last]) last--;
   /* 같은 자리에 겹치는 열차는 위로 쌓는다 */
   const lanes = {}; const rows = pick.rows.map(r => { const key = Math.round(r.pos * 4); const lane = lanes[key] || 0; lanes[key] = lane + 1; return { ...r, lane }; });
-  const trains = rows.map(r => `<button class="ps-train" data-no="${r.no}" data-leg="${pick.legIdx}" style="left:${xOf(r.pos)}%;--lane:${r.lane}" title="${r.status}">
-      <span class="ps-ico">🚆</span><span class="ps-dest">${r.dest}행${r.express ? " 급행" : ""}</span></button>`).join("");
-  const empty = !pick.rows.length ? `<div class="ps-empty">${pick.loaded ? "이 구간에 이 방향 열차가 없어요 · 들어오면 표시됩니다" : "근처 열차 확인 중…"}</div>` : "";
+  const trains = rows.map(r => `<button class="ps-train" data-no="${r.no}" data-leg="${pick.legIdx}" style="left:${psX(r.pos)}px;--lane:${r.lane}" title="${r.status}">
+      <span class="ps-row"><span class="ps-ico">🚆</span><span class="ps-dest">${r.dest}행${r.express ? " 급행" : ""}</span></span><small class="ps-st">${r.short || r.status}</small></button>`).join("");
+  const stations = sts.map((name, i) => `<div class="ps-stn${i === m.originIdx ? " here" : ""}${name ? "" : " none"}" style="left:${psX(i)}px"><i></i><b>${name || ""}</b>${i === m.originIdx ? `<small>${pick.transfer ? "환승역" : "출발"}</small>` : ""}</div>`).join("");
+  const empty = !pick.rows.length ? `<div class="ps-empty">${pick.loaded ? "이 방향 열차가 근처에 없어요 · 들어오면 표시됩니다" : "근처 열차 확인 중…"}</div>` : "";
   return `<div class="pick-head"><span>${title}</span><button class="pick-toggle" id="pickToggle">나중에</button></div>
-    <div class="pick-strip" style="--rl:${m.color || "#888"}">
+    <div class="pick-scroll" id="pickScroll"><div class="pick-strip" style="width:${width}px;--rl:${m.color || "#888"}">
       <div class="ps-trains">${trains}</div>
-      <div class="ps-track"><span class="ps-arrow">›</span></div>
-      <div class="ps-stn" style="left:15%"><i></i><b>${m.prev || "—"}</b></div>
-      <div class="ps-stn here" style="left:50%"><i></i><b>${m.origin || ""}</b><small>${pick.transfer ? "환승역" : "출발"}</small></div>
-      <div class="ps-stn" style="left:85%"><i></i><b>${m.next || ""}</b></div>
+      <div class="ps-track" style="left:${psX(first)}px;width:${Math.max(0, psX(last) - psX(first))}px"><span class="ps-arrow">›</span></div>
+      ${stations}
       ${empty}
-    </div>
-    <div class="ps-hint">${pick.rows.length ? "열차를 눌러 선택하세요" : ""}</div>`;
+    </div></div>
+    <div class="ps-hint">${pick.rows.length ? "열차를 눌러 선택 · 좌우로 밀어 앞뒤 역 보기" : "좌우로 밀어 앞뒤 역 보기"}</div>`;
+}
+/* 스크롤 위치: 처음엔 출발역이 가운데, 이후엔 사용자가 둔 위치 유지(8초 갱신마다 튀지 않게) */
+function pickScrollRestore(pick) {
+  const sc = document.getElementById("pickScroll");
+  if (!sc || !pick) return;
+  const m = pick.strip || { originIdx: 3 };
+  sc.scrollLeft = pick.scrollX != null ? pick.scrollX : Math.max(0, psX(m.originIdx) - sc.clientWidth / 2);
+  sc.addEventListener("scroll", () => { pick.scrollX = sc.scrollLeft; }, { passive: true });
 }
 function renderRoute() {
   /* 경로 화면은 그릴 때마다 네이티브로도 직접 push — DOM MutationObserver는 rAF 배칭·스로틀에
@@ -3366,6 +3385,7 @@ function renderRoute() {
       <button class="route-stop" id="tripStop">안내 종료</button>`;
     document.getElementById("tripStop").addEventListener("click", () => { haptic(); closeCardReset(); });
     body.querySelectorAll(".ps-train").forEach(el => el.addEventListener("click", () => { haptic(); tripBoard(el.dataset.no, Number(el.dataset.leg)); }));
+    if (p.pick && !p.pick.dismissed) pickScrollRestore(p.pick);
     const ps = document.getElementById("pickToggle");
     if (ps) ps.addEventListener("click", () => { haptic(); if (trip && trip.pick) { trip.pick.dismissed = !trip.pick.dismissed; renderRoute(); if (NATIVE) postCard(); } });
     return;
@@ -3569,22 +3589,43 @@ function prevStationOf(line, origin, next) {
   const others = [...(g[origin] || [])].filter(n => n !== next);   /* 이웃은 Set */
   return others[0] || null;
 }
-/* 선택 띠 메타: 이전역 — 출발역 — 다음역 */
+/* from에서 toward 방향으로 steps 역 걷기(분기는 첫 이웃) */
+function lineWalk(line, from, toward, steps) {
+  const g = graphOf(line) || {}; const out = []; let prev = from, cur = toward;
+  for (let i = 0; i < steps && cur; i++) { out.push(cur); const nb = [...(g[cur] || [])].filter(n => n !== prev); prev = cur; cur = nb[0] || null; }
+  return out;
+}
+/* 선택 띠 메타: 출발역 앞뒤 3역씩(총 7칸, originIdx=3). 노선 끝이면 null로 비움 */
+const PICK_SPAN = 3;
 function pickStripMeta(legIdx) {
   const seg = trip && trip.result.segments[legIdx];
   if (!seg) return null;
   const origin = resolve(seg.from), next = resolve(seg.stations[1] || seg.to);
-  return { prev: prevStationOf(seg.line, origin, next), origin, next, line: seg.line, color: seg.color };
+  /* 앞쪽: 이번 구간 역을 우선(분기 대비), 부족하면 노선을 따라 계속 */
+  let fwd = seg.stations.slice(1, 1 + PICK_SPAN).map(resolve).filter(Boolean);
+  if (fwd.length < PICK_SPAN && fwd.length) {
+    const more = lineWalk(seg.line, fwd.length >= 2 ? fwd[fwd.length - 2] : origin, fwd[fwd.length - 1], PICK_SPAN);
+    for (const st of more.slice(1)) { if (fwd.length >= PICK_SPAN) break; fwd.push(st); }
+  }
+  const prev = prevStationOf(seg.line, origin, next);
+  const back = prev ? lineWalk(seg.line, origin, prev, PICK_SPAN) : [];   /* [이전, -2, -3] */
+  const stations = [];
+  for (let i = PICK_SPAN - 1; i >= 0; i--) stations.push(back[i] || null);
+  stations.push(origin);
+  for (let i = 0; i < PICK_SPAN; i++) stations.push(fwd[i] || null);
+  return { stations, originIdx: PICK_SPAN, origin, prev: back[0] || null, next: fwd[0] || null, line: seg.line, color: seg.color };
 }
-/* 승차 후보 열차: 출발역·바로 이전 역·바로 다음 역에 있는, 진행 방향이 맞는 열차만(너무 많이 보이지 않게).
-   pos = 띠 위의 위치(0 이전역, 1 출발역, 2 다음역; 진입 −0.35 / 정차 0 / 출발 +0.35). score 낮을수록 '지금 탈' 열차. */
+/* 승차 후보 열차: 띠(앞뒤 3역) 안에 있고 진행 방향이 맞는 열차.
+   pos = 띠 칸 위치(originIdx=출발역; 진입 −0.35 / 정차 0 / 출발 +0.35). score 낮을수록 '지금 탈' 열차. */
 async function findBoardCandidates(legIdx) {
   if (!trip) return [];
   const seg = trip.result.segments[legIdx];
   if (!seg || !LINES[seg.line]) return [];
   const meta = pickStripMeta(legIdx);
   if (!meta || !meta.origin || !meta.next) return [];
-  const { prev, origin, next } = meta;
+  const sts = meta.stations, O = meta.originIdx;
+  let R_idx = sts.length - 1; while (R_idx > O && !sts[R_idx]) R_idx--;   /* 창의 가장 앞쪽 역 */
+  const R = sts[R_idx];
   let list = [];
   try { const d = await fetchPosition(seg.line, true); list = dropStaleTrains((d && d.realtimePositionList) || []); }
   catch (e) { return []; }
@@ -3593,21 +3634,19 @@ async function findBoardCandidates(legIdx) {
   for (const t of list) {
     const cur = resolve(t.statnNm), term = resolve(t.statnTnm);
     if (!cur || !term || !t.trainNo) continue;
+    const idx = sts.indexOf(cur);
+    if (idx < 0) continue;
     const st = String(t.trainSttus);
-    let score = null, status = "", slot = null;
-    if (cur === origin) {
-      const ahead = stationsToX(seg.line, t, next, cur, term);           /* 진행 방향에 다음 역이 있어야 */
-      if (ahead >= 0 && ahead <= 3) { slot = 1; score = st === "1" ? 0 : 1; status = st === "1" ? "승강장 도착" : st === "0" ? "진입 중" : "막 출발"; }
-    } else if (cur === next) {
-      const back = stationsToX(seg.line, t, origin, cur, term);          /* 되돌아오는 열차 제외 */
-      if (back < 0 || back > 2) { slot = 2; score = 2; status = `방금 출발 · ${next} ${st === "0" ? "진입 중" : st === "1" ? "정차" : "출발"}`; }
-    } else if (prev && cur === prev) {
-      const ahead = stationsToX(seg.line, t, origin, cur, term);         /* 출발역 쪽으로 오는 열차만 */
-      if (ahead === 1) { slot = 0; score = 3; status = `${prev}에서 오는 중 · 약 ${Math.max(1, Math.round((SEC_PER_STATION - (st === "0" ? 90 : st === "2" ? 45 : 0)) / 60))}분`; }
-    }
-    if (score == null) continue;
-    out.push({ score, no: String(t.trainNo), dest: t.statnTnm, cur, sttus: st, status, line: seg.line, color: seg.color,
-               express: isExpress(t), pos: slot + off(st) });
+    /* 방향: 진행 방향으로 창의 앞쪽 끝(R)까지 남은 역 수가 실제 칸 차이와 같아야(되돌아오는 열차 제외) */
+    if (idx !== R_idx) { if (stationsToX(seg.line, t, R, cur, term) !== R_idx - idx) continue; }
+    else if (idx > 0 && sts[idx - 1]) { const back = stationsToX(seg.line, t, sts[idx - 1], cur, term); if (back >= 0 && back <= sts.length) continue; }
+    const rel = idx - O;
+    let score, short, status;
+    if (rel === 0) { score = st === "1" ? 0 : 1; short = st === "1" ? "승강장 도착" : st === "0" ? "진입 중" : "막 출발"; status = short; }
+    else if (rel > 0) { score = 2 + rel * 0.01; const w = st === "0" ? "진입 중" : st === "1" ? "정차" : "출발"; short = w; status = (rel === 1 && st !== "1" ? "방금 출발 · " : "출발함 · ") + `${cur} ${w}`; }
+    else { const away = -rel; score = 3 + away * 0.01; const eta = Math.max(1, Math.round((away * SEC_PER_STATION - (st === "0" ? 90 : st === "2" ? 45 : 0)) / 60)); short = `약 ${eta}분`; status = `${cur}에서 오는 중 · 약 ${eta}분`; }
+    out.push({ score, no: String(t.trainNo), dest: t.statnTnm, cur, sttus: st, status, short, line: seg.line, color: seg.color,
+               express: isExpress(t), pos: idx + off(st) });
   }
   out.sort((a, b) => a.score - b.score);
   return out;
@@ -4221,6 +4260,22 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
   showUsage();
   syncProviderSeg();
   /* 자동 역 카드는 locateUser가 위치를 잡은 뒤 openNearestStationCard로 연다(위치 없으면 안 엶) */
+  /* TEMP: 7역 띠 검증용 — 제거 필요 */
+  if (new URLSearchParams(location.search).get("_strip")) {
+    setTimeout(() => { try {
+      openStationCard("천호");
+      setTimeout(() => { startRoute(); pickDest("대공원"); setTimeout(() => {
+        fetchPosition = async (line) => ({ realtimePositionList: line !== "8호선" ? [] : [
+          { trainNo: "8101", statnNm: "천호", trainSttus: "1", statnTnm: "모란", updnLine: "1" },
+          { trainNo: "8102", statnNm: "암사", trainSttus: "2", statnTnm: "모란", updnLine: "1" },
+          { trainNo: "8103", statnNm: "장자호수공원", trainSttus: "0", statnTnm: "모란", updnLine: "1" },
+          { trainNo: "8104", statnNm: "몽촌토성", trainSttus: "1", statnTnm: "모란", updnLine: "1" },
+          { trainNo: "8105", statnNm: "잠실", trainSttus: "2", statnTnm: "모란", updnLine: "1" },
+          { trainNo: "8106", statnNm: "암사", trainSttus: "1", statnTnm: "별내", updnLine: "0" } ] });
+        startTrip();
+      }, 900); }, 1500);
+    } catch (e) {} }, 5000);
+  }
 })();
 
 /* 모바일: 현재 위치를 얻어 지도 중심 이동 (수도권 내일 때만) */
