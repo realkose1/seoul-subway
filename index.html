@@ -4314,18 +4314,6 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
   showUsage();
   syncProviderSeg();
   /* 자동 역 카드는 locateUser가 위치를 잡은 뒤 openNearestStationCard로 연다(위치 없으면 안 엶) */
-  /* TEMP: 추적 알약 검증용 — 제거 필요 */
-  if (new URLSearchParams(location.search).get("_pill")) {
-    setTimeout(() => { try {
-      openStationCard("천호");
-      setTimeout(() => { startRoute(); pickDest("대공원"); setTimeout(() => {
-        fetchPosition = async (line) => ({ realtimePositionList: line !== "8호선" ? [] : [
-          { trainNo: "8001", statnNm: "천호", trainSttus: "1", statnTnm: "모란", updnLine: "1" } ] });
-        startTrip();
-        setTimeout(() => { if (trip && trip.pick && trip.pick.rows[0]) tripBoard(trip.pick.rows[0].no, 0); }, 3000);
-      }, 900); }, 1500);
-    } catch (e) {} }, 5000);
-  }
 })();
 
 /* 모바일: 현재 위치를 얻어 지도 중심 이동 (수도권 내일 때만) */
