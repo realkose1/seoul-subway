@@ -4221,6 +4221,20 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
   showUsage();
   syncProviderSeg();
   /* 자동 역 카드는 locateUser가 위치를 잡은 뒤 openNearestStationCard로 연다(위치 없으면 안 엶) */
+  /* TEMP: 띠 선택기 검증용 — 제거 필요 */
+  if (new URLSearchParams(location.search).get("_strip")) {
+    setTimeout(() => { try {
+      openStationCard("천호");
+      setTimeout(() => { startRoute(); pickDest("대공원"); setTimeout(() => {
+        fetchPosition = async (line) => ({ realtimePositionList: line !== "8호선" ? [] : [
+          { trainNo: "8101", statnNm: "천호", trainSttus: "1", statnTnm: "모란", updnLine: "1" },
+          { trainNo: "8102", statnNm: "암사", trainSttus: "2", statnTnm: "모란", updnLine: "1" },
+          { trainNo: "8103", statnNm: "강동구청", trainSttus: "0", statnTnm: "모란", updnLine: "1" },
+          { trainNo: "8104", statnNm: "천호", trainSttus: "1", statnTnm: "별내", updnLine: "0" } ] });
+        startTrip();
+      }, 900); }, 1500);
+    } catch (e) {} }, 5000);
+  }
 })();
 
 /* 모바일: 현재 위치를 얻어 지도 중심 이동 (수도권 내일 때만) */
