@@ -4293,8 +4293,11 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
     e.stopPropagation();
     if (panel.classList.contains("open")) { closeSheet(); return; }
     if (NATIVE) {
+      /* 설정을 열 때 다른 네이티브 레이어가 떠 있으면 먼저 내림(중복 표시 방지).
+         단, 주행 안내 중에는 닫지 않는다 — scClose는 안내까지 종료시키고, 설정 시트가
+         스크림으로 카드를 덮으므로 그대로 둬도 겹쳐 보이지 않는다. */
       const cardEl = document.getElementById("stationCard");
-      if (cardEl && cardEl.classList.contains("open")) document.getElementById("scClose").click();   /* 설정을 열 때 다른 네이티브 레이어가 떠 있으면 먼저 내림(중복 표시 방지) */
+      if (!trip && cardEl && cardEl.classList.contains("open")) document.getElementById("scClose").click();
       closeTrainPanelIfOpen();
     }
     openSheet();
