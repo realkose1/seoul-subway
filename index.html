@@ -4184,6 +4184,17 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
   showUsage();
   syncProviderSeg();
   /* 자동 역 카드는 locateUser가 위치를 잡은 뒤 openNearestStationCard로 연다(위치 없으면 안 엶) */
+  /* TEMP: 백그라운드 추적 검증용(실제 열차) — 제거 필요 */
+  if (new URLSearchParams(location.search).get("_bg")) {
+    setTimeout(() => { try {
+      openStationCard("천호");
+      setTimeout(() => { startRoute(); pickDest("대공원"); setTimeout(() => {
+        startTrip();
+        const tryPick = (n) => { if (!trip) return; if (trip.pick && trip.pick.rows[0]) { tripBoard(trip.pick.rows[0].no, 0); return; } if (n > 0) setTimeout(() => tryPick(n - 1), 2000); };
+        setTimeout(() => tryPick(20), 4000);
+      }, 900); }, 1500);
+    } catch (e) {} }, 5000);
+  }
 })();
 
 /* 모바일: 현재 위치를 얻어 지도 중심 이동 (수도권 내일 때만) */
