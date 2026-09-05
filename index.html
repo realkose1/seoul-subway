@@ -299,7 +299,7 @@
   .sc-btn:hover { color: var(--text); }
   #scRefresh { display: inline-flex; align-items: center; }
   #scRefresh.spinning svg { animation: spin .7s linear infinite; }
-  .sc-body { overflow-y: auto; padding: 0 8px 10px; }
+  .sc-body { overflow-y: auto; padding: 0 8px 18px; }   /* 하단 여백 — 버튼이 카드 끝에 붙어 답답해 보이지 않도록 */
   .sc-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 6px; padding: 0 4px; }
   .sc-col { min-width: 0; }
   .sc-col + .sc-col { border-left: 1px solid rgba(255,255,255,.07); padding-left: 8px; }
@@ -328,7 +328,7 @@
   .sc-linetabs button .lt-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--lc, #8a8d93); flex: none; }
   .sc-linetabs button.on { color: var(--text); background: rgba(255,255,255,.07); border-color: var(--lc, rgba(255,255,255,.25)); }
   /* 경로 찾기 */
-  .route-go { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; margin-top: 4px; padding: 11px; border-radius: 12px; border: none; background: #fff; color: #111317; font-family: var(--font); font-size: 14px; font-weight: 700; cursor: pointer; }
+  .route-go { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; margin-top: 8px; padding: 11px; border-radius: 12px; border: none; background: #fff; color: #111317; font-family: var(--font); font-size: 14px; font-weight: 700; cursor: pointer; }
   .route-go:active { background: #e6e8ea; }
   .route-search { width: 100%; padding: 11px 13px; border-radius: 11px; border: 1px solid var(--border); background: rgba(255,255,255,.05); color: var(--text); font-family: var(--font); font-size: 14px; box-sizing: border-box; }
   .route-search::placeholder { color: var(--faint-text); }
@@ -376,7 +376,7 @@
   .trip-next { font-size: 13.5px; color: var(--text); padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,.06); margin-bottom: 10px; }
   .trip-next b { font-weight: 800; }
   .route-leg.on .rl-stn { color: var(--rl); }
-  .route-stop { width: 100%; margin-top: 4px; padding: 11px; border-radius: 12px; border: none; background: #fff; color: #111317; font-family: var(--font); font-size: 13.5px; font-weight: 700; cursor: pointer; }
+  .route-stop { width: 100%; margin-top: 8px; padding: 11px; border-radius: 12px; border: none; background: #fff; color: #111317; font-family: var(--font); font-size: 13.5px; font-weight: 700; cursor: pointer; }
   /* 탄 열차 추적 상태 / 승차 확인 */
   .trip-track { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); padding: 0 2px 6px; }
   /* 추적 상태 알약 — 카드 위에 분리해서 뜬다 */
