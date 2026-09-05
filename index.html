@@ -3279,7 +3279,7 @@ function pickListHtml(pick) {
   const lanes = {}; const rows = pick.rows.map(r => { const key = Math.round(r.pos * 4); const lane = lanes[key] || 0; lanes[key] = lane + 1; return { ...r, lane }; });
   const trains = rows.map(r => `<button class="ps-train" data-no="${r.no}" data-leg="${pick.legIdx}" style="left:${psX(r.pos)}px;--lane:${r.lane}" title="${r.status}">
       <span class="ps-row"><span class="ps-ico">🚆</span><span class="ps-dest">${r.dest}행${r.express ? " 급행" : ""}</span></span><small class="ps-st">${r.short || r.status}</small></button>`).join("");
-  const stations = sts.map((name, i) => `<div class="ps-stn${i === m.originIdx ? " here" : ""}${name ? "" : " none"}" style="left:${psX(i)}px"><i></i><b>${name || ""}</b>${i === m.originIdx ? `<small>${pick.transfer ? "환승역" : "출발"}</small>` : ""}</div>`).join("");
+  const stations = sts.map((name, i) => `<div class="ps-stn${i === m.originIdx ? " here" : ""}${name ? "" : " none"}" style="left:${psX(i)}px"><i></i><b>${name || ""}</b>${i === m.originIdx ? `<small>${pick.repick ? "현재" : pick.transfer ? "환승역" : "출발"}</small>` : ""}</div>`).join("");
   const empty = !pick.rows.length ? `<div class="ps-empty">${pick.loaded ? "이 방향 열차가 근처에 없어요 · 들어오면 표시됩니다" : "근처 열차 확인 중…"}</div>` : "";
   return `<div class="pick-head"><span>${title}</span><button class="pick-toggle" id="pickToggle">${pick.repick ? "취소" : "나중에"}</button></div>
     <div class="pick-scroll" id="pickScroll"><div class="pick-strip" style="width:${width}px;--rl:${m.color || "#888"}">
@@ -4283,21 +4283,6 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
   showUsage();
   syncProviderSeg();
   /* 자동 역 카드는 locateUser가 위치를 잡은 뒤 openNearestStationCard로 연다(위치 없으면 안 엶) */
-  /* TEMP: 열차 변경 검증용 — 제거 필요 */
-  if (new URLSearchParams(location.search).get("_repick")) {
-    setTimeout(() => { try {
-      openStationCard("천호");
-      setTimeout(() => { startRoute(); pickDest("대공원"); setTimeout(() => {
-        let phase = 0;
-        fetchPosition = async (line) => ({ realtimePositionList: line !== "8호선" ? [] : (phase === 0
-          ? [ { trainNo: "8001", statnNm: "천호", trainSttus: "1", statnTnm: "모란", updnLine: "1" } ]
-          : [ { trainNo: "8001", statnNm: "몽촌토성", trainSttus: "1", statnTnm: "모란", updnLine: "1" },
-              { trainNo: "8009", statnNm: "강동구청", trainSttus: "2", statnTnm: "모란", updnLine: "1" } ]) });
-        startTrip();
-        setTimeout(() => { if (trip && trip.pick && trip.pick.rows[0]) { tripBoard(trip.pick.rows[0].no, 0); phase = 1; setTimeout(pollTrackedTrain, 500); } }, 3000);
-      }, 900); }, 1500);
-    } catch (e) {} }, 5000);
-  }
 })();
 
 /* 모바일: 현재 위치를 얻어 지도 중심 이동 (수도권 내일 때만) */
