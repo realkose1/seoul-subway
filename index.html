@@ -378,7 +378,7 @@
   .route-leg.on .rl-stn { color: var(--rl); }
   .route-stop { width: 100%; margin-top: 4px; padding: 11px; border-radius: 12px; border: none; background: #fff; color: #111317; font-family: var(--font); font-size: 13.5px; font-weight: 700; cursor: pointer; }
   /* 탄 열차 추적 상태 / 승차 확인 */
-  .trip-track { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); padding: 2px 2px 4px; }
+  .trip-track { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); padding: 0 2px 6px; }
   .trip-track .tt-dot { width: 6px; height: 6px; border-radius: 50%; background: #34d399; box-shadow: 0 0 0 3px rgba(52,211,153,.18); }
   .trip-track.lost, .trip-track.wait { color: var(--faint-text); }
   .trip-track .tt-change { margin-left: auto; border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.06); color: var(--muted); border-radius: 999px; padding: 3px 9px; font-family: var(--font); font-size: 11px; font-weight: 600; cursor: pointer; }
@@ -3374,6 +3374,7 @@ function renderRoute() {
         <span class="tl-label">${p.done ? "목적지 도착" : "남음"}</span>
         <span class="tl-arr">${p.arriveAt} 도착</span>
       </div>
+      ${p.tracking ? `<div class="trip-track"><span class="tt-dot"></span>${p.trainDest ? p.trainDest + "행 " : ""}열차 실시간 추적 중${p.trackStale ? " · 위치 갱신 대기" : ""}${!p.done ? `<button class="tt-change" id="tripRepick">${p.pick && p.pick.repick ? "취소" : "변경"}</button>` : ""}</div>` : ""}
       <div class="trip-next${p.alight ? " alight" : ""}" style="--rl:${p.color}">
         <span class="rl-badge">${p.line}</span>
         ${p.done ? `${trip.to} 도착했습니다`
@@ -3381,7 +3382,6 @@ function renderRoute() {
           : p.alight ? `다음 <b>${p.nextStation}</b>에서 내리세요${p.isLast ? " · 목적지" : " · 환승"}`
           : `다음 <b>${p.nextStation}</b>${p.isLast ? "" : ` · ${p.legTo} 환승`}`}
       </div>
-      ${p.tracking ? `<div class="trip-track"><span class="tt-dot"></span>${p.trainDest ? p.trainDest + "행 " : ""}열차 실시간 추적 중${p.trackStale ? " · 위치 갱신 대기" : ""}${!p.done ? `<button class="tt-change" id="tripRepick">${p.pick && p.pick.repick ? "취소" : "변경"}</button>` : ""}</div>` : ""}
       ${p.pick && !p.done ? pickListHtml(p.pick) : ""}
       ${!p.tracking && !p.pick && p.trackLost ? `<div class="trip-track lost">열차 신호가 끊겨 시간 기준으로 안내 중</div>` : ""}
       <div class="route-legs">${legs}</div>
@@ -4283,6 +4283,18 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
   showUsage();
   syncProviderSeg();
   /* 자동 역 카드는 locateUser가 위치를 잡은 뒤 openNearestStationCard로 연다(위치 없으면 안 엶) */
+  /* TEMP: 순서 검증용 — 제거 필요 */
+  if (new URLSearchParams(location.search).get("_ord")) {
+    setTimeout(() => { try {
+      openStationCard("천호");
+      setTimeout(() => { startRoute(); pickDest("대공원"); setTimeout(() => {
+        fetchPosition = async (line) => ({ realtimePositionList: line !== "8호선" ? [] : [
+          { trainNo: "8001", statnNm: "천호", trainSttus: "1", statnTnm: "모란", updnLine: "1" } ] });
+        startTrip();
+        setTimeout(() => { if (trip && trip.pick && trip.pick.rows[0]) tripBoard(trip.pick.rows[0].no, 0); }, 3000);
+      }, 900); }, 1500);
+    } catch (e) {} }, 5000);
+  }
 })();
 
 /* 모바일: 현재 위치를 얻어 지도 중심 이동 (수도권 내일 때만) */
