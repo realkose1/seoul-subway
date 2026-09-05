@@ -379,6 +379,17 @@
   .route-stop { width: 100%; margin-top: 4px; padding: 11px; border-radius: 12px; border: none; background: #fff; color: #111317; font-family: var(--font); font-size: 13.5px; font-weight: 700; cursor: pointer; }
   /* 탄 열차 추적 상태 / 승차 확인 */
   .trip-track { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); padding: 0 2px 6px; }
+  /* 추적 상태 알약 — 카드 위에 분리해서 뜬다 */
+  .trip-pill {
+    position: absolute; z-index: 1101; left: 50%; transform: translateX(-50%); bottom: 300px;
+    display: flex; align-items: center; gap: 7px;
+    max-width: min(420px, calc(100vw - 28px));
+    padding: 8px 10px 8px 12px; border-radius: 999px;
+    background: rgba(14,16,19,.92); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,.14); box-shadow: 0 6px 18px rgba(0,0,0,.4);
+    font-size: 12px; font-weight: 600; color: var(--text); white-space: nowrap;
+  }
+  .trip-pill[hidden] { display: none; }
   .trip-track .tt-dot { width: 6px; height: 6px; border-radius: 50%; background: #34d399; box-shadow: 0 0 0 3px rgba(52,211,153,.18); }
   .trip-track.lost, .trip-track.wait { color: var(--faint-text); }
   .trip-track .tt-change { margin-left: auto; border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.06); color: var(--muted); border-radius: 999px; padding: 3px 9px; font-family: var(--font); font-size: 11px; font-weight: 600; cursor: pointer; }
@@ -672,6 +683,8 @@
     <div class="empty">데이터를 불러오는 중...</div>
   </div>
 </div>
+
+<div class="trip-pill" id="tripPill" hidden><span class="tt-dot"></span><span id="tripPillText"></span><button class="tt-change" id="tripRepick">변경</button></div>
 
 <div class="station-card" id="stationCard">
   <div class="sc-head">
@@ -3264,6 +3277,21 @@ function setRouteTab(tab) {
   renderRoute();
   if (NATIVE) postCard();
 }
+/* 주행 중 '추적 상태' 알약 — 카드와 분리해 카드 바로 위에 띄운다(웹). 네이티브는 SwiftUI로 같은 위치에 표시 */
+function updateTripPill(p) {
+  const el = document.getElementById("tripPill");
+  if (!el) return;
+  if (NATIVE || !p || !p.tracking || p.done) { el.hidden = true; return; }
+  document.getElementById("tripPillText").textContent =
+    `${p.trainDest ? p.trainDest + "행 " : ""}열차 실시간 추적 중${p.trackStale ? " · 위치 갱신 대기" : ""}`;
+  const btn = el.querySelector("#tripRepick");
+  btn.textContent = p.pick && p.pick.repick ? "취소" : "변경";
+  el.hidden = false;
+  /* 카드 높이가 매번 달라지므로 렌더 후 위치를 맞춘다 */
+  const card = document.getElementById("stationCard");
+  if (card && card.classList.contains("open")) el.style.bottom = (card.getBoundingClientRect().height + 26) + "px";
+}
+function hideTripPill() { const el = document.getElementById("tripPill"); if (el) el.hidden = true; }
 /* 탈 열차 선택 — 출발역 앞뒤 3역 노선 띠(좌우 스크롤) 위에 열차를 위치대로 그려 눌러 고르게 */
 const PS_STEP = 108, PS_PAD = 56;
 function psX(pos) { return PS_PAD + pos * PS_STEP; }
@@ -3374,7 +3402,6 @@ function renderRoute() {
         <span class="tl-label">${p.done ? "목적지 도착" : "남음"}</span>
         <span class="tl-arr">${p.arriveAt} 도착</span>
       </div>
-      ${p.tracking ? `<div class="trip-track"><span class="tt-dot"></span>${p.trainDest ? p.trainDest + "행 " : ""}열차 실시간 추적 중${p.trackStale ? " · 위치 갱신 대기" : ""}${!p.done ? `<button class="tt-change" id="tripRepick">${p.pick && p.pick.repick ? "취소" : "변경"}</button>` : ""}</div>` : ""}
       <div class="trip-next${p.alight ? " alight" : ""}" style="--rl:${p.color}">
         <span class="rl-badge">${p.line}</span>
         ${p.done ? `${trip.to} 도착했습니다`
@@ -3389,8 +3416,7 @@ function renderRoute() {
     document.getElementById("tripStop").addEventListener("click", () => { haptic(); closeCardReset(); });
     body.querySelectorAll(".ps-train").forEach(el => el.addEventListener("click", () => { haptic(); tripBoard(el.dataset.no, Number(el.dataset.leg)); }));
     if (p.pick && !p.pick.dismissed) pickScrollRestore(p.pick);
-    const rp = document.getElementById("tripRepick");
-    if (rp) rp.addEventListener("click", () => { if (trip && trip.pick && trip.pick.repick) tripPickCancel(); else tripRepick(); });
+    updateTripPill(p);
     const ps = document.getElementById("pickToggle");
     if (ps) ps.addEventListener("click", () => { haptic(); if (trip && trip.pick && trip.pick.repick) tripPickCancel(); else if (trip && trip.pick) { trip.pick.dismissed = !trip.pick.dismissed; renderRoute(); if (NATIVE) postCard(); } });
     return;
@@ -3482,6 +3508,7 @@ function endTrip() {
   routeMode = routeResult ? "result" : null;
   clearInterval(tripTimer); tripTimer = null;
   stopTrackPoll();
+  hideTripPill();
   stopTripFollow();
   if (adapter.clearLine) { adapter.clearLine(); drawLine(state.line); }   /* 경로 강조 해제 */
   renderTrains();               /* 숨겼던 열차 복구 */
@@ -3884,6 +3911,7 @@ async function openStationCard(name, opts) {
 /* 카드 닫기 + 경로/주행 상태 완전 초기화 — X 버튼과 '안내 종료'가 같은 결과가 되도록 공유 */
 function closeCardReset() {
   document.getElementById("stationCard").classList.remove("open");
+  hideTripPill();
   scStation = null;
   scMode = "arrival";
   /* 주행 중이었다면 안내도 함께 종료 — 카드만 닫고 타이머·라이브 액티비티가 남지 않도록 */
@@ -3900,6 +3928,9 @@ function closeCardReset() {
   favAutoSuppressed = true;   /* 사용자가 닫았으면 위치가 뒤늦게 잡혀도 다시 열지 않음 */
   if (NATIVE) setTimeout(postCard, 0);
 }
+document.getElementById("tripRepick").addEventListener("click", () => {
+  if (trip && trip.pick && trip.pick.repick) tripPickCancel(); else tripRepick();
+});
 document.getElementById("scClose").addEventListener("click", () => {
   /* 주행 중엔 실수로 안내가 끊기지 않도록 확인 (네이티브는 SwiftUI 알럿으로 별도 처리) */
   if (trip && !NATIVE && !confirm("안내를 종료할까요?\n진행 중인 경로 안내가 종료됩니다.")) return;
@@ -4283,6 +4314,18 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
   showUsage();
   syncProviderSeg();
   /* 자동 역 카드는 locateUser가 위치를 잡은 뒤 openNearestStationCard로 연다(위치 없으면 안 엶) */
+  /* TEMP: 추적 알약 검증용 — 제거 필요 */
+  if (new URLSearchParams(location.search).get("_pill")) {
+    setTimeout(() => { try {
+      openStationCard("천호");
+      setTimeout(() => { startRoute(); pickDest("대공원"); setTimeout(() => {
+        fetchPosition = async (line) => ({ realtimePositionList: line !== "8호선" ? [] : [
+          { trainNo: "8001", statnNm: "천호", trainSttus: "1", statnTnm: "모란", updnLine: "1" } ] });
+        startTrip();
+        setTimeout(() => { if (trip && trip.pick && trip.pick.rows[0]) tripBoard(trip.pick.rows[0].no, 0); }, 3000);
+      }, 900); }, 1500);
+    } catch (e) {} }, 5000);
+  }
 })();
 
 /* 모바일: 현재 위치를 얻어 지도 중심 이동 (수도권 내일 때만) */
