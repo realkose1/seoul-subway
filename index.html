@@ -3551,11 +3551,17 @@ async function findBoardCandidates(legIdx) {
     if (!cur || !term || !t.trainNo) continue;
     const st = String(t.trainSttus);
     let score = null, status = "", away = 0;
+    const k = seg.stations.indexOf(cur), last = seg.stations.length - 1;
     if (cur === origin) { score = st === "1" ? 0 : 1; status = st === "1" ? "승강장 도착" : st === "0" ? "진입 중" : "막 출발"; }
-    else if (cur === next) {
-      /* 출발역을 막 지나 다음 역으로 가는 중 — 진행 방향에 출발역이 없어야(되돌아오는 열차 제외) */
-      const back = stationsToX(seg.line, t, origin, cur, term);
-      if (back < 0 || back > 2) { score = 2; status = "방금 출발 · 다음 역 진입"; }
+    else if (k >= 1 && k <= last) {
+      /* 출발역을 이미 지나 이번 구간 안에 있는 열차 — 타고 나서 고르는 경우.
+         진행 방향으로 구간 끝까지 남은 역 수가 실제 남은 역 수와 같아야(되돌아오는 열차 제외) */
+      const aheadToEnd = stationsToX(seg.line, t, seg.to, cur, term);
+      if (aheadToEnd === last - k) {
+        score = 2 + k * 0.01;   /* 출발역 근처일수록 위에 */
+        const where = st === "0" ? "진입 중" : st === "1" ? "정차" : "출발";
+        status = k === 1 && st !== "1" ? `방금 출발 · ${cur} ${where}` : `출발함 · ${cur} ${where}`;
+      }
     } else {
       away = stationsToX(seg.line, t, origin, cur, term);
       if (away >= 1 && away <= 4) {
