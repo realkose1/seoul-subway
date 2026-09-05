@@ -345,6 +345,7 @@
   .route-sum .rt-arr { font-size: 12.5px; color: #FBBF24; font-weight: 600; margin-left: auto; }
   .route-legs { position: relative; }
   .route-leg { display: flex; gap: 11px; padding: 7px 2px; }
+  .route-leg.trip-leg { padding: 11px 2px; }   /* 주행 중 구간 목록은 더 여유 있게 */
   .route-leg .rl-rail { display: flex; flex-direction: column; align-items: center; padding-top: 3px; }
   .route-leg .rl-dot { width: 12px; height: 12px; border-radius: 50%; border: 3px solid var(--rl, #888); background: var(--bg, #16181c); box-sizing: border-box; flex: none; }
   .route-leg .rl-line { flex: 1; width: 3px; background: var(--rl, #888); margin: 1px 0; min-height: 14px; border-radius: 2px; }
@@ -3412,7 +3413,7 @@ function renderRoute() {
     titleEl.textContent = `${trip.from} → ${trip.to}`;
     const legs = trip.result.segments.map((s, i) => {
       const cur = i === p.legIdx;
-      return `<div class="route-leg${cur ? " on" : ""}" style="--rl:${s.color}">
+      return `<div class="route-leg trip-leg${cur ? " on" : ""}" style="--rl:${s.color}">
         <div class="rl-rail"><div class="rl-dot"></div>${i < trip.result.segments.length - 1 ? '<div class="rl-line"></div>' : ""}</div>
         <div class="rl-body">
           <div class="rl-stn">${s.from} → ${s.to}</div>
