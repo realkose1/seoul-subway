@@ -3315,7 +3315,7 @@ function renderRoute() {
         <span class="rl-badge">${p.line}</span>
         ${p.done ? `${trip.to} 도착했습니다`
           : p.waiting ? `열차 대기 중 · <b>${p.waitMin}분</b> 후 출발`
-          : p.alight ? `다음 <b>${p.nextStation}</b>에서 내리세요${p.isLast ? " · 목적지" : ` · ${p.legTo} 환승`}`
+          : p.alight ? `다음 <b>${p.nextStation}</b>에서 내리세요${p.isLast ? " · 목적지" : " · 환승"}`
           : `다음 <b>${p.nextStation}</b>${p.isLast ? "" : ` · ${p.legTo} 환승`}`}
       </div>
       ${p.tracking ? `<div class="trip-track"><span class="tt-dot"></span>${p.trainDest ? p.trainDest + "행 " : ""}열차 실시간 추적 중${p.trackStale ? " · 위치 갱신 대기" : ""}</div>` : ""}
@@ -4148,26 +4148,6 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
   showUsage();
   syncProviderSeg();
   /* 자동 역 카드는 locateUser가 위치를 잡은 뒤 openNearestStationCard로 연다(위치 없으면 안 엶) */
-  /* TEMP: 열차 선택/하차 알림 검증용 — 제거 필요 */
-  if (new URLSearchParams(location.search).get("_pick")) {
-    setTimeout(() => { try {
-      openStationCard("천호");
-      setTimeout(() => { startRoute(); pickDest("대공원"); setTimeout(() => {
-        const t0 = Date.now();
-        fetchPosition = async (line) => {
-          const el = Date.now() - t0;
-          if (line !== "8호선") return { realtimePositionList: [] };
-          if (el < 14000) return { realtimePositionList: [
-            { trainNo: "8101", statnNm: "천호", trainSttus: "1", statnTnm: "모란", updnLine: "1" },
-            { trainNo: "8103", statnNm: "암사", trainSttus: "0", statnTnm: "모란", updnLine: "1" },
-            { trainNo: "8105", statnNm: "천호", trainSttus: "1", statnTnm: "별내", updnLine: "0" } ] };
-          return { realtimePositionList: [ { trainNo: "8101", statnNm: "몽촌토성", trainSttus: "2", statnTnm: "모란", updnLine: "1" } ] };
-        };
-        startTrip();
-        setTimeout(() => { if (trip && trip.pick && trip.pick.rows[0]) tripBoard(trip.pick.rows[0].no, 0); }, 12000);
-      }, 900); }, 1500);
-    } catch (e) {} }, 5000);
-  }
 })();
 
 /* 모바일: 현재 위치를 얻어 지도 중심 이동 (수도권 내일 때만) */
