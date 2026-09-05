@@ -387,6 +387,22 @@
   .pick-head.collapsed { color: var(--muted); font-weight: 600; padding-bottom: 8px; }
   .pick-toggle { border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.06); color: var(--muted); border-radius: 999px; padding: 4px 10px; font-family: var(--font); font-size: 11.5px; font-weight: 600; cursor: pointer; }
   .pick-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+  /* 노선 띠 선택기 */
+  .pick-strip { position: relative; height: 128px; margin: 2px 0 2px; }
+  .pick-strip .ps-track { position: absolute; left: 6%; right: 6%; top: 74px; height: 5px; border-radius: 3px; background: var(--rl); opacity: .9; }
+  .pick-strip .ps-arrow { position: absolute; right: -10px; top: -11px; font-size: 22px; line-height: 1; color: var(--rl); font-weight: 800; }
+  .pick-strip .ps-stn { position: absolute; top: 68px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .pick-strip .ps-stn i { width: 13px; height: 13px; border-radius: 50%; background: var(--bg, #16181c); border: 3px solid var(--rl); box-sizing: border-box; }
+  .pick-strip .ps-stn.here i { background: var(--rl); width: 15px; height: 15px; border-color: #fff; }
+  .pick-strip .ps-stn b { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+  .pick-strip .ps-stn.here b { color: var(--text); font-weight: 800; font-size: 13px; }
+  .pick-strip .ps-stn small { font-size: 10px; color: var(--faint-text); margin-top: -3px; }
+  .pick-strip .ps-trains { position: absolute; inset: 0 0 auto 0; height: 70px; }
+  .pick-strip .ps-train { position: absolute; bottom: calc(6px + var(--lane) * 30px); transform: translateX(-50%); display: flex; align-items: center; gap: 4px; padding: 5px 9px 5px 6px; border-radius: 999px; border: 1.5px solid var(--rl); background: #1c1e24; color: var(--text); font-family: var(--font); font-size: 12px; font-weight: 800; white-space: nowrap; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,.35); }
+  .pick-strip .ps-train:active { background: var(--rl); color: #fff; }
+  .pick-strip .ps-train .ps-ico { font-size: 13px; }
+  .pick-strip .ps-empty { position: absolute; left: 0; right: 0; top: 22px; text-align: center; font-size: 12px; color: var(--muted); }
+  .ps-hint { font-size: 11.5px; color: var(--faint-text); text-align: center; margin: 0 0 8px; min-height: 14px; }
   .pick-row { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 10px 11px; border-radius: 12px; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.06); color: var(--text); font-family: var(--font); font-size: 13.5px; cursor: pointer; }
   .pick-row:active { background: rgba(255,255,255,.14); }
   .pick-row b { font-weight: 800; }
@@ -2499,7 +2515,8 @@ function postCard() {
                        tracking: !!p.tracking, trainDest: p.trainDest || "", trackStale: !!p.trackStale, trackLost: !!p.trackLost,
                        alight: !!p.alight,
                        pick: p.pick && !p.done ? { legIdx: p.pick.legIdx, transfer: !!p.pick.transfer, dismissed: !!p.pick.dismissed, loaded: !!p.pick.loaded,
-                         rows: p.pick.rows.map(r => ({ no: r.no, dest: r.dest, line: r.line, color: r.color, status: r.status, express: !!r.express })) } : null } : null;
+                         strip: p.pick.strip ? { prev: p.pick.strip.prev || "", origin: p.pick.strip.origin || "", next: p.pick.strip.next || "", line: p.pick.strip.line, color: p.pick.strip.color } : null,
+                         rows: p.pick.rows.map(r => ({ no: r.no, dest: r.dest, line: r.line, color: r.color, status: r.status, express: !!r.express, pos: r.pos })) } : null } : null;
         })(),
       });
       return;
@@ -3237,15 +3254,27 @@ function setRouteTab(tab) {
   renderRoute();
   if (NATIVE) postCard();
 }
-/* 탈 열차 선택 목록(주행 카드) */
+/* 탈 열차 선택 — 이전역·출발역·다음역 노선 띠 위에 열차를 그려 눌러 고르게 */
 function pickListHtml(pick) {
   const title = pick.transfer ? "환승 열차를 선택하세요" : "탈 열차를 선택하세요";
   if (pick.dismissed) return `<div class="pick-head collapsed"><span>${title}</span><button class="pick-toggle" id="pickToggle">열차 선택</button></div>`;
-  const rows = pick.rows.length
-    ? pick.rows.map(r => `<button class="pick-row" data-no="${r.no}" data-leg="${pick.legIdx}">
-        <span class="rl-badge" style="--rl:${r.color}">${r.line}</span><b>${r.dest}행</b>${r.express ? '<span class="pick-exp">급행</span>' : ""}<span class="pick-st">${r.status}</span></button>`).join("")
-    : `<div class="sc-empty small">${pick.loaded ? "근처에 이 방향 열차가 없어요 · 들어오면 표시됩니다" : "근처 열차 확인 중…"}</div>`;
-  return `<div class="pick-head"><span>${title}</span><button class="pick-toggle" id="pickToggle">나중에</button></div><div class="pick-list">${rows}</div>`;
+  const m = pick.strip || {};
+  const xOf = pos => Math.max(5, Math.min(95, 15 + pos * 35));   /* 역: 15% / 50% / 85% */
+  /* 같은 자리에 겹치는 열차는 위로 쌓는다 */
+  const lanes = {}; const rows = pick.rows.map(r => { const key = Math.round(r.pos * 4); const lane = lanes[key] || 0; lanes[key] = lane + 1; return { ...r, lane }; });
+  const trains = rows.map(r => `<button class="ps-train" data-no="${r.no}" data-leg="${pick.legIdx}" style="left:${xOf(r.pos)}%;--lane:${r.lane}" title="${r.status}">
+      <span class="ps-ico">🚆</span><span class="ps-dest">${r.dest}행${r.express ? " 급행" : ""}</span></button>`).join("");
+  const empty = !pick.rows.length ? `<div class="ps-empty">${pick.loaded ? "이 구간에 이 방향 열차가 없어요 · 들어오면 표시됩니다" : "근처 열차 확인 중…"}</div>` : "";
+  return `<div class="pick-head"><span>${title}</span><button class="pick-toggle" id="pickToggle">나중에</button></div>
+    <div class="pick-strip" style="--rl:${m.color || "#888"}">
+      <div class="ps-trains">${trains}</div>
+      <div class="ps-track"><span class="ps-arrow">›</span></div>
+      <div class="ps-stn" style="left:15%"><i></i><b>${m.prev || "—"}</b></div>
+      <div class="ps-stn here" style="left:50%"><i></i><b>${m.origin || ""}</b><small>${pick.transfer ? "환승역" : "출발"}</small></div>
+      <div class="ps-stn" style="left:85%"><i></i><b>${m.next || ""}</b></div>
+      ${empty}
+    </div>
+    <div class="ps-hint">${pick.rows.length ? "열차를 눌러 선택하세요" : ""}</div>`;
 }
 function renderRoute() {
   /* 경로 화면은 그릴 때마다 네이티브로도 직접 push — DOM MutationObserver는 rAF 배칭·스로틀에
@@ -3336,7 +3365,7 @@ function renderRoute() {
       <div class="route-legs">${legs}</div>
       <button class="route-stop" id="tripStop">안내 종료</button>`;
     document.getElementById("tripStop").addEventListener("click", () => { haptic(); closeCardReset(); });
-    body.querySelectorAll(".pick-row").forEach(el => el.addEventListener("click", () => { haptic(); tripBoard(el.dataset.no, Number(el.dataset.leg)); }));
+    body.querySelectorAll(".ps-train").forEach(el => el.addEventListener("click", () => { haptic(); tripBoard(el.dataset.no, Number(el.dataset.leg)); }));
     const ps = document.getElementById("pickToggle");
     if (ps) ps.addEventListener("click", () => { haptic(); if (trip && trip.pick) { trip.pick.dismissed = !trip.pick.dismissed; renderRoute(); if (NATIVE) postCard(); } });
     return;
@@ -3534,49 +3563,51 @@ function tripProgress() {
     pick: trip.pick && !trip.track ? trip.pick : null,
   };
 }
-/* 승차 후보 열차 목록: 구간 출발역의 승강장/진입/막 출발 열차, 막 지나간 열차, 1~4역 전에서 오는 열차 중
-   진행 방향이 구간 방향과 맞는 것. score가 낮을수록 '지금 탈' 열차에 가깝다(목록 정렬 기준). */
+/* 출발역 바로 이전 역(진행 방향 반대쪽 이웃). 분기가 있으면 첫 이웃 */
+function prevStationOf(line, origin, next) {
+  const g = graphOf(line) || {};
+  const others = [...(g[origin] || [])].filter(n => n !== next);   /* 이웃은 Set */
+  return others[0] || null;
+}
+/* 선택 띠 메타: 이전역 — 출발역 — 다음역 */
+function pickStripMeta(legIdx) {
+  const seg = trip && trip.result.segments[legIdx];
+  if (!seg) return null;
+  const origin = resolve(seg.from), next = resolve(seg.stations[1] || seg.to);
+  return { prev: prevStationOf(seg.line, origin, next), origin, next, line: seg.line, color: seg.color };
+}
+/* 승차 후보 열차: 출발역·바로 이전 역·바로 다음 역에 있는, 진행 방향이 맞는 열차만(너무 많이 보이지 않게).
+   pos = 띠 위의 위치(0 이전역, 1 출발역, 2 다음역; 진입 −0.35 / 정차 0 / 출발 +0.35). score 낮을수록 '지금 탈' 열차. */
 async function findBoardCandidates(legIdx) {
   if (!trip) return [];
   const seg = trip.result.segments[legIdx];
   if (!seg || !LINES[seg.line]) return [];
-  const origin = resolve(seg.from), next = resolve(seg.stations[1] || seg.to);
-  if (!origin || !next) return [];
+  const meta = pickStripMeta(legIdx);
+  if (!meta || !meta.origin || !meta.next) return [];
+  const { prev, origin, next } = meta;
   let list = [];
   try { const d = await fetchPosition(seg.line, true); list = dropStaleTrains((d && d.realtimePositionList) || []); }
   catch (e) { return []; }
   const out = [];
+  const off = st => st === "0" ? -0.35 : st === "2" ? 0.35 : 0;
   for (const t of list) {
     const cur = resolve(t.statnNm), term = resolve(t.statnTnm);
     if (!cur || !term || !t.trainNo) continue;
     const st = String(t.trainSttus);
-    let score = null, status = "", away = 0;
-    const k = seg.stations.indexOf(cur), last = seg.stations.length - 1;
-    if (cur === origin) { score = st === "1" ? 0 : 1; status = st === "1" ? "승강장 도착" : st === "0" ? "진입 중" : "막 출발"; }
-    else if (k >= 1 && k <= last) {
-      /* 출발역을 이미 지나 이번 구간 안에 있는 열차 — 타고 나서 고르는 경우.
-         진행 방향으로 구간 끝까지 남은 역 수가 실제 남은 역 수와 같아야(되돌아오는 열차 제외) */
-      const aheadToEnd = stationsToX(seg.line, t, seg.to, cur, term);
-      if (aheadToEnd === last - k) {
-        score = 2 + k * 0.01;   /* 출발역 근처일수록 위에 */
-        const where = st === "0" ? "진입 중" : st === "1" ? "정차" : "출발";
-        status = k === 1 && st !== "1" ? `방금 출발 · ${cur} ${where}` : `출발함 · ${cur} ${where}`;
-      }
-    } else {
-      away = stationsToX(seg.line, t, origin, cur, term);
-      if (away >= 1 && away <= 4) {
-        score = 2 + away;
-        const eta = Math.max(1, Math.round((away * SEC_PER_STATION - (st === "0" ? 90 : st === "2" ? 45 : 0)) / 60));
-        status = `${away}역 전 · 약 ${eta}분`;
-      }
+    let score = null, status = "", slot = null;
+    if (cur === origin) {
+      const ahead = stationsToX(seg.line, t, next, cur, term);           /* 진행 방향에 다음 역이 있어야 */
+      if (ahead >= 0 && ahead <= 3) { slot = 1; score = st === "1" ? 0 : 1; status = st === "1" ? "승강장 도착" : st === "0" ? "진입 중" : "막 출발"; }
+    } else if (cur === next) {
+      const back = stationsToX(seg.line, t, origin, cur, term);          /* 되돌아오는 열차 제외 */
+      if (back < 0 || back > 2) { slot = 2; score = 2; status = `방금 출발 · ${next} ${st === "0" ? "진입 중" : st === "1" ? "정차" : "출발"}`; }
+    } else if (prev && cur === prev) {
+      const ahead = stationsToX(seg.line, t, origin, cur, term);         /* 출발역 쪽으로 오는 열차만 */
+      if (ahead === 1) { slot = 0; score = 3; status = `${prev}에서 오는 중 · 약 ${Math.max(1, Math.round((SEC_PER_STATION - (st === "0" ? 90 : st === "2" ? 45 : 0)) / 60))}분`; }
     }
     if (score == null) continue;
-    /* 방향 검증: 이 열차가 가는 쪽에 구간의 다음 역이 있어야 한다(출발역에 선 반대 방향 열차 제외) */
-    if (cur === origin || score >= 3) {
-      const ahead = stationsToX(seg.line, t, next, cur, term);
-      if (ahead < 0 || ahead > 5) continue;
-    }
-    out.push({ score, no: String(t.trainNo), dest: t.statnTnm, cur, sttus: st, status, line: seg.line, color: seg.color, express: isExpress(t) });
+    out.push({ score, no: String(t.trainNo), dest: t.statnTnm, cur, sttus: st, status, line: seg.line, color: seg.color,
+               express: isExpress(t), pos: slot + off(st) });
   }
   out.sort((a, b) => a.score - b.score);
   return out;
@@ -3584,7 +3615,7 @@ async function findBoardCandidates(legIdx) {
 /* 탈 열차 선택 시작 — 카드에 근처 열차 목록을 띄우고 8초마다 갱신. 고르면 tripBoard로 추적 시작 */
 function startPick(legIdx, isTransfer) {
   if (!trip) return;
-  trip.pick = { legIdx, transfer: !!isTransfer, rows: [], loaded: false, dismissed: false };
+  trip.pick = { legIdx, transfer: !!isTransfer, rows: [], loaded: false, dismissed: false, strip: pickStripMeta(legIdx) };
   renderRoute(); if (NATIVE) postCard();
   refreshPickList();
 }
