@@ -1993,12 +1993,14 @@ const REDUCED_MOTION = window.matchMedia && window.matchMedia("(prefers-reduced-
 let mapInteracting = false, _interactTimer = null;
 function markInteracting() { mapInteracting = true; clearTimeout(_interactTimer); _interactTimer = setTimeout(() => { mapInteracting = false; }, 200); pauseTripFollow(); }
 function beginInteract() { mapInteracting = true; clearTimeout(_interactTimer); pauseTripFollow(); }
-/* 주행 중 사용자가 지도를 직접 조작하면 20초간 자동 따라가기를 멈춘다(조작 방해 방지).
+/* 주행 중 사용자가 지도를 직접 조작하면 잠시 자동 따라가기를 멈춘다(조작 방해 방지).
+   손을 뗀 뒤 4초간 아무 조작이 없으면 다시 열차를 따라간다.
    단, 따라가기가 스스로 실행한 setView(프로그램 이동)까지 조작으로 오인하면 영구 정지되므로 제외. */
+const TRIP_FOLLOW_RESUME_MS = 4000;
 function pauseTripFollow() {
   if (typeof trip === "undefined" || !trip) return;
   if (Date.now() < tripSelfMove) return;
-  tripFollowPaused = Date.now() + 20000;
+  tripFollowPaused = Date.now() + TRIP_FOLLOW_RESUME_MS;
 }
 function endInteract() { clearTimeout(_interactTimer); _interactTimer = setTimeout(() => { mapInteracting = false; }, 200); }
 /* 줌 변화 감시(이벤트 누락 대비): 핀치 등 어떤 경로로 줌이 바뀌어도 역 dot/이름 표시 상태를 동기화.
@@ -2073,14 +2075,15 @@ setInterval(() => {
     }
     if (moved && inView(st.cur)) adapter.moveTrain(st.no, offsetLeft(st.cur, st.heading, trackOffM));
   }
-  /* 추적 모드: 따라가는 열차로 시점 이동 */
-  if (state.followNo) {
+  /* 추적 모드: 따라가는 열차로 시점 이동(주행 중 사용자가 지도를 만지면 잠시 멈춤) */
+  if (state.followNo && Date.now() >= tripFollowPaused) {
     const st = animState.get(state.followNo);
-    if (!st) stopFollow();
+    if (!st) { if (!(trip && trip.track && trip.track.no === state.followNo)) stopFollow(); }
     else if (!window.__lastFollowPan || performance.now() - window.__lastFollowPan > 400) {
       window.__lastFollowPan = performance.now();
       const v = adapter.getView();
-      adapter.setView(offsetLeft(st.cur, st.heading, trackOffM), v.zoom);
+      tripSelfMove = Date.now() + 150;   /* 우리가 옮긴 것 — 조작으로 오인해 멈추지 않도록(짧게) */
+      try { adapter.setView(offsetLeft(st.cur, st.heading, trackOffM), v.zoom); } catch (e) {}
     }
   }
 }, 120);
@@ -3505,7 +3508,8 @@ function startTrip() {
   syncChips();                  /* 상단 칩도 경로 노선만 활성으로 */
   restartTimer();               /* 주행 중 갱신 주기(8초, 캐시 우회)로 전환 */
   refresh(true);                /* 즉시 최신 데이터 한 번 */
-  startTripFollow();            /* 내 위치를 계속 따라가기 */
+  startTripFollow();            /* (아직 안 탔을 때) 내 위치를 계속 따라가기 */
+  startTripGlide();             /* 탄 열차를 계속 따라가기 */
   if (!tripTimer) tripTimer = setInterval(tripTick, 1000);
   startTrackPoll();             /* 탄 열차 위치 폴링(8초) */
   startPick(0, false);          /* 근처 열차 목록에서 탈 열차 선택 */
@@ -3523,10 +3527,8 @@ function startTripFollow() {
   stopTripFollow();
   const tick = () => {
     if (!trip) { stopTripFollow(); return; }
-    /* 열차를 추적 중이면 지도는 '탄 열차'를 따라간다(지하에선 GPS보다 정확) */
-    const tp = trackedTrainLatLng();
-    if (tp) {
-      followTrackedTrain();
+    /* 열차를 추적 중이면 지도 중심은 글라이드(startTripGlide)가 담당 — 여기선 내 위치 점만 갱신 */
+    if (trip.track) {
       /* 내 위치 점은 그대로 갱신하되 지도 중심은 열차 기준 */
       if ("geolocation" in navigator) navigator.geolocation.getCurrentPosition(p => {
         if (!trip) return;
@@ -3550,14 +3552,44 @@ function startTripFollow() {
       const v = adapter.getView ? adapter.getView() : null;
       const z = v ? Math.max(v.zoom, 14) : 14;
       if (!needsRecenter(state.userPos, z)) return;
-      tripSelfMove = Date.now() + 1500;   /* 이 이동은 '우리가' 한 것 — 자동 일시정지 대상 아님 */
+      tripSelfMove = Date.now() + 300;   /* 이 이동은 '우리가' 한 것 — 자동 일시정지 대상 아님 */
       try { adapter.setView(state.userPos, z); } catch (e) {}
     }, () => {}, { enableHighAccuracy: true, timeout: 8000, maximumAge: 5000 });
   };
   tick();
   tripFollowTimer = setInterval(tick, 10000);   /* 10초마다 재중심(추적 중이면 열차, 아니면 내 위치) */
 }
-function stopTripFollow() { clearInterval(tripFollowTimer); tripFollowTimer = null; }
+function stopTripFollow() { clearInterval(tripFollowTimer); tripFollowTimer = null; stopTripGlide(); }
+/* 주행 추적 글라이드: 매 400ms 조금씩 열차 쪽으로 중심을 옮겨 '계속 따라가는' 느낌을 만든다.
+   (역 좌표만 오면 8초마다 튀므로, 목표를 향해 이징으로 미끄러진다) */
+let tripGlideTimer = null;
+function tripTargetLatLng() {
+  if (!trip || !trip.track) return null;
+  const st = animState.get(trip.track.no);        /* 열차 마커가 그려지는 중이면 그 보간 위치가 가장 정확 */
+  if (st && st.cur) return [st.cur[0], st.cur[1]];
+  return trackedTrainLatLng();                    /* 아니면 현재 역 좌표 */
+}
+function startTripGlide() {
+  stopTripGlide();
+  tripGlideTimer = setInterval(() => {
+    if (!trip || !trip.track) return;
+    if (!adapter.map || !adapter.getView || Date.now() < tripFollowPaused) return;
+    const tgt = tripTargetLatLng();
+    if (!tgt) return;
+    const v = adapter.getView();
+    if (!v || !v.center) return;
+    const z = Math.max(v.zoom, 13);
+    const dLat = tgt[0] - v.center[0], dLng = tgt[1] - v.center[1];
+    /* 충분히 가까우면 멈춘다(불필요한 이동·flyTo NaN 방지) */
+    if (Math.abs(dLat) < 1e-4 && Math.abs(dLng) < 1e-4 && Math.abs(v.zoom - z) < 0.01) return;
+    const f = 0.35;   /* 이징: 남은 거리의 35%씩 → 약 1.5초에 걸쳐 도달 */
+    const next = [v.center[0] + dLat * f, v.center[1] + dLng * f];
+    tripSelfMove = Date.now() + 150;
+    try { adapter.setView(next, z); } catch (e) {}
+  }, 400);
+}
+function stopTripGlide() { clearInterval(tripGlideTimer); tripGlideTimer = null; }
+
 /* 이미 그 자리·그 줌이면 지도를 다시 옮기지 않는다.
    (Leaflet flyTo는 출발·도착이 같으면 내부 계산이 NaN이 되어 예외가 난다) */
 function needsRecenter(target, zoom) {
@@ -3568,15 +3600,17 @@ function needsRecenter(target, zoom) {
 }
 /* 추적 열차 위치로 지도 재중심(사용자가 방금 지도를 만졌으면 건너뜀) */
 function followTrackedTrain() {
+  if (state.followNo && animState.has(state.followNo)) return;   /* 애니 루프가 이미 부드럽게 따라가는 중 */
   const tp = trackedTrainLatLng();
   if (!tp || !adapter.map || Date.now() < tripFollowPaused) return;
   const v = adapter.getView ? adapter.getView() : null;
   const z = v ? Math.max(v.zoom, 13) : 13;
   if (!needsRecenter(tp, z)) return;
-  tripSelfMove = Date.now() + 1500;
+  tripSelfMove = Date.now() + 300;
   try { adapter.setView(tp, z); } catch (e) {}
 }
 function endTrip() {
+  stopFollow();
   trip = null;
   routeMode = routeResult ? "result" : null;
   clearInterval(tripTimer); tripTimer = null;
@@ -3855,7 +3889,6 @@ async function pollTrackedTrain() {
           if (cur) { tr.cur = cur; tr.sttus = String(t.trainSttus); tr.seenAt = Date.now(); if (!tr.dest) tr.dest = t.statnTnm; }
         }
       }
-      followTrackedTrain();   /* 새 위치를 받았으면 지도도 바로 이동 */
       const seg = trip.result.segments[tr.legIdx];
       const atEnd = !!tr.cur && resolve(seg.to) === tr.cur && tr.sttus !== "0";
       if (atEnd) {
