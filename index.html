@@ -1354,6 +1354,7 @@ const basicAdapter = {
     this.map = L.map("map-basic", { zoomControl: false, preferCanvas: true }).setView(center, zoom);   /* 역 dot·노선을 캔버스로 렌더 → 마커 많을 때 팬/줌 부하·발열 감소 */
     this.map.on("click", e => onMapClick([e.latlng.lat, e.latlng.lng]));
     this.map.on("dragstart", () => { stopFollow(); setLocate(false); });   /* 지도를 움직이면 현재위치 토글 해제 */
+    this.map.whenReady(() => { const tl = this.tiles || Object.values(this.map._layers).find(l => l && l.getTileUrl); if (tl) tl.once("load", postReady); else setTimeout(postReady, 300); });
     this.map.on("dragstart zoomstart", beginInteract);   /* 조작 중 열차 애니 그리기 멈춤(버벅임 완화) */
     this.map.on("dragend zoomend", endInteract);
     L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
@@ -1481,6 +1482,7 @@ const naverAdapter = {
     naver.maps.Event.addListener(this.map, "zoom_changed", () => { this.syncLabels(); scheduleReIcon(); markInteracting(); });
     naver.maps.Event.addListener(this.map, "click", e => onMapClick([e.coord.lat(), e.coord.lng()]));
     naver.maps.Event.addListener(this.map, "dragstart", () => { stopFollow(); setLocate(false); });   /* 지도를 움직이면 현재위치 토글 해제 */
+    naver.maps.Event.once(this.map, "tilesloaded", postReady);   /* 첫 타일 그려짐 → 스플래시 해제 */
     naver.maps.Event.addListener(this.map, "dragstart", beginInteract);   /* 조작 중 열차 애니 그리기 멈춤(네이버 팬 버벅임 완화) */
     naver.maps.Event.addListener(this.map, "dragend", endInteract);
     setTimeout(() => { if (this.map) naver.maps.Event.trigger(this.map, "resize"); }, 300);
@@ -2513,6 +2515,14 @@ function closeTrainPanelIfOpen() {
   const p = document.getElementById("trainPanel");
   if (p && p.classList.contains("open")) p.classList.remove("open");
 }
+/* 지도 첫 타일까지 그려졌음을 네이티브에 알린다 — 스플래시를 이 시점에 걷어야 어두운 빈 지도가 보이지 않는다 */
+let _readyPosted = false;
+function postReady() {
+  if (_readyPosted) return; _readyPosted = true;
+  if (!NATIVE) return;
+  try { window.webkit.messageHandlers.ui.postMessage({ type: "ready" }); } catch (e) {}
+}
+setTimeout(postReady, 2500);   /* 어떤 이유로든 타일 이벤트가 안 오면 폴백 */
 function postTopbar() {
   if (!NATIVE || !(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.ui)) return;
   try {
