@@ -378,7 +378,13 @@
   .trip-next b { font-weight: 800; }
   .route-leg.on .rl-stn { color: var(--text); font-weight: 800; }   /* 노선색은 가독성이 떨어져 굵기로만 강조 */
   .route-leg .rl-info { display: flex; align-items: center; gap: 5px; }
-  .route-leg .rl-now { margin-left: auto; color: #FBBF24; font-weight: 700; }   /* '진행 중'은 우측 정렬 */
+  /* '진행 중'은 텍스트 대신 맥박 치는 라이브 점으로 — 줄 오른쪽 끝에 */
+  .route-leg .rl-now { margin-left: auto; position: relative; width: 9px; height: 9px; flex: none; }
+  .route-leg .rl-now::before, .route-leg .rl-now::after { content: ""; position: absolute; inset: 0; border-radius: 50%; }
+  .route-leg .rl-now::before { background: #FBBF24; }
+  .route-leg .rl-now::after { border: 1.5px solid #FBBF24; animation: now-pulse 1.8s ease-out infinite; }
+  @keyframes now-pulse { 0% { transform: scale(1); opacity: .75; } 70%, 100% { transform: scale(2.6); opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .route-leg .rl-now::after { animation: none; opacity: .35; } }
   .route-stop { width: 100%; margin-top: 8px; padding: 11px; border-radius: 12px; border: none; background: #fff; color: #111317; font-family: var(--font); font-size: 13.5px; font-weight: 700; cursor: pointer; }
   /* 탄 열차 추적 상태 / 승차 확인 */
   .trip-track { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); padding: 0 2px 6px; }
@@ -3419,7 +3425,7 @@ function renderRoute() {
         <div class="rl-rail"><div class="rl-dot"></div>${i < trip.result.segments.length - 1 ? '<div class="rl-line"></div>' : ""}</div>
         <div class="rl-body">
           <div class="rl-stn">${s.from} → ${s.to}</div>
-          <div class="rl-info"><span class="rl-badge">${s.line}</span><span>${s.stops}개 역 · 약 ${s.min}분</span>${cur ? `<span class="rl-now">진행 중</span>` : ""}</div>
+          <div class="rl-info"><span class="rl-badge">${s.line}</span><span>${s.stops}개 역 · 약 ${s.min}분</span>${cur ? `<span class="rl-now" role="img" aria-label="진행 중"></span>` : ""}</div>
         </div></div>`;
     }).join("");
     body.innerHTML = `<div class="trip-live">
