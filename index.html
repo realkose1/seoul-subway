@@ -2175,7 +2175,35 @@ const PLAN_FEED_LAG_MS = 15000;       /* 배치 내 최신 기록도 이만큼�
 const PLAN_AHEAD = 4;                 /* 앞으로 몇 역까지 계획 */
 const PLAN_BLEND_MS = 2500;           /* 새 기록으로 재정렬할 때 미끄러지는 시간 */
 const PLAN_MAX_DR_MS = 120000;        /* 기록이 이보다 묵으면 다음 역까지만 전진(그 너머는 추측이 과함) */
+/* 급행 정차역 — 확실한 패턴만. 표에 없는 급행은 전역 정차로 취급(잘못 건너뛰는 쪽이 더 나쁘다) */
+const EXPRESS_STOPS = {
+  "9호선": { any: ["김포공항", "마곡나루", "가양", "염창", "당산", "여의도", "노량진", "동작", "고속터미널", "신논현", "선정릉", "봉은사", "종합운동장", "석촌", "올림픽공원", "중앙보훈병원"] },
+  "1호선": {
+    /* 경인 회랑(용산~동인천) 안에서 운행하는 급행/특급만 확실 */
+    corridor: ["용산", "노량진", "대방", "신길", "영등포", "신도림", "구로", "구일", "개봉", "오류동", "온수", "역곡", "소사", "부천", "중동", "송내", "부개", "부평", "백운", "동암", "간석", "주안", "도화", "제물포", "도원", "동인천"],
+    "1": ["용산", "노량진", "신길", "영등포", "신도림", "구로", "개봉", "오류동", "역곡", "부천", "송내", "부평", "동암", "주안", "제물포", "동인천"],
+    "7": ["용산", "노량진", "영등포", "신도림", "구로", "역곡", "부천", "송내", "부평", "주안", "동인천"],
+  },
+};
+/* 이 열차의 정차역 집합(급행이 아니거나 패턴을 모르면 null = 전역 정차) */
+function expressStops(ln, t) {
+  if (!t || !isExpress(t)) return null;
+  const E = EXPRESS_STOPS[ln]; if (!E) return null;
+  if (E.any) return new Set(E.any);
+  if (E.corridor) {
+    const cur = resolve(t.statnNm), term = resolve(t.statnTnm), C = new Set(E.corridor);
+    if (!cur || !term || !C.has(cur) || !C.has(term)) return null;
+    return new Set(E[String(t.directAt)] || E["1"]);
+  }
+  return null;
+}
 const _segPolyCache = new Map();
+/* 여러 역을 경유하는 폴리라인(급행 통과 구간) */
+function pathPoly(ln, names) {
+  const k = ln + "|" + names.join(">"); let p = _segPolyCache.get(k);
+  if (!p) { p = []; for (let i = 0; i < names.length - 1; i++) { const seg = segPoly(ln, names[i], names[i + 1]); p.push(...(i ? seg.slice(1) : seg)); } _segPolyCache.set(k, p); }
+  return p;
+}
 function segPoly(ln, a, b) {
   const k = ln + "|" + a + "|" + b; let p = _segPolyCache.get(k);
   if (!p) { p = [STN[a], ...curveMids(ln, a, b), STN[b]].filter(Boolean).map(x => [x[0], x[1]]); _segPolyCache.set(k, p); }
@@ -2232,23 +2260,31 @@ function buildPlan(t, recMs, ahead) {
   const ln = lineOfTrain(t); if (!LINES[ln]) return null;
   const cur = resolve(t.statnNm); if (!cur || !STN[cur]) return null;
   const st = String(t.trainSttus);
+  const stops = expressStops(ln, t);                 /* 급행 정차역(null이면 전역 정차) */
+  const stopsAt = n => !stops || stops.has(n);
+  const runK = stops ? 0.92 : 1;                     /* 급행은 통과 구간을 조금 빠르게 */
   const fr = [];
   let tDep;
-  if (st === "0" || st === "3") {          /* 진입: 잠시 뒤 도착 → 정차 → 출발 */
+  if (st === "0" || st === "3") {          /* 진입: 잠시 뒤 도착 → (정차역이면) 정차 → 출발 */
     const tArr = recMs + PLAN_APPROACH_MS, prev = prevStationOfTrain(ln, t, cur);
     if (prev && STN[prev]) fr.push({ t: tArr - segTravelMs(ln, prev, cur), stn: prev, kind: "dep" });
-    fr.push({ t: tArr, stn: cur, kind: "arr" }); tDep = tArr + PLAN_DWELL_MS;
+    if (stopsAt(cur)) { fr.push({ t: tArr, stn: cur, kind: "arr" }); tDep = tArr + PLAN_DWELL_MS; }
+    else tDep = tArr;                       /* 통과역: 서지 않고 지나간다 */
   } else if (st === "2") {                  /* 출발: 기록 시각에 떠났다 */
     tDep = recMs;
   } else {                                  /* 도착(정차): 기록 시각에 도착 → 정차 → 출발 */
-    fr.push({ t: recMs, stn: cur, kind: "arr" }); tDep = recMs + PLAN_DWELL_MS;
+    if (stopsAt(cur)) { fr.push({ t: recMs, stn: cur, kind: "arr" }); tDep = recMs + PLAN_DWELL_MS; }
+    else tDep = recMs;
   }
   fr.push({ t: tDep, stn: cur, kind: "dep" });
-  let tt = tDep, from = cur, prev = null;
+  let tt = tDep, from = cur, prev = null, via = [];
   for (let i = 0; i < (ahead || PLAN_AHEAD); i++) {
     const nxt = nextStationOf(ln, t, from, prev); if (!nxt || !STN[nxt]) break;
-    tt += segTravelMs(ln, from, nxt); fr.push({ t: tt, stn: nxt, kind: "arr" });
-    tt += PLAN_DWELL_MS; fr.push({ t: tt, stn: nxt, kind: "dep" });
+    tt += segTravelMs(ln, from, nxt) * runK;
+    if (stopsAt(nxt)) {
+      fr.push({ t: tt, stn: nxt, kind: "arr", via: via.length ? via.slice() : undefined });   /* via: 통과한 역들(경유 폴리라인용) */
+      tt += PLAN_DWELL_MS; fr.push({ t: tt, stn: nxt, kind: "dep" }); via = [];
+    } else via.push(nxt);                   /* 통과역: 프레임 없이 경유만 기록 */
     prev = from; from = nxt;
   }
   /* 기록이 너무 묵었으면 첫 다음 역 도착에서 계획을 끊어 그 역에 머물게 한다(마커가 근거 없이 멀리 가지 않도록) */
@@ -2268,9 +2304,9 @@ function planPosAt(st, now) {
     if (now >= b.t) continue;
     const ca = STN[a.stn]; if (!ca) return null;
     if (a.kind === "arr") return { pos: [ca[0], ca[1]], heading: null };            /* 정차 중 */
-    const poly = segPoly(ln, a.stn, b.stn);
+    const poly = b.via ? pathPoly(ln, [a.stn, ...b.via, b.stn]) : segPoly(ln, a.stn, b.stn);
     if (poly.length < 2) return { pos: [ca[0], ca[1]], heading: null };
-    return pointAlongEx(poly, smooth01((now - a.t) / Math.max(1, b.t - a.t)));   /* 가속→감속 주행 */
+    return pointAlongEx(poly, smooth01((now - a.t) / Math.max(1, b.t - a.t)));   /* 가속→감속 주행(급행은 통과역을 지나침) */
   }
   const e = STN[fr[fr.length - 1].stn]; return e ? { pos: [e[0], e[1]], heading: null } : null;
 }
@@ -3315,6 +3351,8 @@ function deriveArrivals(name, posByLine) {
     for (const t of trains) {
       const cur = resolve(t.statnNm), term = resolve(t.statnTnm);
       if (!cur || !term) continue;
+      const es = expressStops(ln, t);
+      if (es && !es.has(X)) continue;          /* 이 역을 통과하는 급행 */
       const away = stationsToX(ln, t, X, cur, term);
       if (away < 0 || away > 7) continue;
       const st = String(t.trainSttus);
@@ -3929,8 +3967,9 @@ function tripTrackProgress() {
   const remain = Math.max(0, Math.round(pe != null ? base : base - Math.min(sinceMin, base)));
   const na = planNextArr(tr.no);
   const alightPlan = !!(na && na.stn === legToC);
+  const nextStop = na && seg.stations.indexOf(na.stn) > idx ? na.stn : null;   /* 급행이면 통과역을 건너뛴 다음 정차역 */
   const isLast = tr.legIdx === segs.length - 1;
-  return { remain, legIdx: tr.legIdx, seg, nextStation: atEnd ? seg.to : seg.stations[nextIdx],
+  return { remain, legIdx: tr.legIdx, seg, nextStation: atEnd ? seg.to : (nextStop || seg.stations[nextIdx]),
            waiting: false, waitMin: 0, done: isLast && atEnd,
            alight: !atEnd && (nextIdx >= last || alightPlan),   /* 다음 도착 역이 이 구간의 끝(환승/도착) → 내릴 준비 */
            alightInMin: atEnd ? null : Math.max(0, legRemainMin - ROUTE_HOP_MIN),   /* 하차 알림 예약용(네이티브가 미리 예약) */
@@ -4009,6 +4048,8 @@ async function findBoardCandidates(legIdx) {
   for (const t of list) {
     const cur = resolve(t.statnNm), term = resolve(t.statnTnm);
     if (!cur || !term || !t.trainNo) continue;
+    const es = expressStops(seg.line, t);
+    if (es && !es.has(resolve(seg.to))) continue;   /* 이 급행은 내릴 역(환승/도착)을 통과한다 → 타면 안 됨 */
     const idx = sts.indexOf(cur);
     if (idx < 0) continue;
     const st = String(t.trainSttus);
@@ -4101,7 +4142,11 @@ function tripTrackPayload() {
   if (!trip || !trip.track) return null;
   const segs = trip.result.segments, k = trip.track.legIdx, seg = segs[k];
   if (!seg) return null;
+  /* 급행이면 이번 구간에서 실제로 서는 역만(백그라운드 추적기의 '다음 정차역/하차' 판정용) */
+  const tk = state.trains.find(x => String(x.trainNo) === String(trip.track.no));
+  const es = tk ? expressStops(seg.line, tk) : null;
   return { no: trip.track.no, line: seg.line, legIdx: k, stations: seg.stations.slice(), legTo: seg.to,
+           stops: es ? seg.stations.filter(n => es.has(n)) : null,
            isLast: k === segs.length - 1, dest: trip.track.dest || "",
            laterMin: k < segs.length - 1 ? ROUTE_TRANSFER_MIN + tripMinFromLeg(k + 1) : 0,
            legs: segs.map(x => ({ line: x.line, to: x.to, min: x.min })) };
