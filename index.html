@@ -394,17 +394,14 @@
              padding: 3px 9px 3px 7px; border-radius: 999px; background: rgba(255,255,255,.07); border: 1px solid transparent; white-space: nowrap; isolation: isolate; }
   .sc-live[hidden] { display: none; }
   /* 배지 테두리에도 카드와 같은 발광 */
-  .sc-live::before, .sc-live::after {
-    content: ""; position: absolute; inset: -1px; border-radius: 999px; pointer-events: none;
-    background: conic-gradient(from var(--pill-ang), #34d399, #22d3ee, #60a5fa, #a78bfa, #f472b6, #fbbf24, #34d399);
-    animation: pill-spin 3.2s linear infinite;
-  }
+  /* 배지는 번짐 없이 선명한 그라디언트 테두리만(글씨가 뿌예지지 않게) */
   .sc-live::before {
-    padding: 1px; z-index: -1;
+    content: ""; position: absolute; inset: -1px; border-radius: 999px; pointer-events: none; padding: 1px; z-index: -1;
+    background: conic-gradient(from var(--pill-ang), #34d399, #22d3ee, #60a5fa, #a78bfa, #f472b6, #fbbf24, #34d399);
     -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
     -webkit-mask-composite: xor; mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite: exclude;
+    animation: pill-spin 3.2s linear infinite;
   }
-  .sc-live::after { inset: -1.5px; filter: blur(2.5px); opacity: .22; z-index: -2; }   /* 글씨가 뿌예지지 않게 번짐 최소화 */
   .sc-live .sl-dot { position: relative; width: 6px; height: 6px; border-radius: 50%; background: #34d399; flex: none; }
   .sc-live .sl-dot::after { content: ""; position: absolute; inset: -2px; border-radius: 50%; border: 1.5px solid #34d399; animation: now-pulse 1.8s ease-out infinite; }
   /* 실시간 추적 중 카드 전체 발광 테두리 */
@@ -422,7 +419,7 @@
   }
   .station-card.live::after { inset: -4px; filter: blur(9px); opacity: .3; z-index: -1; }
   @keyframes pill-spin { to { --pill-ang: 360deg; } }
-  @media (prefers-reduced-motion: reduce) { .station-card.live::before, .station-card.live::after, .sc-live::before, .sc-live::after, .sc-live .sl-dot::after { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .station-card.live::before, .station-card.live::after, .sc-live::before, .sc-live .sl-dot::after { animation: none; } }
   .trip-track .tt-dot { width: 6px; height: 6px; border-radius: 50%; background: #34d399; box-shadow: 0 0 0 3px rgba(52,211,153,.18); }
   .trip-track.lost, .trip-track.wait { color: var(--faint-text); }
   .trip-track .tt-change { margin-left: auto; border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.06); color: var(--muted); border-radius: 999px; padding: 3px 9px; font-family: var(--font); font-size: 11px; font-weight: 600; cursor: pointer; }
@@ -1370,6 +1367,7 @@ const basicAdapter = {
   },
   destroy() { if (this.map) { this.map.remove(); this.map = null; } this.markers.clear(); },
   setView(c, z) { this.map.flyTo(c, z, { duration: 0.7 }); },
+  setCenter(c) { this.map.setView(c, this.map.getZoom(), { animate: false }); },   /* 프레임 단위 따라가기용 즉시 이동 */
   clearLine() { this.lineLayer.clearLayers(); this.stationLayer.clearLayers(); this.labelLayer.clearLayers(); },
   addPolyline(pts, color) {
     L.polyline(pts, { color, weight: 3.5, opacity: 0.85, lineJoin: "round" }).addTo(this.lineLayer);
@@ -1492,6 +1490,7 @@ const naverAdapter = {
     this.shapes = []; this.stations = []; this.labels = []; this.markers.clear();
   },
   setView(c, z) { this.map.setCenter(new naver.maps.LatLng(c[0], c[1])); this.map.setZoom(z); },
+  setCenter(c) { this.map.setCenter(new naver.maps.LatLng(c[0], c[1])); },   /* 프레임 단위 따라가기용 즉시 이동 */
   clearLine() {
     this.shapes.forEach(s => s.setMap(null)); this.shapes = [];
     this.stations.forEach(s => s.setMap(null)); this.stations = [];
@@ -1753,6 +1752,12 @@ const appleAdapter = {
   getView() {
     const r = this.map.region;
     return { center: [r.center.latitude, r.center.longitude], zoom: this._zoom() };
+  },
+  /* 프레임 단위 따라가기용 즉시 이동 — 줌(span)은 유지. 프로그램 이동 표시는 짧게 */
+  setCenter(c) {
+    this._prog = true;
+    try { this.map.center = new mapkit.Coordinate(c[0], c[1]); } catch (e) {}
+    clearTimeout(this._progT); this._progT = setTimeout(() => { this._prog = false; }, 80);
   },
   visibleBox(pad) {
     if (!this.map) return null;
@@ -3560,9 +3565,10 @@ function startTripFollow() {
   tripFollowTimer = setInterval(tick, 10000);   /* 10초마다 재중심(추적 중이면 열차, 아니면 내 위치) */
 }
 function stopTripFollow() { clearInterval(tripFollowTimer); tripFollowTimer = null; stopTripGlide(); }
-/* 주행 추적 글라이드: 매 400ms 조금씩 열차 쪽으로 중심을 옮겨 '계속 따라가는' 느낌을 만든다.
-   (역 좌표만 오면 8초마다 튀므로, 목표를 향해 이징으로 미끄러진다) */
-let tripGlideTimer = null;
+/* 주행 추적 글라이드: 매 프레임 열차 쪽으로 중심을 지수 이징(시간상수 0.5초)으로 옮긴다.
+   애니메이션 팬을 400ms마다 거는 대신 즉시 이동을 아주 조금씩 반복해 끊김 없이 따라간다.
+   목표는 열차 마커의 보간 위치(있으면) → 없으면 현재 역 좌표. 사용자가 화면을 만지면 멈추고 4초 뒤 재개. */
+let tripGlideRaf = 0, tripGlideLast = 0, tripGlideCur = null;
 function tripTargetLatLng() {
   if (!trip || !trip.track) return null;
   const st = animState.get(trip.track.no);        /* 열차 마커가 그려지는 중이면 그 보간 위치가 가장 정확 */
@@ -3571,24 +3577,35 @@ function tripTargetLatLng() {
 }
 function startTripGlide() {
   stopTripGlide();
-  tripGlideTimer = setInterval(() => {
-    if (!trip || !trip.track) return;
-    if (!adapter.map || !adapter.getView || Date.now() < tripFollowPaused) return;
+  bindTripTouchPause();
+  /* rAF 대신 33ms 인터벌: 백그라운드 탭·웹뷰 스로틀과 무관하게 일정한 주기로 움직인다(약 30fps) */
+  const step = () => {
+    const ts = performance.now();
+    if (!trip || !trip.track || !adapter.map || !adapter.getView) return;
+    const dt = tripGlideLast ? Math.min(0.1, (ts - tripGlideLast) / 1000) : 0.016;
+    tripGlideLast = ts;
+    if (Date.now() < tripFollowPaused) { tripGlideCur = null; return; }   /* 조작 중: 멈추고, 재개 시 현재 뷰에서 다시 */
     const tgt = tripTargetLatLng();
     if (!tgt) return;
-    const v = adapter.getView();
-    if (!v || !v.center) return;
-    const z = Math.max(v.zoom, 13);
-    const dLat = tgt[0] - v.center[0], dLng = tgt[1] - v.center[1];
-    /* 충분히 가까우면 멈춘다(불필요한 이동·flyTo NaN 방지) */
-    if (Math.abs(dLat) < 1e-4 && Math.abs(dLng) < 1e-4 && Math.abs(v.zoom - z) < 0.01) return;
-    const f = 0.35;   /* 이징: 남은 거리의 35%씩 → 약 1.5초에 걸쳐 도달 */
-    const next = [v.center[0] + dLat * f, v.center[1] + dLng * f];
-    tripSelfMove = Date.now() + 150;
-    try { adapter.setView(next, z); } catch (e) {}
-  }, 400);
+    if (!tripGlideCur) { const v = adapter.getView(); if (!v || !v.center) return; tripGlideCur = v.center.slice(); }
+    const alpha = 1 - Math.exp(-dt / 0.5);
+    const nLat = tripGlideCur[0] + (tgt[0] - tripGlideCur[0]) * alpha;
+    const nLng = tripGlideCur[1] + (tgt[1] - tripGlideCur[1]) * alpha;
+    if (Math.abs(nLat - tripGlideCur[0]) < 3e-7 && Math.abs(nLng - tripGlideCur[1]) < 3e-7) return;   /* 거의 도달: 쉼 */
+    tripGlideCur = [nLat, nLng];
+    try { if (adapter.setCenter) adapter.setCenter(tripGlideCur); else adapter.setView(tripGlideCur, adapter.getView().zoom); } catch (e) {}
+  };
+  tripGlideRaf = setInterval(step, 33);
 }
-function stopTripGlide() { clearInterval(tripGlideTimer); tripGlideTimer = null; }
+function stopTripGlide() { clearInterval(tripGlideRaf); tripGlideRaf = 0; tripGlideLast = 0; tripGlideCur = null; }
+/* 화면 터치는 어댑터 이벤트와 무관하게 확실한 '사용자 조작' — 누르는 동안·손 뗀 뒤 4초간 따라가기 멈춤 */
+let _tripTouchBound = false;
+function bindTripTouchPause() {
+  if (_tripTouchBound) return; _tripTouchBound = true;
+  const bump = () => { if (trip && trip.track) tripFollowPaused = Date.now() + TRIP_FOLLOW_RESUME_MS; };
+  for (const ev of ["pointerdown", "pointermove", "pointerup", "touchstart", "touchmove", "touchend"])
+    document.addEventListener(ev, bump, { passive: true, capture: true });
+}
 
 /* 이미 그 자리·그 줌이면 지도를 다시 옮기지 않는다.
    (Leaflet flyTo는 출발·도착이 같으면 내부 계산이 NaN이 되어 예외가 난다) */
@@ -3842,6 +3859,9 @@ function tripBoard(no, legIdx) {
   const row = pick && pick.rows.find(r => r.no === String(no));
   trip.track = { no: String(no), legIdx, line: seg.line, dest: row ? row.dest : "", cur: row ? row.cur : null, sttus: row ? row.sttus : "", seenAt: Date.now() };
   trip.pick = null; trip.trackLost = false; trip.alightNotifiedLeg = -1;
+  /* 따라가기 시작: 줌이 너무 멀면 한 번만 당긴다(이후 중심 이동은 글라이드가 담당) */
+  try { const v0 = adapter.getView && adapter.getView(); const tp0 = trackedTrainLatLng();
+        if (v0 && tp0 && v0.zoom < 13) { tripSelfMove = Date.now() + 300; adapter.setView(tp0, 13); } } catch (e) {}
   trip.baseLeg = legIdx; trip.boardAt = Date.now();   /* 탔다고 했으니 대기 끝 — 시간 기준 폴백도 여기서부터 */
   haptic("medium");
   renderRoute(); postTrip(); if (NATIVE) postCard();
@@ -4421,6 +4441,19 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
   showUsage();
   syncProviderSeg();
   /* 자동 역 카드는 locateUser가 위치를 잡은 뒤 openNearestStationCard로 연다(위치 없으면 안 엶) */
+  /* TEMP: 배지 선명도 검증용 — 제거 필요 */
+  if (new URLSearchParams(location.search).get("_hz")) {
+    setTimeout(() => { try {
+      favAutoSuppressed = true;
+      openStationCard("상일동");
+      setTimeout(() => { startRoute(); pickDest("혜화"); setTimeout(() => {
+        fetchPosition = async (line) => ({ realtimePositionList: line !== "5호선" ? [] : [
+          { trainNo: "5001", statnNm: "상일동", trainSttus: "1", statnTnm: "방화", updnLine: "1" } ] });
+        startTrip();
+        setTimeout(() => { if (trip && trip.pick && trip.pick.rows[0]) tripBoard(trip.pick.rows[0].no, 0); }, 3000);
+      }, 900); }, 1500);
+    } catch (e) {} }, 5000);
+  }
 })();
 
 /* 모바일: 현재 위치를 얻어 지도 중심 이동 (수도권 내일 때만) */
