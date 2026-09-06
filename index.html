@@ -4441,14 +4441,15 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
   showUsage();
   syncProviderSeg();
   /* 자동 역 카드는 locateUser가 위치를 잡은 뒤 openNearestStationCard로 연다(위치 없으면 안 엶) */
-  /* TEMP: 배지 선명도 검증용 — 제거 필요 */
-  if (new URLSearchParams(location.search).get("_hz")) {
+  /* TEMP: 글라이드 검증용(움직이는 열차) — 제거 필요 */
+  if (new URLSearchParams(location.search).get("_hz2")) {
     setTimeout(() => { try {
       favAutoSuppressed = true;
       openStationCard("상일동");
       setTimeout(() => { startRoute(); pickDest("혜화"); setTimeout(() => {
-        fetchPosition = async (line) => ({ realtimePositionList: line !== "5호선" ? [] : [
-          { trainNo: "5001", statnNm: "상일동", trainSttus: "1", statnTnm: "방화", updnLine: "1" } ] });
+        const seq = ["상일동", "고덕", "명일", "굽은다리", "길동"]; let k = 0; const t0 = Date.now();
+        fetchPosition = async (line) => { k = Math.min(seq.length - 1, Math.floor((Date.now() - t0) / 8000));
+          return { realtimePositionList: line !== "5호선" ? [] : [ { trainNo: "5001", statnNm: seq[k], trainSttus: k === 0 ? "1" : "2", statnTnm: "방화", updnLine: "1" } ] }; };
         startTrip();
         setTimeout(() => { if (trip && trip.pick && trip.pick.rows[0]) tripBoard(trip.pick.rows[0].no, 0); }, 3000);
       }, 900); }, 1500);
