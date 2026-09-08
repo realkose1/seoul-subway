@@ -422,6 +422,7 @@
   @media (prefers-reduced-motion: reduce) { .station-card.live::before, .station-card.live::after, .sc-live::before, .sc-live .sl-dot::after { animation: none; } }
   .trip-track .tt-dot { width: 6px; height: 6px; border-radius: 50%; background: #34d399; box-shadow: 0 0 0 3px rgba(52,211,153,.18); }
   .trip-track.lost, .trip-track.wait { color: var(--faint-text); }
+  .trip-track.auto { color: #FBBF24; }
   .trip-track .tt-change { margin-left: auto; border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.06); color: var(--muted); border-radius: 999px; padding: 3px 9px; font-family: var(--font); font-size: 11px; font-weight: 600; cursor: pointer; }
   .route-board { width: 100%; margin: 2px 0 4px; padding: 11px; border-radius: 12px; border: none; background: #FBBF24; color: #111317; font-family: var(--font); font-size: 13.5px; font-weight: 800; cursor: pointer; }
   .route-board:active { background: #e8ad14; }
@@ -671,7 +672,7 @@
 <div class="topbar">
   <div class="brand-card">
     <div class="brand-row">
-      <div class="brand">서울 지하철 라이브 <span class="ver">v1.4.1</span></div>
+      <div class="brand">서울 지하철 라이브 <span class="ver">v1.4.2</span></div>
       <div class="status"><span class="dot" id="statusDot"></span><span id="statusText">모의 데이터</span><button class="status-refresh" id="refreshBtn" aria-label="새로고침" title="새로고침"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button><button class="status-refresh" id="settingsBtn" aria-label="설정" title="설정"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button></div>
     </div>
     <div class="chips" id="lineChips"></div>
@@ -2845,7 +2846,7 @@ function postCard() {
                        nextStation: p.nextStation, legTo: p.legTo, isLast: p.isLast, done: p.done, legIdx: p.legIdx,
                        waiting: !!p.waiting, waitMin: p.waitMin || 0,
                        tracking: !!p.tracking, trainDest: p.trainDest || "", trackStale: !!p.trackStale, trackLost: !!p.trackLost,
-                       alight: !!p.alight,
+                       alight: !!p.alight, autoNote: p.autoNote || "",
                        pick: p.pick && !p.done ? { legIdx: p.pick.legIdx, transfer: !!p.pick.transfer, repick: !!p.pick.repick, dismissed: !!p.pick.dismissed, loaded: !!p.pick.loaded,
                          strip: p.pick.strip ? { prev: p.pick.strip.prev || "", origin: p.pick.strip.origin || "", next: p.pick.strip.next || "", line: p.pick.strip.line, color: p.pick.strip.color,
                                                  stations: (p.pick.strip.stations || []).map(x => x || ""), originIdx: p.pick.strip.originIdx } : null,
@@ -3726,6 +3727,7 @@ function renderRoute() {
           : `다음 <b>${p.nextStation}</b>${p.isLast ? "" : ` · ${p.legTo} 환승`}`}
       </div>
       ${p.tracking && !p.done && !(p.pick && p.pick.repick) ? `<div class="trip-track"><span>${p.trainDest ? p.trainDest + "행" : "열차"} 추적${p.trackStale ? " · 위치 갱신 대기" : ""}</span><button class="tt-change" id="tripRepick">변경</button></div>` : ""}
+      ${p.autoNote ? `<div class="trip-track auto">${p.autoNote}</div>` : ""}
       ${p.pick && !p.done ? pickListHtml(p.pick) : ""}
       ${!p.tracking && !p.pick && p.trackLost ? `<div class="trip-track lost">열차 신호가 끊겨 시간 기준으로 안내 중</div>` : ""}
       <div class="route-legs">${legs}</div>
@@ -4019,6 +4021,7 @@ function tripProgress() {
     isLast: legIdx === segs.length - 1, done: p.done,
     tracking: !!p.tracking, trainDest: p.trainDest || "", trackStale: !!p.stale, trackLost: !!trip.trackLost,
     alight: !!p.alight && !p.done,
+    autoNote: trip.autoNote && Date.now() < (trip.autoNoteUntil || 0) ? trip.autoNote : "",
     alightInMin: p.done || trip.arrived ? null : (p.alightInMin == null ? null : p.alightInMin),
     pick: trip.pick && (!trip.track || trip.pick.repick) ? trip.pick : null,
   };
@@ -4133,6 +4136,16 @@ async function refreshPickList() {
     if (pick.loaded && rows.some(r => r.score <= 1 && !prevAt.has(r.no))) haptic("medium");
     pick.rows = rows; pick.loaded = true;
     if (before !== after) { renderRoute(); if (NATIVE) postCard(); }
+    /* 환승 자동 선택: 도보 시간이 지났고 승강장에 도착/진입 중인 열차가 있으면 그중 가장 빠른 것을 탄다 */
+    if (pick.transfer && pick.autoFrom && Date.now() >= pick.autoFrom && !trip.track) {
+      const r = rows.find(x => x.score === 0 || (x.score === 1 && x.sttus === "0"));
+      if (r) {
+        trip.autoNote = `가장 빠른 ${r.dest}행 열차로 자동 선택했어요 · 다른 열차면 '변경'`;
+        trip.autoNoteUntil = Date.now() + 15000;
+        tripBoard(r.no, pick.legIdx);
+        if (!NATIVE) toast(trip.autoNote);
+      }
+    }
   } finally { pickBusy = false; }
 }
 /* 열차 선택 → 그 열차 추적 시작. no가 비면 선택 보류(목록만 접기) */
@@ -4164,8 +4177,11 @@ function tripLegReached(legIdx) {
     trip.track = null; trip.baseLeg = nextLeg; trip.boardAt = Date.now() + ROUTE_TRANSFER_MIN * 60000;
     haptic("medium");
     startPick(nextLeg, true);
+    /* 사용자가 고르지 않아도, 환승 도보 시간이 지난 뒤 승강장에 있는 가장 빠른 열차로 자동 선택해 추적을 잇는다 */
+    if (trip.pick) trip.pick.autoFrom = Date.now() + TRIP_AUTO_BOARD_MS;
   }
 }
+const TRIP_AUTO_BOARD_MS = 3 * 60000;   /* 환승 도보 추정 — 이 전에 떠나는 열차는 탈 수 없다고 본다 */
 /* 네이티브 백그라운드 추적용 페이로드: 탄 열차·이번 구간 역 목록·이후 구간 소요 */
 function tripTrackPayload() {
   if (!trip || !trip.track) return null;
