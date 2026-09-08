@@ -2053,6 +2053,11 @@ setInterval(() => {
     if (st.plan) {
       const nowMs = Date.now();
       const q = planPosAt(st, nowMs); if (!q) continue;
+      if (st.hold) {
+        if (q.prog == null || q.prog < st.hold.prog) continue;          /* 아직 뒤: 제자리 */
+        st.hold = null; st.blend = { from: st.cur.slice(), t0: nowMs, t1: nowMs + 1200 };   /* 따라잡음: 짧게 이어붙임 */
+      }
+      if (q.prog != null) st.prog = q.prog;
       let pos = q.pos;
       if (st.blend) {
         const u = (nowMs - st.blend.t0) / (st.blend.t1 - st.blend.t0);
@@ -2295,20 +2300,34 @@ function buildPlan(t, recMs, ahead) {
   return fr;
 }
 function smooth01(u) { u = Math.max(0, Math.min(1, u)); return u * u * (3 - 2 * u); }
+/* 계획의 역 순서열(통과역 포함) — 진행도 비교용 */
+function planSeq(plan) {
+  const seq = [];
+  for (const f of plan) {
+    if (f.via) for (const v of f.via) if (seq[seq.length - 1] !== v) seq.push(v);
+    if (seq[seq.length - 1] !== f.stn) seq.push(f.stn);
+  }
+  return seq;
+}
 /* 계획상 now 시각의 위치/진행 방향 */
 function planPosAt(st, now) {
   const fr = st.plan, ln = st.ln; if (!fr || !fr.length) return null;
-  if (now <= fr[0].t) { const c = STN[fr[0].stn]; return c ? { pos: [c[0], c[1]], heading: null } : null; }
+  const seq = st.seq || (st.seq = planSeq(fr));
+  const idx = n => seq.indexOf(n);
+  if (now <= fr[0].t) { const c = STN[fr[0].stn]; return c ? { pos: [c[0], c[1]], heading: null, prog: Math.max(0, idx(fr[0].stn)) } : null; }
   for (let i = 0; i < fr.length - 1; i++) {
     const a = fr[i], b = fr[i + 1];
     if (now >= b.t) continue;
     const ca = STN[a.stn]; if (!ca) return null;
-    if (a.kind === "arr") return { pos: [ca[0], ca[1]], heading: null };            /* 정차 중 */
+    if (a.kind === "arr") return { pos: [ca[0], ca[1]], heading: null, prog: idx(a.stn) };            /* 정차 중 */
     const poly = b.via ? pathPoly(ln, [a.stn, ...b.via, b.stn]) : segPoly(ln, a.stn, b.stn);
-    if (poly.length < 2) return { pos: [ca[0], ca[1]], heading: null };
-    return pointAlongEx(poly, smooth01((now - a.t) / Math.max(1, b.t - a.t)));   /* 가속→감속 주행(급행은 통과역을 지나침) */
+    const f = smooth01((now - a.t) / Math.max(1, b.t - a.t));
+    const ia = idx(a.stn), ib = idx(b.stn);
+    const prog = ia + f * Math.max(0, ib - ia);
+    if (poly.length < 2) return { pos: [ca[0], ca[1]], heading: null, prog };
+    const q = pointAlongEx(poly, f); q.prog = prog; return q;                    /* 가속→감속 주행(급행은 통과역을 지나침) */
   }
-  const e = STN[fr[fr.length - 1].stn]; return e ? { pos: [e[0], e[1]], heading: null } : null;
+  const e = STN[fr[fr.length - 1].stn]; return e ? { pos: [e[0], e[1]], heading: null, prog: seq.length - 1 } : null;
 }
 /* 도착 카운트다운으로 타임라인 보정: now+etaSec에 station 도착하도록 그 사이 구간을 비례 조정 */
 function pinArrival(no, station, etaSec) {
@@ -2376,16 +2395,26 @@ function renderTrains() {
         const ln = lineOfTrain(t), prev = animState.get(t.trainNo);
         const tmp = { plan, ln, pins: prev && prev.pins ? prev.pins : null };
         if (tmp.pins) applyPins(tmp, nowTs);
+        tmp.seq = planSeq(tmp.plan);
         const q = planPosAt(tmp, nowTs);
         const target = q ? q.pos : r.pos.slice();
         const cur = prev && prev.cur ? prev.cur.slice() : target.slice();
-        const blend = prev && distM(cur, target) > 30 ? { from: cur.slice(), t0: nowTs, t1: nowTs + PLAN_BLEND_MS } : null;
+        /* 후진 금지: 새 계획상 위치가 지금 마커보다 뒤(역 순서 기준)면 뒤로 미끄러지지 않고 제자리에서
+           새 계획이 따라잡을 때까지 기다린다. 앞이면 부드럽게 따라붙는다 */
+        let hold = null, blend = null;
+        if (prev && prev.prog != null && prev.seq && q) {
+          const pi = Math.floor(prev.prog), pfrac = prev.prog - pi, pStn = prev.seq[Math.min(pi, prev.seq.length - 1)];
+          const ni = tmp.seq.indexOf(pStn);
+          if (ni >= 0 && q.prog < ni + pfrac - 0.02) hold = { prog: ni + pfrac };
+        }
+        if (!hold && prev && distM(cur, target) > 30) blend = { from: cur.slice(), t0: nowTs, t1: nowTs + PLAN_BLEND_MS };
         const heading = q && q.heading != null ? q.heading : (prev ? prev.heading : r.heading);
         if (trainTier !== "hidden") {
           adapter.upsertTrain(t.trainNo, offsetLeft(cur, heading, trackOffM), t, heading);
           adapter.moveTrain(t.trainNo, offsetLeft(cur, heading, trackOffM));
         }
-        animState.set(t.trainNo, { no: t.trainNo, cur, plan: tmp.plan, pins: tmp.pins, blend, ln, heading, anchor: r.anchor, train: t, route: [], idx: 0, speed: 0 });
+        animState.set(t.trainNo, { no: t.trainNo, cur, plan: tmp.plan, seq: tmp.seq, pins: tmp.pins, blend, hold,
+                                   prog: hold ? hold.prog : (q ? q.prog : null), ln, heading, anchor: r.anchor, train: t, route: [], idx: 0, speed: 0 });
         continue;
       }
     }
