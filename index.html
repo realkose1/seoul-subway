@@ -4233,8 +4233,14 @@ function tripTrackPayload() {
   /* 급행이면 이번 구간에서 실제로 서는 역만(백그라운드 추적기의 '다음 정차역/하차' 판정용) */
   const tk = state.trains.find(x => String(x.trainNo) === String(trip.track.no));
   const es = tk ? expressStops(seg.line, tk) : null;
+  /* 접근 구간: 열차가 아직 출발역에 오지 않았으면 현재 역→출발역 경로(출발역 제외)를 넘겨 백그라운드에서도 '대기 중'을 계산 */
+  let approach = [];
+  if (trip.track.cur && !seg.stations.includes(trip.track.cur)) {
+    const path = stationPath(seg.line, trip.track.cur, resolve(seg.stations[0]));
+    if (path && path.length > 1 && path.length <= 12) approach = path.slice(0, -1);
+  }
   return { no: trip.track.no, line: seg.line, legIdx: k, stations: seg.stations.slice(), legTo: seg.to,
-           stops: es ? seg.stations.filter(n => es.has(n)) : null,
+           approach, stops: es ? seg.stations.filter(n => es.has(n)) : null,
            isLast: k === segs.length - 1, dest: trip.track.dest || "",
            laterMin: k < segs.length - 1 ? ROUTE_TRANSFER_MIN + tripMinFromLeg(k + 1) : 0,
            legs: segs.map(x => ({ line: x.line, to: x.to, min: x.min })) };
