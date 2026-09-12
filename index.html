@@ -2310,11 +2310,25 @@ function planSeq(plan) {
   }
   return seq;
 }
+/* 마커가 갈 수 있는 시각 상한: 기록 역(anchorStn) 다음 정차역에서 '출발'하기 직전.
+   위치 피드는 상태가 바뀔 때만 새 기록을 내므로, 새 기록 없이 그 너머로 가는 것은 근거 없는 추측이다.
+   (도착 시간·ETA 계산은 전체 계획을 쓰고, 이 상한은 마커 위치에만 적용) */
+function planCapTime(st) {
+  const fr = st.plan, a = st.anchorStn; if (!fr || !a) return Infinity;
+  let passedAnchor = false;
+  for (let i = 0; i < fr.length; i++) {
+    const f = fr[i];
+    if (f.stn === a) { passedAnchor = true; continue; }
+    if (passedAnchor && f.kind === "arr") { const d = fr[i + 1]; return d && d.kind === "dep" && d.stn === f.stn ? d.t - 1 : f.t + PLAN_DWELL_MS; }
+  }
+  return Infinity;
+}
 /* 계획상 now 시각의 위치/진행 방향 */
 function planPosAt(st, now) {
   const fr = st.plan, ln = st.ln; if (!fr || !fr.length) return null;
   const seq = st.seq || (st.seq = planSeq(fr));
   const idx = n => seq.indexOf(n);
+  now = Math.min(now, planCapTime(st));   /* 기록의 다음 역 너머로는 새 기록 없이 가지 않는다 */
   if (now <= fr[0].t) { const c = STN[fr[0].stn]; return c ? { pos: [c[0], c[1]], heading: null, prog: Math.max(0, idx(fr[0].stn)) } : null; }
   for (let i = 0; i < fr.length - 1; i++) {
     const a = fr[i], b = fr[i + 1];
@@ -2365,9 +2379,13 @@ function planNextArr(no) {
 /* 추적 열차의 다음 역 도착 카운트다운을 받아 타임라인·남은 시간을 실측에 맞춘다 */
 async function pinTrackedArrival(tr) {
   try {
-    const nx = planNextArr(tr.no); const seg = trip && trip.result.segments[tr.legIdx];
-    let stnName = nx ? nx.stn : null;
-    if (!stnName && seg && tr.cur) { const i = seg.stations.indexOf(tr.cur); if (i >= 0 && i < seg.stations.length - 1) stnName = seg.stations[i + 1]; }
+    const seg = trip && trip.result.segments[tr.legIdx];
+    let stnName = null;
+    if (seg && tr.cur) {   /* 피드가 알려준 현재 역 기준 다음 정차역(진입 중이면 그 역) — 계획이 앞서가도 실제 다음 역에 맞춘다 */
+      const i = seg.stations.indexOf(tr.cur);
+      if (i >= 0) stnName = tr.sttus === "0" ? tr.cur : (i < seg.stations.length - 1 ? seg.stations[i + 1] : null);
+    }
+    if (!stnName) { const nx = planNextArr(tr.no); stnName = nx ? nx.stn : null; }
     if (!stnName) return;
     const arr = await fetchArrival(stnName, true);
     const a = (arr || []).find(x => String(x.btrainNo) === String(tr.no) && Number(x.barvlDt) > 0);
@@ -2394,7 +2412,7 @@ function renderTrains() {
       const plan = buildPlan(t, planRecordTime(t, refMs, fetchedAt), tracked ? 40 : PLAN_AHEAD);
       if (plan) {
         const ln = lineOfTrain(t), prev = animState.get(t.trainNo);
-        const tmp = { plan, ln, pins: prev && prev.pins ? prev.pins : null };
+        const tmp = { plan, ln, pins: prev && prev.pins ? prev.pins : null, anchorStn: resolve(t.statnNm) };
         if (tmp.pins) applyPins(tmp, nowTs);
         tmp.seq = planSeq(tmp.plan);
         const q = planPosAt(tmp, nowTs);
@@ -2414,7 +2432,7 @@ function renderTrains() {
           adapter.upsertTrain(t.trainNo, offsetLeft(cur, heading, trackOffM), t, heading);
           adapter.moveTrain(t.trainNo, offsetLeft(cur, heading, trackOffM));
         }
-        animState.set(t.trainNo, { no: t.trainNo, cur, plan: tmp.plan, seq: tmp.seq, pins: tmp.pins, blend, hold,
+        animState.set(t.trainNo, { no: t.trainNo, cur, plan: tmp.plan, seq: tmp.seq, pins: tmp.pins, blend, hold, anchorStn: resolve(t.statnNm),
                                    prog: hold ? hold.prog : (q ? q.prog : null), ln, heading, anchor: r.anchor, train: t, route: [], idx: 0, speed: 0 });
         continue;
       }
@@ -4015,8 +4033,11 @@ function tripTrackProgress() {
   const isLast = tr.legIdx === segs.length - 1;
   return { remain, legIdx: tr.legIdx, seg, nextStation: atEnd ? seg.to : (nextStop || seg.stations[nextIdx]),
            waiting: false, waitMin: 0, done: isLast && atEnd,
-           alight: !atEnd && (nextIdx >= last || alightPlan),   /* 다음 도착 역이 이 구간의 끝(환승/도착) → 내릴 준비 */
-           alightInMin: atEnd ? null : Math.max(0, legRemainMin - ROUTE_HOP_MIN),   /* 하차 알림 예약용(네이티브가 미리 예약) */
+           alight: !atEnd && nextIdx >= last,   /* 피드 기준: 내릴 역 바로 앞 역에 도착/출발했을 때(계획이 앞서가도 먼저 울리지 않음) */
+           alightInMin: atEnd ? null : (() => {   /* 하차 알림 예약용: 내릴 역 바로 앞 역 도착 예정(계획), 없으면 남은 시간−1역 */
+             const pre = last >= 1 ? planEtaSec(tr.no, resolve(seg.stations[last - 1])) : null;
+             return Math.max(0, pre != null ? pre / 60 : legRemainMin - ROUTE_HOP_MIN);
+           })(),
            tracking: true, trainDest: tr.dest || "", stale: Date.now() - tr.seenAt > TRACK_LOST_MS };
 }
 function tripProgress() {
