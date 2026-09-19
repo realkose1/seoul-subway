@@ -355,6 +355,7 @@
   .route-leg .rl-stn { font-size: 14.5px; font-weight: 700; color: var(--text); }
   .route-leg .rl-info { font-size: 12px; color: var(--muted); margin-top: 3px; }
   .route-leg .rl-info .rl-badge { display: inline-block; padding: 1px 7px; border-radius: 999px; background: var(--rl, #888); color: #fff; font-size: 10.5px; font-weight: 700; margin-right: 5px; }
+  .route-leg .rl-quick { margin-left: auto; font-size: 11px; font-weight: 700; color: #FBBF24; white-space: nowrap; }
   .route-xfer { font-size: 11.5px; color: var(--faint-text); padding: 1px 0 11px; }
   .route-back { background: none; border: none; color: var(--muted); font-family: var(--font); font-size: 12.5px; font-weight: 600; cursor: pointer; padding: 2px 0 8px; }
   /* 경로 대안 탭: 최단시간 / 최소환승 */
@@ -2954,7 +2955,7 @@ function postCard() {
           total: rr.totalMin, transfers: rr.transfers,
           wait: wait == null ? -1 : wait,
           arrive: clockAfter(rr.totalMin + (wait || 0)),
-          segments: rr.segments.map(s => ({ line: s.line, color: s.color, from: s.from, to: s.to, stops: s.stops, min: s.min })),
+          segments: rr.segments.map(s => ({ line: s.line, color: s.color, from: s.from, to: s.to, stops: s.stops, min: s.min, quick: s.quick || "" })),
         } : null,
         /* 주행 중이면 실시간 진행 정보도 함께(네이티브 카드가 같은 메시지로 렌더) */
         tripLive: (() => {
@@ -3761,10 +3762,71 @@ function pickScrollRestore(pick) {
   sc.scrollLeft = pick.scrollX != null ? pick.scrollX : Math.max(0, psX(m.originIdx) - sc.clientWidth / 2);
   sc.addEventListener("scroll", () => { pick.scrollX = sc.scrollLeft; }, { passive: true });
 }
+/* 빠른 환승: 환승역에 도착하는 열차에서 다음 노선 환승통로에 가장 가까운 칸-문 번호 */
+const quickXferCache = new Map();   // key `${line}|${station}` → Promise<items[]>
+const QX_TTL_MS = 30 * 24 * 60 * 60 * 1000;   // localStorage 캐시 유효기간(정적 데이터라 넉넉히)
+async function quickExitItems(line, station) {
+  if (!line || !station) return [];
+  if (location.protocol === "file:") return [];   /* 프록시(/api) 없는 로컬 파일 실행 컨텍스트 */
+  const key = `${line}|${station}`;
+  if (quickXferCache.has(key)) return quickXferCache.get(key);
+  const p = (async () => {
+    const lsKey = `qx:${key}`;
+    try {
+      const cached = JSON.parse(localStorage.getItem(lsKey) || "null");
+      if (cached && Array.isArray(cached.items) && (Date.now() - cached.ts) < QX_TTL_MS) return cached.items;
+    } catch (e) {}
+    try {
+      const r = await fetch(`/api/quickexit?line=${encodeURIComponent(line)}&station=${encodeURIComponent(station)}`);
+      if (!r.ok) return [];
+      const data = await r.json();
+      if (!data || data.ok !== true || !Array.isArray(data.items)) return [];
+      try { localStorage.setItem(lsKey, JSON.stringify({ ts: Date.now(), items: data.items })); } catch (e) {}
+      return data.items;
+    } catch (e) {
+      return [];
+    }
+  })();
+  quickXferCache.set(key, p);
+  return p;
+}
+/* 후보 중 칸-문 번호 선택(순수 함수) — items: quickExitItems 결과, toLine: 다음 구간 노선명,
+   nxt: leg.to를 지난 다음 역(열차 진행 방향). fac/facPos/fwk 중 하나라도 "환승"+toLine을 포함하는
+   항목을 우선하고, 없으면 "환승"만 포함하는 항목으로 완화한다. 그래도 없으면 null(추측보다 무응답이 낫다). */
+function pickQuickDoor(items, toLine, nxt) {
+  if (!items || !items.length) return null;
+  const txt = it => [it.fac, it.facPos, it.fwk].filter(s => typeof s === "string");
+  const hasXfer = it => txt(it).some(s => s.includes("환승"));
+  const hasToLine = it => toLine ? txt(it).some(s => s.includes(toLine)) : false;
+  let candidates = items.filter(it => hasXfer(it) && hasToLine(it));
+  if (!candidates.length) candidates = items.filter(hasXfer);
+  if (!candidates.length) return null;
+
+  const doors = [...new Set(candidates.map(it => it.door).filter(Boolean))];
+  if (doors.length === 1) return doors[0];              /* 후보 전부 같은 문이면 방향 판별 없이 확정 */
+
+  const dirMatched = nxt ? candidates.filter(it => typeof it.dir === "string" && it.dir.includes(nxt)) : [];
+  const dmDoors = [...new Set(dirMatched.map(it => it.door).filter(Boolean))];
+  if (dmDoors.length) return dmDoors[0];
+
+  return null;   /* 문이 갈리는데 방향으로도 못 좁히면 잘못된 힌트보다 무응답 */
+}
+/* leg = 경로 구간 {line, from, to, stations}; toLine = 다음 구간의 노선명; "4-1" | null */
+async function quickTransferFor(leg, toLine) {
+  if (!leg || !toLine || !Array.isArray(leg.stations) || leg.stations.length < 2) return null;
+  const items = await quickExitItems(leg.line, leg.to);
+  if (!items.length) return null;
+  const prev = leg.stations[leg.stations.length - 2];
+  const walk = lineWalk(leg.line, prev, leg.to, 2);       /* [leg.to, leg.to 다음 역] */
+  const nxt = walk[1] || null;
+  return pickQuickDoor(items, toLine, nxt);
+}
+let routeRenderToken = 0;
 function renderRoute() {
   /* 경로 화면은 그릴 때마다 네이티브로도 직접 push — DOM MutationObserver는 rAF 배칭·스로틀에
      걸려 누락될 수 있어(선택→결과 전환이 네이티브에 반영되지 않던 문제) 의존하지 않는다. */
   if (NATIVE) setTimeout(postCard, 0);
+  const myRenderToken = ++routeRenderToken;   /* 비동기 빠른환승 조회가 늦게 끝나 stale 렌더에 적용되는 것 방지 */
   const body = document.getElementById("scBody");
   const titleEl = document.getElementById("scTitle");
   if (routeMode === "select") {
@@ -3800,7 +3862,7 @@ function renderRoute() {
           <div class="rl-rail"><div class="rl-dot"></div><div class="rl-dash"></div></div>
           <div class="rl-body">
             <div class="rl-stn">${s.from}</div>
-            <div class="rl-info"><span class="rl-badge">${s.line}</span>${s.to}까지 ${s.stops}개 역 · 약 ${s.min}분</div>
+            <div class="rl-info"><span class="rl-badge">${s.line}</span>${s.to}까지 ${s.stops}개 역 · 약 ${s.min}분<span class="rl-quick" data-qx="${i}"></span></div>
           </div>
         </div>` + (isLast ? `<div class="route-leg last" style="--rl:${s.color}">
           <div class="rl-rail"><div class="rl-dot"></div></div>
@@ -3817,6 +3879,17 @@ function renderRoute() {
       <button class="route-go" id="tripGo">지금 출발하기 →</button>`;
     body.querySelectorAll(".route-tab").forEach(b => b.addEventListener("click", () => { haptic(); setRouteTab(b.dataset.tab); }));
     document.getElementById("tripGo").addEventListener("click", () => { haptic("medium"); startTrip(); });
+    routeResult.segments.forEach((s, i) => {
+      if (i >= routeResult.segments.length - 1) return;
+      quickTransferFor(s, routeResult.segments[i + 1].line).then(door => {
+        if (routeRenderToken !== myRenderToken) return;
+        s.quick = door || "";
+        if (!door) return;
+        const el = body.querySelector(`.rl-quick[data-qx="${i}"]`);
+        if (el) el.textContent = `빠른 환승 ${door}`;
+        if (NATIVE) postCard();
+      });
+    });
     return;
   }
   if (routeMode === "trip" && trip) {
@@ -3828,7 +3901,7 @@ function renderRoute() {
         <div class="rl-rail"><div class="rl-dot"></div>${i < trip.result.segments.length - 1 ? '<div class="rl-line"></div>' : ""}</div>
         <div class="rl-body">
           <div class="rl-stn">${s.from} → ${s.to}</div>
-          <div class="rl-info"><span class="rl-badge">${s.line}</span><span>${s.stops}개 역 · 약 ${s.min}분</span></div>
+          <div class="rl-info"><span class="rl-badge">${s.line}</span><span>${s.stops}개 역 · 약 ${s.min}분</span><span class="rl-quick" data-qx="${i}"></span></div>
         </div></div>`;
     }).join("");
     body.innerHTML = `<div class="trip-live">
@@ -3858,6 +3931,17 @@ function renderRoute() {
     if (rp) rp.addEventListener("click", () => { if (trip && trip.pick && trip.pick.repick) tripPickCancel(); else tripRepick(); });
     const ps = document.getElementById("pickToggle");
     if (ps) ps.addEventListener("click", () => { haptic(); if (trip && trip.pick && trip.pick.repick) tripPickCancel(); else if (trip && trip.pick) { trip.pick.dismissed = !trip.pick.dismissed; renderRoute(); if (NATIVE) postCard(); } });
+    trip.result.segments.forEach((s, i) => {
+      if (i >= trip.result.segments.length - 1) return;
+      quickTransferFor(s, trip.result.segments[i + 1].line).then(door => {
+        if (routeRenderToken !== myRenderToken) return;
+        s.quick = door || "";
+        if (!door) return;
+        const el = body.querySelector(`.rl-quick[data-qx="${i}"]`);
+        if (el) el.textContent = `빠른 환승 ${door}`;
+        if (NATIVE) postCard();
+      });
+    });
     return;
   }
 }
