@@ -173,6 +173,9 @@ module.exports = async (req, res) => {
       ok: result.ok,
       status: result.status,
       keyMode,
+      /* 키 진단(값은 절대 노출하지 않음): 길이·앞뒤 공백·인코딩 형태 힌트 */
+      keyInfo: { len: KEY.length, trimmedLen: KEY.trim().length, hasWhitespace: /\s/.test(KEY),
+                 hasPercent: KEY.includes("%"), hasPlus: KEY.includes("+"), hasSlash: KEY.includes("/"), hasEquals: KEY.includes("=") },
       url: redact(url, KEY),
       contentType: result.contentType,
       body: parseBody(result.text)
