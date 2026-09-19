@@ -3790,35 +3790,55 @@ async function quickExitItems(line, station) {
   quickXferCache.set(key, p);
   return p;
 }
-/* 후보 중 칸-문 번호 선택(순수 함수) — items: quickExitItems 결과, toLine: 다음 구간 노선명,
-   nxt: leg.to를 지난 다음 역(열차 진행 방향). fac/facPos/fwk 중 하나라도 "환승"+toLine을 포함하는
-   항목을 우선하고, 없으면 "환승"만 포함하는 항목으로 완화한다. 그래도 없으면 null(추측보다 무응답이 낫다). */
+/* 문자열 정규화: 괄호 부기 제거 + 말미 "역" 제거 (역명 비교용) */
+const qxNorm = s => String(s == null ? "" : s).trim().replace(/\(.*?\)/g, "").replace(/역$/, "");
+/* 후보 중 칸-문 번호 선택(순수 함수) — items: quickExitItems 결과, toLine: 다음 구간 노선명(시그니처 유지, 현재 미사용),
+   nxt: leg.to를 지난 다음 역(열차 진행 방향). nxt 방향(drtnInfo)으로 향하는 계단/에스컬레이터 항목의 문 번호를
+   칸-문 오름차순으로 최대 4개까지 모아 반환한다(엘리베이터는 접근성 전용이라 제외; 후보 없으면 null). */
 function pickQuickDoor(items, toLine, nxt) {
+  if (!nxt) return null;
   if (!items || !items.length) return null;
-  const txt = it => [it.fac, it.facPos, it.fwk].filter(s => typeof s === "string");
-  const hasXfer = it => txt(it).some(s => s.includes("환승"));
-  const hasToLine = it => toLine ? txt(it).some(s => s.includes(toLine)) : false;
-  let candidates = items.filter(it => hasXfer(it) && hasToLine(it));
-  if (!candidates.length) candidates = items.filter(hasXfer);
-  if (!candidates.length) return null;
+  const dirMatched = items.filter(it => it && qxNorm(it.dir) === qxNorm(nxt));
+  if (!dirMatched.length) return null;
+  const facOk = dirMatched.filter(it => it.fac === "계단" || it.fac === "에스컬레이터");
+  if (!facOk.length) return null;
 
-  const doors = [...new Set(candidates.map(it => it.door).filter(Boolean))];
-  if (doors.length === 1) return doors[0];              /* 후보 전부 같은 문이면 방향 판별 없이 확정 */
+  const doorRe = /^(\d{1,2})-(\d)$/;
+  const doors = [...new Set(facOk.map(it => it.door).filter(d => typeof d === "string" && doorRe.test(d)))];
+  if (!doors.length) return null;
 
-  const dirMatched = nxt ? candidates.filter(it => typeof it.dir === "string" && it.dir.includes(nxt)) : [];
-  const dmDoors = [...new Set(dirMatched.map(it => it.door).filter(Boolean))];
-  if (dmDoors.length) return dmDoors[0];
-
-  return null;   /* 문이 갈리는데 방향으로도 못 좁히면 잘못된 힌트보다 무응답 */
+  doors.sort((a, b) => {
+    const ma = a.match(doorRe), mb = b.match(doorRe);
+    const ca = Number(ma[1]), cb = Number(mb[1]);
+    if (ca !== cb) return ca - cb;
+    return Number(ma[2]) - Number(mb[2]);
+  });
+  return doors.slice(0, 4).join(", ");
 }
-/* leg = 경로 구간 {line, from, to, stations}; toLine = 다음 구간의 노선명; "4-1" | null */
+/* leg = 경로 구간 {line, from, to, stations}; toLine = 다음 구간의 노선명; "1-1, 8-4" 형태 문자열 | null */
 async function quickTransferFor(leg, toLine) {
   if (!leg || !toLine || !Array.isArray(leg.stations) || leg.stations.length < 2) return null;
   const items = await quickExitItems(leg.line, leg.to);
   if (!items.length) return null;
   const prev = leg.stations[leg.stations.length - 2];
-  const walk = lineWalk(leg.line, prev, leg.to, 2);       /* [leg.to, leg.to 다음 역] */
-  const nxt = walk[1] || null;
+  /* leg.to에서 진행 방향(prev 반대쪽)의 이웃들 — 분기(예: 강동)면 2개 이상 */
+  const g = graphOf(leg.line) || {};
+  const fwd = [...(g[leg.to] || [])].filter(n => n !== prev);
+  let nxt = null;
+  if (fwd.length === 1) {
+    nxt = fwd[0];
+  } else if (fwd.length > 1) {
+    /* 분기: 추적 중인 열차의 종착역까지 거리가 더 가까운(=그 방향으로 더 가는) 이웃을 선택 */
+    const term = trip && trip.track && trip.track.term ? resolve(trip.track.term) : null;
+    const d = term ? distMap(leg.line, term) : null;
+    if (d) {
+      let best = null, bestD = Infinity;
+      for (const nb of fwd) { const dv = d[nb]; if (dv != null && dv < bestD) { bestD = dv; best = nb; } }
+      nxt = best || fwd[0];
+    } else {
+      nxt = fwd[0];
+    }
+  }
   return pickQuickDoor(items, toLine, nxt);
 }
 let routeRenderToken = 0;

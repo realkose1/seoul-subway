@@ -121,16 +121,22 @@ module.exports = async (req, res) => {
         return res.status(502).json({ code: "ERROR-UPSTREAM", message: redact("빠른하차정보 응답을 해석할 수 없습니다.", KEY) });
       }
 
-      const header = (parsed && parsed.header) || {};
-      if (!result.ok || (header.resultCode !== undefined && header.resultCode !== "00")) {
+      /* 실제 응답은 { response: { header, body } } 로 감싸져 있음 */
+      const root = (parsed && parsed.response) || parsed || {};
+      const header = (root && root.header) || {};
+      const resultCode = header.resultCode;
+      const okCode = resultCode === undefined || resultCode === "00" || resultCode === 0;
+      if (!result.ok || !okCode) {
         const message = redact(header.resultMsg || `빠른하차정보 호출 실패 (status ${result.status})`, KEY);
         return res.status(502).json({ code: "ERROR-UPSTREAM", message });
       }
 
-      const body = (parsed && parsed.body) || {};
+      const norm = s => String(s == null ? "" : s).trim().replace(/\(.*?\)/g, "").replace(/역$/, "");
+      const body = (root && root.body) || {};
       const rawItems = normalizeItems(body.items).filter(it =>
-        it && typeof it.lineNm === "string" && typeof it.stnNm === "string" &&
-        it.lineNm.includes(line) && it.stnNm.includes(station)
+        it && typeof it.stnNm === "string" &&
+        norm(it.stnNm) === norm(station) &&
+        String(it.lineNm || "").includes(line)
       );
       const items = rawItems.map(it => ({
         line: it.lineNm || "",
