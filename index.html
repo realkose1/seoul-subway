@@ -659,8 +659,36 @@
   .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
   @media (max-width: 767px) { .toast { bottom: 72px; } }
 
+  /* ── 목적지 도착 완료 팝업 ───────────── */
+  .td-scrim {
+    position: fixed; inset: 0; z-index: 2100;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+    background: rgba(0, 0, 0, 0.5);
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.25s ease;
+  }
+  .td-scrim.open { opacity: 1; pointer-events: auto; }
+  .tripdone {
+    width: min(320px, 100%);
+    background: var(--panel);
+    backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 12px 36px rgba(0,0,0,0.44);
+    padding: 20px 18px 16px;
+    text-align: center;
+    transform: scale(0.94); opacity: 0;
+    transition: transform 0.25s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.25s ease;
+  }
+  .td-scrim.open .tripdone { transform: scale(1); opacity: 1; }
+  .td-title { font-size: 11.5px; font-weight: 700; color: var(--muted); }
+  .td-main { font-size: 17px; font-weight: 700; margin-top: 8px; letter-spacing: -0.01em; }
+  .td-sub { font-size: 12px; color: var(--faint-text); line-height: 1.6; margin-top: 6px; }
+  .td-ok { margin-top: 16px; }
+
   @media (prefers-reduced-motion: reduce) {
-    .toast, .chip { transition: none; }
+    .toast, .chip, .td-scrim, .tripdone { transition: none; }
     .dot.live { animation: none; }
   }
 </style>
@@ -730,6 +758,16 @@
 <button class="list-fab" id="listFab">운행 열차</button>
 
 <div class="toast" id="toast"></div>
+
+<!-- 목적지 도착 완료 팝업 (네이티브 앱이 자체 알럿을 지원하면 대신 그쪽을 쓴다) -->
+<div class="td-scrim" id="tripDoneScrim">
+  <div class="tripdone" id="tripDone" role="dialog" aria-modal="true" aria-labelledby="tripDoneTitle">
+    <div class="td-title" id="tripDoneTitle">목적지 도착</div>
+    <div class="td-main" id="tripDoneMain"></div>
+    <div class="td-sub" id="tripDoneSub"></div>
+    <button class="route-go td-ok" id="tripDoneOk">확인</button>
+  </div>
+</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="config.js"></script>
@@ -2889,7 +2927,10 @@ if (NATIVE) {
           const cur = resolve(ev.cur);
           if (cur) { trip.track.cur = cur; trip.track.sttus = String(ev.sttus || ""); trip.track.seenAt = Number(ev.at) || Date.now(); }
         }
-        if (ev.type === "legEnd") tripLegReached(Number(ev.legIdx));
+        if (ev.type === "legEnd") {
+          tripLegReached(Number(ev.legIdx));
+          if (!trip) return;   /* 목적지 도착 → tripComplete가 이미 정리했다(여기서 또 postTrip하면 안 됨) */
+        }
         renderRoute(); postTrip(); postCard();
       } catch (e) {}
     },
@@ -4023,6 +4064,7 @@ function startTrip() {
     waitKnown: waitSec != null,
     lines, stations, legIdx: 0,
     baseLeg: 0, track: null, pick: null, trackLost: false, arrived: false, alightNotifiedLeg: -1,   /* 탄 열차 추적 상태 */
+    completed: false,             /* 도착 완료 처리(tripComplete)는 주행당 한 번만 */
   };
   routeMode = "trip";
   drawTripRoute();              /* 지도엔 경로 구간만 강조(열차 필터는 tripTrainVisible) */
@@ -4434,7 +4476,7 @@ function tripBoard(no, legIdx) {
 function tripLegReached(legIdx) {
   if (!trip || !trip.track || trip.track.legIdx !== legIdx) return;
   if (legIdx >= trip.result.segments.length - 1) {
-    trip.arrived = true; trip.track = null; haptic("heavy");          /* 목적지 도착 */
+    tripComplete("track");        /* 목적지 도착 → 안내 종료 + 완료 팝업 */
   } else {
     /* 환승역 도착: 이 열차 추적 종료 → 환승 시간 뒤 승차로 가정하고 다음 열차를 다시 고르게 */
     const nextLeg = legIdx + 1;
@@ -4444,6 +4486,49 @@ function tripLegReached(legIdx) {
     /* 사용자가 고르지 않아도, 환승 도보 시간이 지난 뒤 승강장에 있는 가장 빠른 열차로 자동 선택해 추적을 잇는다 */
     if (trip.pick) trip.pick.autoFrom = Date.now() + TRIP_AUTO_BOARD_MS;
   }
+}
+/* 목적지 도착 처리의 단일 경로 — 주행 1회당 정확히 한 번만 실행된다.
+   들어오는 길은 셋: (a) 추적 중 마지막 구간 도달(tripLegReached),
+   (b) 시간 기준 폴백에서 남은 시간 소진(tripTick), (c) 네이티브 백그라운드 legEnd(→ tripLegReached). */
+function tripComplete(reason) {
+  if (!trip || trip.completed) return;   /* 재진입 방지 */
+  trip.completed = true;
+  const summary = {
+    from: trip.from, to: trip.to,
+    elapsedMin: Math.max(0, Math.round((Date.now() - (trip.startedAt || Date.now())) / 60000)),
+    transfers: (trip.result && trip.result.transfers) || 0,
+    plannedMin: (trip.result && trip.result.totalMin) || 0,
+  };
+  trip.arrived = true; trip.track = null;
+  haptic("heavy");              /* 네이티브 햅틱에 success 단계는 없다 → 가장 강한 heavy */
+  postTrip();                   /* done:true를 한 번 보내 라이브 액티비티가 '도착'을 보여주고 스스로 정리하게 */
+  closeCardReset();             /* X 버튼과 똑같이 카드 닫기 + 경로/지도 복구 (확인 대화상자는 생략) */
+  showTripDone(summary);
+}
+let tripDoneTimer = null;
+/* 완료 팝업. 네이티브 앱이 자체 알럿을 지원하면(구 빌드는 미지원) 메시지만 보내고 웹 모달은 띄우지 않는다. */
+function showTripDone(s) {
+  if (NATIVE && window.__nativeCaps && window.__nativeCaps.tripDone) {
+    try {
+      window.webkit.messageHandlers.ui.postMessage({
+        type: "tripDone", from: s.from, to: s.to, elapsedMin: s.elapsedMin, transfers: s.transfers,
+      });
+    } catch (e) {}
+    return;
+  }
+  const scrim = document.getElementById("tripDoneScrim");
+  if (!scrim) return;
+  document.getElementById("tripDoneMain").textContent = `${s.to}에 도착했습니다`;
+  document.getElementById("tripDoneSub").textContent =
+    `${s.from} → ${s.to} · ${s.elapsedMin}분 소요` + (s.transfers ? ` · 환승 ${s.transfers}회` : "");
+  scrim.classList.add("open");
+  clearTimeout(tripDoneTimer);
+  tripDoneTimer = setTimeout(hideTripDone, 20000);   /* 자리를 비운 사이 도착했어도 팝업이 영영 남지 않도록 */
+}
+function hideTripDone() {
+  clearTimeout(tripDoneTimer); tripDoneTimer = null;
+  const scrim = document.getElementById("tripDoneScrim");
+  if (scrim) scrim.classList.remove("open");
 }
 const TRIP_AUTO_BOARD_MS = 3 * 60000;   /* 환승 도보 추정 — 이 전에 떠나는 열차는 탈 수 없다고 본다 */
 /* 네이티브 백그라운드 추적용 페이로드: 탄 열차·이번 구간 역 목록·이후 구간 소요 */
@@ -4505,6 +4590,8 @@ function tripTick() {
   if (!trip) { clearInterval(tripTimer); tripTimer = null; return; }
   /* 다음 역에서 내려야 하면 구간당 한 번, 강한 햅틱으로 알린다 */
   const p = tripProgress();
+  /* 열차를 추적하지 못하는 동안(시간 기준 폴백)에도 남은 시간이 0이 되면 도착으로 본다 */
+  if (p && p.done && !p.tracking) { tripComplete("time"); return; }
   if (p && p.alight && trip.alightNotifiedLeg !== p.legIdx) { trip.alightNotifiedLeg = p.legIdx; haptic("alight"); }
   renderRoute();
   postTrip();
@@ -4638,6 +4725,8 @@ document.getElementById("scClose").addEventListener("click", () => {
   if (trip && !NATIVE && !confirm("안내를 종료할까요?\n진행 중인 경로 안내가 종료됩니다.")) return;
   closeCardReset();
 });
+document.getElementById("tripDoneOk").addEventListener("click", () => { haptic(); hideTripDone(); });
+document.getElementById("tripDoneScrim").addEventListener("click", e => { if (e.target === e.currentTarget) hideTripDone(); });
 document.getElementById("scRefresh").addEventListener("click", () => {
   const btn = document.getElementById("scRefresh");
   if (btn.classList.contains("spinning")) return;
