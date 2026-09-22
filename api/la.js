@@ -16,6 +16,7 @@
      POST ?op=end       {tripId, local}
      GET  ?op=tick      헤더 x-cron-secret (chain=1 이면 체인 모드, dry=1 이면 계산만)
      GET  ?op=diag      헤더 x-cron-secret — 환경 점검(값은 안 돌려준다)
+                        probe=1 이면 APNs 에 실제로 한 번 쏴서 키/토픽 설정을 확인한다
 
    환경변수: APNS_KEY, APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID, SUPABASE_URL,
              SUPABASE_SERVICE_KEY 또는 SUPABASE_ANON_KEY(또는 SUPABASE_ANON_FALLBACK),
@@ -33,9 +34,22 @@ const DISMISS_AFTER_SEC = 8;
 const CHAIN_ROUND_MS = 50 * 1000;         /* 이 시각(호출 시작 기준)에 다음 틱을 띄운다 */
 const CHAIN_RACE_MS = 1500;               /* 다음 틱 호출은 이만큼만 기다리고 응답한다 */
 const LOCK_TTL_MS = 75 * 1000;            /* 체인 잠금 임대 — 한 라운드(60초)보다 넉넉히 */
+const PROBE_TOKEN = "0".repeat(64);       /* 일부러 틀린 기기 토큰 — APNs 가 '키는 맞다'까지만 알려주게 한다 */
+const PROBE_TIMEOUT_MS = 8000;
+
+/* 테스트에서 APNs 전송을 갈아끼울 수 있게 한 겹 둔다 */
+let pusherFactory = createPusher;
+
+const PROBE_STATE = {
+  remainMin: 0, arriveAt: "", line: "", colorHex: "#8A8F98", nextStation: "", legTo: "",
+  isLast: true, done: false, waiting: false, waitMin: 0, toLine: "", toColorHex: "#8A8F98",
+  alight: false, endEpoch: 0,
+};
 
 const iso = (ms) => new Date(ms).toISOString();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/* 경쟁용 타임아웃 — 먼저 끝나면 타이머가 프로세스를 붙잡지 않도록 unref 한다 */
+const timeoutIn = (ms, val) => new Promise((r) => { const t = setTimeout(() => r(val), ms); if (t.unref) t.unref(); });
 
 /* 틱 인증. LA_CRON_SECRET 를 직접 정하는 쪽이 낫지만, 없으면 APNs 키 식별자에서 유도해
    체인이 추가 설정 없이 스스로를 인증할 수 있게 한다(값 자체는 밖으로 나가지 않는다). */
@@ -126,7 +140,7 @@ async function opEnd(req, res) {
   if (!local) {
     const row = await store.getTrip(tripId);
     if (row && row.token) {
-      const pusher = createPusher();
+      const pusher = pusherFactory();
       try {
         const st = Object.assign({}, row.state || {}, { done: true, waiting: false, alight: false });
         const r = await pusher.send({
@@ -206,7 +220,7 @@ async function opTick(req, res) {
   let pushed = 0, ended = 0, errors = 0;
   const dead = [], remove = [], save = [];
   const byId = new Map(rows.map((r) => [r.trip_id, r]));
-  const pusher = createPusher();
+  const pusher = pusherFactory();
   try {
     await Promise.all(results.filter(Boolean).map(async (x) => {
       let isDead = false;
@@ -277,6 +291,32 @@ async function opDiag(req, res) {
     } catch (e) { reachable = 0; }
   }
 
+  /* probe=1: 진짜 APNs 에 한 번 쏴 본다(기기 토큰은 0 x64 라 배달되지 않는다).
+     reason 으로 무엇이 틀렸는지 갈린다 —
+       BadDeviceToken  → 키/kid/team/topic 은 통과. 설정 정상
+       InvalidProviderToken(403) → APNS_KEY / KEY_ID / TEAM_ID 가 틀림
+       TopicDisallowed(400)      → APNS_BUNDLE_ID(토픽)가 틀림 */
+  let probe;
+  if (req.query.probe === "1" || req.query.probe === "true") {
+    const want = String(req.query.probeEnv || "both");
+    const envs = want === "prod" || want === "sandbox" ? [want] : ["prod", "sandbox"];
+    const pusher = pusherFactory();
+    probe = {};
+    try {
+      await Promise.all(envs.map(async (e) => {
+        try {
+          const r = await Promise.race([
+            pusher.send({ token: PROBE_TOKEN, env: e, contentState: PROBE_STATE, event: "update", priority: 5, staleSec: 60 }),
+            timeoutIn(PROBE_TIMEOUT_MS + 500, { status: 0, reason: "timeout" }),
+          ]);
+          probe[e] = { status: r.status || 0, reason: r.reason || "" };   /* 토큰·페이로드는 싣지 않는다 */
+        } catch (err) {
+          probe[e] = { status: 0, reason: String((err && err.message) || err) };
+        }
+      }));
+    } finally { try { pusher.close(); } catch (e) {} }
+  }
+
   return res.status(200).json({
     apns: {
       keyPresent: !!rawKey,
@@ -292,6 +332,7 @@ async function opDiag(req, res) {
     feed: { subwayKeyPresent: !!process.env.SUBWAY_API_KEY },
     self: selfUrl(),
     secretSource: process.env.LA_CRON_SECRET ? "env" : "derived",
+    probe,
   });
 }
 
@@ -319,3 +360,5 @@ module.exports.CHAIN_ROUND_MS = CHAIN_ROUND_MS;
 module.exports.LOCK_TTL_MS = LOCK_TTL_MS;
 module.exports.cronSecret = cronSecret;
 module.exports.selfUrl = selfUrl;
+/* 테스트 전용 — APNs 전송을 갈아끼운다(원복하려면 인자 없이 호출) */
+module.exports._setPusherFactory = (fn) => { pusherFactory = fn || createPusher; };

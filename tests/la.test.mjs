@@ -572,3 +572,45 @@ test("normalizePem — 제대로 된 PEM 은 그대로, 한 줄로 뭉친 본문
   assert.equal(normalizePem(""), "");
   assert.equal(normalizePem("not-a-key"), "not-a-key");   // 알아볼 수 없으면 건드리지 않는다
 });
+
+test("handler — diag probe 는 환경별로 한 번씩 쏘고 상태/이유만 돌려준다", async () => {
+  envUp();
+  const sent = [];
+  handler._setPusherFactory(() => ({
+    send: async (o) => { sent.push(o); return { status: o.env === "sandbox" ? 403 : 400, reason: o.env === "sandbox" ? "InvalidProviderToken" : "BadDeviceToken", body: '{"reason":"…"}' }; },
+    close: () => {},
+  }));
+  const f = installFetch({ rows: [] });
+  try {
+    let res = await call({ query: { op: "diag", probe: "1" }, headers: { "x-cron-secret": "s3cr3t" } });
+    assert.equal(res.code, 200);
+    assert.deepEqual(res.body.probe, {
+      prod: { status: 400, reason: "BadDeviceToken" },
+      sandbox: { status: 403, reason: "InvalidProviderToken" },
+    });
+    assert.deepEqual(sent.map((s) => s.env).sort(), ["prod", "sandbox"]);
+    assert.equal(sent[0].token, "0".repeat(64));
+    assert.equal(sent[0].event, "update");
+    const dump = JSON.stringify(res.body);
+    assert.ok(!dump.includes("0000"), "기기 토큰이 응답에 실리면 안 된다");
+    assert.ok(!dump.includes("content-state") && !dump.includes("endEpoch"), "페이로드가 응답에 실리면 안 된다");
+
+    /* probeEnv 로 한쪽만 */
+    sent.length = 0;
+    res = await call({ query: { op: "diag", probe: "1", probeEnv: "prod" }, headers: { "x-cron-secret": "s3cr3t" } });
+    assert.deepEqual(Object.keys(res.body.probe), ["prod"]);
+    assert.equal(sent.length, 1);
+
+    /* 전송이 던져도 {status:0, reason:<message>} 로 살려 준다 */
+    handler._setPusherFactory(() => ({ send: async () => { throw new Error("connect ECONNREFUSED"); }, close: () => {} }));
+    res = await call({ query: { op: "diag", probe: "1", probeEnv: "sandbox" }, headers: { "x-cron-secret": "s3cr3t" } });
+    assert.deepEqual(res.body.probe.sandbox, { status: 0, reason: "connect ECONNREFUSED" });
+
+    /* probe 없이 부르면 아무것도 쏘지 않는다 */
+    sent.length = 0;
+    handler._setPusherFactory(() => ({ send: async () => { sent.push(1); return { status: 200 }; }, close: () => {} }));
+    res = await call({ query: { op: "diag" }, headers: { "x-cron-secret": "s3cr3t" } });
+    assert.equal(res.body.probe, undefined);
+    assert.equal(sent.length, 0);
+  } finally { f.restore(); handler._setPusherFactory(null); }
+});

@@ -135,6 +135,13 @@ curl -s -H "x-cron-secret: $S" "https://seoul-subway-lyart.vercel.app/api/la?op=
 # 환경 점검(키 값은 안 나온다 — 존재 여부·길이·파싱 성공, Supabase 도달 상태코드만)
 curl -s -H "x-cron-secret: $S" "https://seoul-subway-lyart.vercel.app/api/la?op=diag" | jq
 
+# APNs 실제 왕복 점검(기기 토큰 0x64 로 한 번 쏴 본다 — 배달되지 않는다)
+curl -s -H "x-cron-secret: $S" "https://seoul-subway-lyart.vercel.app/api/la?op=diag&probe=1" | jq .probe
+#   BadDeviceToken            → 키·kid·team·토픽 모두 정상(기기 토큰만 가짜)
+#   InvalidProviderToken/403  → APNS_KEY / APNS_KEY_ID / APNS_TEAM_ID 가 틀림
+#   TopicDisallowed/400       → APNS_BUNDLE_ID(토픽)가 틀림
+#   probeEnv=prod|sandbox 로 한쪽만 볼 수 있다(기본 both)
+
 # 시크릿 없이 → 401
 curl -s -o /dev/null -w '%{http_code}\n' "https://seoul-subway-lyart.vercel.app/api/la?op=tick"
 ```
