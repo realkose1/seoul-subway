@@ -132,6 +132,9 @@ curl -s -H "x-cron-secret: $S" "https://seoul-subway-lyart.vercel.app/api/la?op=
 curl -s -H "x-cron-secret: $S" "https://seoul-subway-lyart.vercel.app/api/la?op=tick&chain=1" | jq
 # → {"rows":1,...,"chain":{"cid":"…","remaining":1,"next":true}}   (응답까지 ~51초)
 
+# 환경 점검(키 값은 안 나온다 — 존재 여부·길이·파싱 성공, Supabase 도달 상태코드만)
+curl -s -H "x-cron-secret: $S" "https://seoul-subway-lyart.vercel.app/api/la?op=diag" | jq
+
 # 시크릿 없이 → 401
 curl -s -o /dev/null -w '%{http_code}\n' "https://seoul-subway-lyart.vercel.app/api/la?op=tick"
 ```

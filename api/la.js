@@ -15,6 +15,7 @@
      POST ?op=update    같은 형식(부분 허용) — 앱이 포그라운드면 paused:true 로 서버 푸시를 멈춘다
      POST ?op=end       {tripId, local}
      GET  ?op=tick      헤더 x-cron-secret (chain=1 이면 체인 모드, dry=1 이면 계산만)
+     GET  ?op=diag      헤더 x-cron-secret — 환경 점검(값은 안 돌려준다)
 
    환경변수: APNS_KEY, APNS_KEY_ID, APNS_TEAM_ID, APNS_BUNDLE_ID, SUPABASE_URL,
              SUPABASE_SERVICE_KEY 또는 SUPABASE_ANON_KEY(또는 SUPABASE_ANON_FALLBACK),
@@ -252,17 +253,57 @@ async function opTick(req, res) {
   return res.status(200).json({ rows: rows.length, pushed, ended, errors, chain: chain ? { cid, remaining, next } : undefined });
 }
 
+/* ── op=diag ─────────────────────────────────────────────────────────────── */
+/* 배포 환경 점검 — 값은 절대 돌려주지 않는다(존재 여부·길이·파싱 성공만). */
+async function opDiag(req, res) {
+  if (req.headers["x-cron-secret"] !== cronSecret()) return res.status(401).json({ error: "unauthorized" });
+
+  const rawKey = process.env.APNS_KEY || "";
+  const key = rawKey.replace(/\\n/g, "\n");
+  let keyParses = false;
+  if (key) { try { crypto.createPrivateKey(key); keyParses = true; } catch (e) { keyParses = false; } }
+
+  const keySource = process.env.SUPABASE_SERVICE_KEY ? "service"
+    : process.env.SUPABASE_ANON_KEY ? "anon-env"
+    : process.env.SUPABASE_ANON_FALLBACK ? "anon-fallback"
+    : store.apiKey() ? "anon-builtin" : "none";   /* lib/supabase.js 의 공개 anon 폴백 */
+
+  let reachable = 0;
+  if (process.env.SUPABASE_URL && keySource !== "none") {
+    try {
+      const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/${store.CACHE_TABLE}?select=date&limit=1`, { headers: store.sbHeaders() });
+      reachable = r.status;
+    } catch (e) { reachable = 0; }
+  }
+
+  return res.status(200).json({
+    apns: {
+      keyPresent: !!rawKey,
+      keyLooksPem: key.includes("BEGIN PRIVATE KEY"),
+      keyParses,
+      keyIdLen: (process.env.APNS_KEY_ID || "").length,
+      teamIdLen: (process.env.APNS_TEAM_ID || "").length,
+      bundleId: process.env.APNS_BUNDLE_ID || "",
+    },
+    supabase: { url: process.env.SUPABASE_URL || "", keySource, reachable, table: store.dedicatedTable() || store.CACHE_TABLE },
+    feed: { subwayKeyPresent: !!process.env.SUBWAY_API_KEY },
+    self: selfUrl(),
+    secretSource: process.env.LA_CRON_SECRET ? "env" : "derived",
+  });
+}
+
 /* ── 라우팅 ──────────────────────────────────────────────────────────────── */
 module.exports = async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   const op = String((req.query && req.query.op) || "");
   try {
     if (op === "tick") return await opTick(req, res);
+    if (op === "diag") return await opDiag(req, res);
     if (req.method !== "POST") return res.status(405).json({ error: "POST required" });
     if (op === "register") return await opRegister(req, res, { isUpdate: false });
     if (op === "update") return await opRegister(req, res, { isUpdate: true });
     if (op === "end") return await opEnd(req, res);
-    return res.status(400).json({ error: "unknown op (register|update|end|tick)" });
+    return res.status(400).json({ error: "unknown op (register|update|end|tick|diag)" });
   } catch (e) {
     console.error("[la]", op, (e && e.stack) || e);
     if (res.headersSent) return;

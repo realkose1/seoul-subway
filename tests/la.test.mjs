@@ -488,3 +488,50 @@ test("handler — 만료·paused 행만 있으면 틱은 아무것도 하지 않
     assert.equal(f.seen.writes.length, 0);
   } finally { f.restore(); }
 });
+
+test("handler — op=diag 는 시크릿을 요구하고 값은 절대 돌려주지 않는다", async () => {
+  envUp();
+  assert.equal((await call({ query: { op: "diag" } })).code, 401);
+
+  process.env.APNS_KEY = "not-a-real-key";
+  process.env.APNS_KEY_ID = "ABCDE12345";
+  process.env.APNS_TEAM_ID = "P7ZN2XXS75";
+  process.env.APNS_BUNDLE_ID = "com.sehyunko.SeoulSubwayLive";
+  const f = installFetch({ rows: [] });
+  try {
+    const res = await call({ query: { op: "diag" }, headers: { "x-cron-secret": "s3cr3t" } });
+    assert.equal(res.code, 200);
+    const b = res.body;
+    assert.deepEqual(b.apns, {
+      keyPresent: true, keyLooksPem: false, keyParses: false,
+      keyIdLen: 10, teamIdLen: 10, bundleId: "com.sehyunko.SeoulSubwayLive",
+    });
+    assert.equal(b.supabase.keySource, "anon-env");
+    assert.equal(b.supabase.table, "sf_cache");
+    assert.equal(b.supabase.reachable, 200);
+    assert.equal(b.feed.subwayKeyPresent, true);
+    assert.equal(b.self, "https://self.test");
+    assert.equal(b.secretSource, "env");
+    const dump = JSON.stringify(b);
+    for (const v of ["not-a-real-key", "fake-anon", "s3cr3t", "ABCDE12345", "P7ZN2XXS75"]) {
+      assert.ok(!dump.includes(v), `diag 응답에 ${v.slice(0, 4)}… 가 들어가면 안 된다`);
+    }
+  } finally { f.restore(); delete process.env.APNS_KEY; }
+});
+
+test("handler — diag keySource: 서비스 키 / 코드 내장 폴백", async () => {
+  envUp();
+  const f = installFetch({ rows: [] });
+  try {
+    process.env.SUPABASE_SERVICE_KEY = "svc";
+    let res = await call({ query: { op: "diag" }, headers: { "x-cron-secret": "s3cr3t" } });
+    assert.equal(res.body.supabase.keySource, "service");
+    assert.ok(!JSON.stringify(res.body).includes("svc"));
+
+    delete process.env.SUPABASE_SERVICE_KEY;
+    delete process.env.SUPABASE_ANON_KEY;
+    res = await call({ query: { op: "diag" }, headers: { "x-cron-secret": "s3cr3t" } });
+    assert.equal(res.body.supabase.keySource, "anon-builtin");   // lib/supabase.js 의 공개 anon 폴백
+    assert.ok(!JSON.stringify(res.body).includes("eyJ"), "키가 응답에 실리면 안 된다");
+  } finally { f.restore(); envUp(); }
+});
