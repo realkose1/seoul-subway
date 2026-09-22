@@ -4603,7 +4603,7 @@ function drawTripRoute() {
   try {
     adapter.clearLine();
     for (const s of trip.result.segments) {
-      const pts = s.stations.map(n => stnOn(s.line, n) || stnOn(s.line, resolve(n))).filter(Boolean);
+      const pts = smoothSeg(s.line, s.stations.map(n => (STN[n] ? n : resolve(n)))).filter(Boolean);
       if (pts.length > 1) adapter.addPolyline(pts, s.color);
       if (adapter.addStation) for (const n of s.stations) { const p = stnOn(s.line, n) || stnOn(s.line, resolve(n)); if (p) adapter.addStation(n, p, n === s.from || n === s.to, s.color); }
     }
