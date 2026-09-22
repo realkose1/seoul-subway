@@ -3,61 +3,98 @@
 주행 안내 라이브 액티비티를 **서버가** 갱신한다. 앱이 `UIBackgroundModes: location` 으로
 백그라운드에서 열차를 폴링하던 방식(App Review 거절 사유)을 대체한다.
 
+**설정에 SQL 실행도, 크론 등록도 필요 없다.** Vercel 환경변수만 넣으면 된다.
+
 ```
 앱  ── 액티비티 시작(pushType: .token) ──▶ push token
-    ── POST /api/la?op=register {tripId, token, env, attrs, state, track} ──▶ Supabase ssl_live_trips
-Supabase pg_cron (1분) ── GET /api/la?op=tick (x-cron-secret) ──▶ Vercel
-    서버가 서울 실시간 위치 피드로 열차를 따라가며 ActivityKit 업데이트를 푸시
+    ── POST /api/la?op=register {tripId, token, env, attrs, state, track} ──▶ sf_cache 행 1개
+    └─ 서버가 체인 시작: /api/la?op=tick&chain=1
+         틱: 서울 실시간 위치 피드로 열차 추적 → ActivityKit 푸시
+         → ~50초 기다렸다가 자기 자신을 다시 호출 → 활성 주행이 없어지면 멈춤
 ```
 
 ## 파일
 
 | 파일 | 역할 |
 | --- | --- |
-| `api/la.js` | register / update / end / tick 한 함수 (op 라우팅) |
+| `api/la.js` | register / update / end / tick 한 함수 (op 라우팅) + 자기 호출 체인 |
 | `lib/trip-state.js` | 상태 머신 (Swift `bgPoll`/`bgApply` 이식) |
 | `lib/la-core.js` | 틱 1행 계산 — 다음 상태 + 보낼 푸시 결정 (순수 함수) |
 | `lib/apns.js` | ES256 JWT + HTTP/2 전송 |
-| `lib/supabase.js` | REST(service_role) 헬퍼 |
+| `lib/supabase.js` | 저장소(sf_cache 매핑) + 체인 잠금 |
 | `lib/position-feed.js` | 실시간 위치 피드 (`api/position.js` 와 공유) |
-| `db/live_activity.sql` | 테이블 + 인덱스 + pg_cron |
+| `db/live_activity.sql` | **선택** — 전용 테이블/pg_cron 경로(안 써도 된다) |
 | `tests/la.test.mjs` | `node --test tests/la.test.mjs` |
 
 > `lib/` 는 `api/` 밖이라 Vercel 이 서버리스 함수로 배포하지 않는다(번들에는 포함).
 
-## 1. Vercel 환경변수
+## 1. Vercel 환경변수 (이게 전부다)
 
 Project → Settings → Environment Variables (Production + Preview):
 
-| 이름 | 값 |
-| --- | --- |
-| `APNS_KEY` | `AuthKey_XXXXXXXXXX.p8` 파일 **내용 전체** (`-----BEGIN PRIVATE KEY-----` 포함). 줄바꿈은 실제 개행 또는 `\n` 둘 다 됨 |
-| `APNS_KEY_ID` | 그 키의 10자리 Key ID |
-| `APNS_TEAM_ID` | `P7ZN2XXS75` |
-| `APNS_BUNDLE_ID` | `com.sehyunko.SeoulSubwayLive` (코드가 `.push-type.liveactivity` 를 붙인다 — 여기엔 붙이지 말 것) |
-| `SUPABASE_URL` | `https://<project>.supabase.co` |
-| `SUPABASE_SERVICE_KEY` | service_role 키 (**서버 전용**) |
-| `LA_CRON_SECRET` | 임의의 긴 문자열 — 틱 인증용 |
-| `SUBWAY_API_KEY` | 이미 설정돼 있음 |
+| 이름 | 필수 | 값 |
+| --- | :---: | --- |
+| `APNS_KEY` | ● | `AuthKey_XXXXXXXXXX.p8` 파일 **내용 전체** (`-----BEGIN PRIVATE KEY-----` 포함). 줄바꿈은 실제 개행 또는 `\n` 둘 다 됨 |
+| `APNS_KEY_ID` | ● | 그 키의 10자리 Key ID |
+| `APNS_TEAM_ID` | ● | `P7ZN2XXS75` |
+| `APNS_BUNDLE_ID` | ● | `com.sehyunko.SeoulSubwayLive` (코드가 `.push-type.liveactivity` 를 붙인다 — 여기엔 붙이지 말 것) |
+| `SUPABASE_URL` | ● | `https://<project>.supabase.co` |
+| `SUPABASE_SERVICE_KEY` 또는 `SUPABASE_ANON_KEY` | ● | 둘 중 하나. service 키가 있으면 그걸 먼저 쓴다. 둘 다 없으면 `SUPABASE_ANON_FALLBACK` 을 본다 (키 값은 코드에 없다) |
+| `SUBWAY_API_KEY` | ● | 이미 설정돼 있음 |
+| `LA_CRON_SECRET` | ○ | 틱 인증용. **넣는 쪽을 권장.** 없으면 `sha256(APNS_KEY_ID + "|" + APNS_TEAM_ID)` 로 유도해 체인이 스스로를 인증한다 |
+| `LA_SELF_URL` | ○ | 체인이 호출할 자기 주소. 없으면 `https://$VERCEL_PROJECT_PRODUCTION_URL`, 그것도 없으면 `https://seoul-subway-lyart.vercel.app` |
+| `LA_TABLE` | ○ | `ssl_live_trips` 로 두면 `db/live_activity.sql` 의 전용 테이블을 쓴다. 기본은 `sf_cache` |
 
 `env` 는 행마다 저장한다: Xcode 디버그 빌드 = `"sandbox"`, TestFlight/App Store = `"prod"`.
 잘못 넣으면 APNs 가 `BadDeviceToken` 을 돌려주고 서버가 그 행을 지운다.
 
-## 2. Supabase
+## 2. 저장소 — 기존 `public.sf_cache` 를 그대로 쓴다
 
-SQL Editor 에서 `db/live_activity.sql` 실행. 그 전에 확장이 필요하다:
+새 테이블도, RLS 정책도 만들지 않는다. 그 앱이 쓰던 키/값 캐시 테이블
+(`date text pk`, `events jsonb`, `updated_at timestamptz`, anon 이 select/upsert/delete 가능)에
+접두사를 붙여 얹는다:
+
+| date | events |
+| --- | --- |
+| `ssl:la:<tripId>` | `{ tripId, token, env, attrs, state, track, paused, last_push_at, last_feed_at, expires_at }` |
+| `ssl:la:lock` | `{ id, until }` — 체인 잠금 |
+
+접두사 덕에 그 앱의 날짜 행(`2026-09-22`)·라인업 행(`af-lineup-…`)과 섞이지 않는다.
+목록 조회는 `GET /rest/v1/sf_cache?date=like.ssl:la:*&select=date,events` 로 받아
+`paused=false` / `expires_at > now` 를 JS 에서 거른다.
+
+행 상태 보기 (Supabase SQL Editor):
 
 ```sql
-create extension if not exists pg_cron;
-create extension if not exists pg_net;
+select date, events->>'paused' as paused, events->'state' as state
+  from sf_cache where date like 'ssl:la:%';
 ```
 
-파일 안의 `REPLACE_ME` 를 `LA_CRON_SECRET` 값으로 바꾼 뒤 `cron.schedule(...)` 을 실행한다.
-30초 간격이 필요하면 주석 처리된 `'30 seconds'` 버전을 쓴다(pg_cron 1.5 이상).
+찌꺼기 청소:
 
-테이블 `ssl_live_trips` 는 RLS 를 켜고 anon 정책을 주지 않는다 — 서버(service_role)만 접근한다.
+```sql
+delete from sf_cache
+ where date like 'ssl:la:%' and (events->>'expires_at')::timestamptz < now();
+```
 
-## 3. 앱이 부르는 API
+## 3. 스케줄러 — 자기 호출 체인
+
+Vercel Hobby 에는 분 단위 크론이 없다. 그래서 서버가 스스로를 이어 부른다.
+
+1. `op=register` / `op=update` 가 `paused:false` 면 **잠금이 비어 있을 때만** 체인을 띄운다
+   (`fetch(<self>/api/la?op=tick&chain=1&cid=<uuid>)` — 1.5초만 기다리고 응답한다).
+2. 체인 틱은 `ssl:la:lock` 이 없거나·만료됐거나·자기 `cid` 일 때만 진행한다(중복 체인 방지).
+   진행하면 임대를 `now + 75초` 로 갱신한다.
+3. 할 일을 마친 뒤, 활성 주행이 남아 있으면 **호출 시작 기준 50초**가 될 때까지 기다렸다가
+   다음 틱을 띄우고 응답한다(총 ~51.5초, `maxDuration` 60초 안).
+4. 활성 주행이 0이면 잠금을 지우고 체인이 끝난다. 다음 `register/update` 가 다시 띄운다.
+5. `chain` 없는 `op=tick` 은 예전처럼 한 번만 돈다 — 외부 크론(pg_cron, cron-job.org 등)을
+   나중에 붙이고 싶으면 그대로 쓰면 된다(`db/live_activity.sql` 주석 참고).
+
+한계: 한 라운드가 ~50초라 갱신 주기는 약 50초다. 더 촘촘히 원하면 `CHAIN_ROUND_MS` 를 줄인다
+(호출 횟수가 늘어난다).
+
+## 4. 앱이 부르는 API
 
 ```
 POST /api/la?op=register
@@ -72,24 +109,28 @@ POST /api/la?op=end      // {"tripId":"…","local":true}  local:true 면 푸시
 ```
 
 - 앱이 **포그라운드**일 땐 `paused:true` — 앱이 직접 액티비티를 갱신하므로 서버는 건너뛴다.
-- 백그라운드로 갈 때 `paused:false` + 최신 `state`/`track` 을 `op=update` 로 보낸다.
-- `op=update` 는 행 수명(`expires_at`)을 3시간 뒤로 연장한다. 앱이 죽어도 3시간이면 멈춘다.
+- 백그라운드로 갈 때 `paused:false` + 최신 `state`/`track` 을 `op=update` 로 보낸다(= 체인 시작).
+- `op=register/update` 는 행 수명(`expires_at`)을 3시간 뒤로 연장한다. 앱이 죽어도 3시간이면 멈춘다.
 - `track` 이 `null` 이면(아직 탈 열차 미선택) 서버는 상태를 그대로 두고 아무것도 보내지 않는다.
 
 `content-state` 의 키는 `TripActivity/TripAttributes.swift` 의 `ContentState` 와 **정확히** 같아야 한다
 (다르면 iOS 가 조용히 무시한다). 테스트가 이 키 집합을 검사한다.
 
-## 4. 확인
+## 5. 확인
 
 ```bash
-# 계산만(푸시·DB 쓰기 없음) — 지금 추적 중인 행들의 다음 상태를 그대로 보여준다
-curl -s -H "x-cron-secret: $LA_CRON_SECRET" \
-  "https://seoul-subway-lyart.vercel.app/api/la?op=tick&dry=1" | jq
+S=<LA_CRON_SECRET>   # 안 넣었다면: node -e 'console.log(require("crypto").createHash("sha256").update(process.env.APNS_KEY_ID+"|"+process.env.APNS_TEAM_ID).digest("hex"))'
 
-# 실제 틱
-curl -s -H "x-cron-secret: $LA_CRON_SECRET" \
-  "https://seoul-subway-lyart.vercel.app/api/la?op=tick"
+# 계산만(푸시·DB 쓰기·체인 없음) — 지금 추적 중인 행들의 다음 상태를 그대로 보여준다
+curl -s -H "x-cron-secret: $S" "https://seoul-subway-lyart.vercel.app/api/la?op=tick&dry=1" | jq
+
+# 한 번만 돌리기(체인 없음)
+curl -s -H "x-cron-secret: $S" "https://seoul-subway-lyart.vercel.app/api/la?op=tick"
 # → {"rows":3,"pushed":2,"ended":0,"errors":0}
+
+# 체인 상태까지 보기
+curl -s -H "x-cron-secret: $S" "https://seoul-subway-lyart.vercel.app/api/la?op=tick&chain=1" | jq
+# → {"rows":1,...,"chain":{"cid":"…","remaining":1,"next":true}}   (응답까지 ~51초)
 
 # 시크릿 없이 → 401
 curl -s -o /dev/null -w '%{http_code}\n' "https://seoul-subway-lyart.vercel.app/api/la?op=tick"
@@ -97,21 +138,9 @@ curl -s -o /dev/null -w '%{http_code}\n' "https://seoul-subway-lyart.vercel.app/
 
 `errors` 는 APNs 가 200 이 아닌 경우의 수다. 자세한 이유(`BadDeviceToken`, `TooManyRequests` 등)는
 Vercel → Logs 에 `[la] push fail <tripId> <status> <reason>` 으로 찍힌다.
+체인이 도는지는 Vercel → Logs 에서 `/api/la?op=tick&chain=1` 호출이 ~50초 간격으로 이어지는지 보면 된다.
 
-크론이 실제로 호출했는지는 Supabase SQL Editor 에서:
-
-```sql
-select id, status_code, left(content, 300) as body, created
-  from net._http_response order by created desc limit 20;
-
-select jobid, status, return_message, start_time
-  from cron.job_run_details order by start_time desc limit 20;
-```
-
-`status_code` 가 401 이면 `REPLACE_ME` 를 안 바꾼 것이고, 200 인데 `rows:0` 이면 활성 주행이 없거나
-모든 행이 `paused=true` 다.
-
-## 5. 푸시 규칙(요약)
+## 6. 푸시 규칙(요약)
 
 - 내용이 바뀌었거나 마지막 푸시로부터 60초가 지나면 보낸다(잠금화면 stale 방지).
 - `apns-priority`: 하차/도착/대기 전환은 `10`, 나머지는 `5`. `apns-expiration: 0`.
@@ -120,9 +149,12 @@ select jobid, status, return_message, start_time
 - APNs `410`/`BadDeviceToken`/`Unregistered` → 그 행 삭제.
 - 한 틱에서 최대 50행, 노선별로 피드를 1회만 받아 병렬 처리한다.
 
-## 6. 아직 남은 것 (앱 쪽)
+## 7. 앱 쪽 연동 상태
 
-환승 자동 승차는 **다음 구간의 역 목록**이 있어야 방향을 판정할 수 있다.
-현재 웹의 `tripTrackPayload()` 는 `legs` 에 `{line, to, min}` 만 담는다.
-`legs[i].stations` 를 함께 보내면 서버가 환승 3분 뒤 다음 열차를 자동으로 잡는다.
-없으면 서버는 추측하지 않고 '대기 중' 상태를 유지한다(앱을 열면 기존대로 사용자가 고른다).
+- 웹의 `tripTrackPayload()` 는 `legs[i].stations` 까지 보낸다(커밋 c65b847) — 서버가 환승 3분 뒤
+  다음 열차의 **방향을 판정해 자동 승차**할 수 있다. 방향이 불확실하면(종착역이 다음 구간 역
+  목록 밖) 추측하지 않고 '대기 중'을 유지한다.
+- 남은 것은 iOS 쪽: 액티비티를 `pushType: .token` 으로 시작하고, 토큰을 받는 즉시
+  `op=register` 를 부른 뒤 포그라운드/백그라운드 전환마다 `op=update` 로 `paused` 를 토글한다.
+  안내를 끝낼 땐 `op=end`(앱이 직접 액티비티를 닫았으면 `local:true`).
+  `UIBackgroundModes: location` 과 `bgPoll`/`bgTimer` 는 이 경로가 붙으면 제거할 수 있다.

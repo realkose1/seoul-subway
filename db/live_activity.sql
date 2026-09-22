@@ -1,5 +1,12 @@
--- 라이브 액티비티(주행 안내) 푸시 — Supabase SQL Editor 에서 한 번 실행.
--- 서버(api/la.js)만 service_role 키로 접근한다. 앱은 절대 이 테이블에 직접 붙지 않는다.
+-- (선택) 전용 테이블 경로 — **실행하지 않아도 된다.**
+--
+-- 기본 동작은 SQL 없이 기존 테이블 public.sf_cache 를 키/값처럼 쓰는 것이다
+-- (date = 'ssl:la:<tripId>', events = 주행 JSON). docs/live-activity-push.md 참고.
+--
+-- 주행이 많아져 전용 테이블이 필요해지면 아래를 실행하고 Vercel 에
+--   LA_TABLE=ssl_live_trips
+-- 를 추가하면 코드가 이 테이블을 쓴다(컬럼형). pg_cron 도 선택이다 —
+-- 기본 스케줄러는 서버가 스스로를 이어 부르는 체인(op=tick&chain=1)이다.
 
 create table if not exists public.ssl_live_trips (
   trip_id       text primary key,          -- 앱이 만든 주행 식별자(UUID 등)
@@ -22,18 +29,20 @@ alter table public.ssl_live_trips enable row level security;
 create index if not exists ssl_live_trips_active_idx
   on public.ssl_live_trips (paused, expires_at);
 
--- ── pg_cron 스케줄 ─────────────────────────────────────────────────────────
+-- ── (선택) pg_cron 스케줄 ──────────────────────────────────────────────────
+-- 기본은 자기 호출 체인이라 크론이 필요 없다. 그래도 외부 스케줄러를 쓰고 싶다면
+-- 아래 주석을 풀어 쓴다(chain 없이 op=tick 만 때리면 된다).
 -- 확장(한 번만):
 --   create extension if not exists pg_cron;
 --   create extension if not exists pg_net;
 -- 'REPLACE_ME' 를 Vercel 의 LA_CRON_SECRET 값과 같게 바꿀 것.
 
-select cron.schedule('ssl-la-tick', '* * * * *', $$
-  select net.http_get(
-    url:='https://seoul-subway-lyart.vercel.app/api/la?op=tick',
-    headers:='{"x-cron-secret":"REPLACE_ME"}'::jsonb
-  )
-$$);
+-- select cron.schedule('ssl-la-tick', '* * * * *', $$
+--   select net.http_get(
+--     url:='https://seoul-subway-lyart.vercel.app/api/la?op=tick',
+--     headers:='{"x-cron-secret":"REPLACE_ME"}'::jsonb
+--   )
+-- $$);
 
 -- 30초 간격이 필요하면 위 스케줄을 지우고 아래를 쓴다(pg_cron 1.5 이상에서만 동작).
 -- select cron.unschedule('ssl-la-tick');
@@ -53,7 +62,13 @@ $$);
 
 -- ── 정리 ───────────────────────────────────────────────────────────────────
 -- 만료된 주행 행 삭제(틱은 만료 행을 읽지 않지만 쌓이지 않게 치운다).
-delete from public.ssl_live_trips where expires_at < now();
+-- delete from public.ssl_live_trips where expires_at < now();
+
+-- 기본(sf_cache) 경로에서 찌꺼기를 보거나 치우려면:
+--   select date, events->>'paused' as paused, events->>'expires_at' as expires_at
+--     from public.sf_cache where date like 'ssl:la:%';
+--   delete from public.sf_cache
+--     where date like 'ssl:la:%' and (events->>'expires_at')::timestamptz < now();
 
 -- 매시 정각 자동 정리를 원하면:
 -- select cron.schedule('ssl-la-cleanup', '7 * * * *',

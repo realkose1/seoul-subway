@@ -254,7 +254,62 @@ test("환승 — 다음 구간 역 목록이 없으면 자동 승차하지 않�
   assert.equal(r.state.waiting, true);
 });
 
-/* ── 핸들러(api/la.js) — Supabase/피드를 가짜 fetch 로 대체 ────────────────── */
+
+/* ── 저장소 매핑(sf_cache) ────────────────────────────────────────────────── */
+
+const store = require("../lib/supabase.js");
+
+test("sf_cache — 행 왕복(toCache → toTrip)", () => {
+  const now = Date.now();
+  const row = {
+    trip_id: "abc", token: "tok", env: "sandbox", attrs: { from: "광화문", to: "천호", transfers: 0 },
+    state: prevState(), track: baseTrack(), paused: false,
+    last_push_at: new Date(now).toISOString(), last_feed_at: new Date(now).toISOString(),
+    expires_at: new Date(now + 3600000).toISOString(),
+  };
+  const cache = store.toCache(row, now);
+  assert.equal(cache.date, "ssl:la:abc");
+  assert.equal(cache.events.tripId, "abc");
+  assert.ok(cache.updated_at);
+  const back = store.toTrip(cache);
+  for (const k of store.ROW_KEYS) assert.deepEqual(back[k], row[k], `round-trip ${k}`);
+});
+
+test("sf_cache — 잠금 행과 남의 행은 주행으로 읽지 않는다", () => {
+  assert.equal(store.toTrip({ date: "ssl:la:lock", events: { id: "x", until: 1 } }), null);
+  assert.equal(store.toTrip({ date: "2026-09-22", events: [] }), null);   // 다른 앱의 날짜 캐시
+  assert.equal(store.toTrip({ date: "af-lineup-123", events: {} }), null);
+  assert.equal(store.toTrip(null), null);
+});
+
+test("activeTrips — paused/만료/토큰 없음을 거르고 오래된 순으로 준다", () => {
+  const now = Date.now();
+  const mk = (id, over) => Object.assign({ trip_id: id, token: "t", paused: false, expires_at: new Date(now + 60000).toISOString(), updated_at: new Date(now).toISOString() }, over);
+  const rows = [
+    mk("paused", { paused: true }),
+    mk("expired", { expires_at: new Date(now - 1000).toISOString() }),
+    mk("notoken", { token: "" }),
+    mk("new", { updated_at: new Date(now).toISOString() }),
+    mk("old", { updated_at: new Date(now - 60000).toISOString() }),
+  ];
+  assert.deepEqual(store.activeTrips(rows, now).map((r) => r.trip_id), ["old", "new"]);
+});
+
+/* ── 체인 잠금 판정 ───────────────────────────────────────────────────────── */
+
+test("체인 잠금 — 없음/만료/내 것/남의 것", () => {
+  const now = Date.now();
+  assert.equal(store.lockOwned(null, "me", now), true);                              // 없음
+  assert.equal(store.lockOwned({ id: "other", until: now - 1 }, "me", now), true);   // 만료
+  assert.equal(store.lockOwned({ id: "me", until: now + 60000 }, "me", now), true);  // 내 것
+  assert.equal(store.lockOwned({ id: "other", until: now + 60000 }, "me", now), false); // 남의 것 — 물러난다
+
+  assert.equal(store.lockFree(null, now), true);
+  assert.equal(store.lockFree({ id: "other", until: now - 1 }, now), true);
+  assert.equal(store.lockFree({ id: "other", until: now + 60000 }, now), false);
+});
+
+/* ── 핸들러(api/la.js) — Supabase/피드/APNs 를 가짜 fetch 로 대체 ──────────── */
 
 const handler = require("../api/la.js");
 
@@ -267,37 +322,79 @@ function fakeRes() {
 }
 const call = async (req) => { const res = fakeRes(); await handler(Object.assign({ method: "GET", query: {}, headers: {} }, req), res); return res; };
 
-test("handler — tick 은 x-cron-secret 없이 401", async () => {
+const jsonRes = (o) => new Response(JSON.stringify(o), { headers: { "content-type": "application/json" } });
+
+/* Supabase(sf_cache) + 위치 피드 + 자기 호출을 흉내내는 fetch.
+   opts: { rows: [sf_cache 행], lock: {id,until}|null, feed: [열차] } */
+function installFetch(opts) {
+  const seen = { urls: [], writes: [], chain: [] };
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    const u = String(url);
+    seen.urls.push(`${init.method || "GET"} ${u}`);
+    if (u.includes("/api/la")) { seen.chain.push(u); return jsonRes({ ok: true }); }
+    if (u.includes("swopenapi")) return jsonRes({ realtimePositionList: opts.feed || [] });
+    if (u.includes("/rest/v1/sf_cache")) {
+      if ((init.method || "GET") === "GET") {
+        if (u.includes("lock")) return jsonRes(opts.lock ? [{ date: "ssl:la:lock", events: opts.lock }] : []);
+        return jsonRes(opts.rows || []);
+      }
+      seen.writes.push({ method: init.method, url: u, body: init.body ? JSON.parse(init.body) : null });
+      return jsonRes(init.body ? JSON.parse(init.body) : []);
+    }
+    return jsonRes({});
+  };
+  return { seen, restore: () => { globalThis.fetch = real; } };
+}
+
+function envUp() {
   process.env.LA_CRON_SECRET = "s3cr3t";
+  process.env.SUPABASE_URL = "https://fake.supabase.co";
+  process.env.SUPABASE_ANON_KEY = "fake-anon";
+  process.env.SUBWAY_API_KEY = "fake";
+  process.env.LA_SELF_URL = "https://self.test";
+  delete process.env.SUPABASE_SERVICE_KEY;
+  delete process.env.LA_TABLE;
+}
+
+test("handler — tick 은 x-cron-secret 없이 401", async () => {
+  envUp();
   const res = await call({ query: { op: "tick" } });
   assert.equal(res.code, 401);
   assert.equal(res.headers["Cache-Control"], "no-store");
 });
 
+test("handler — LA_CRON_SECRET 이 없으면 APNs 키 식별자에서 유도한다", async () => {
+  envUp();
+  delete process.env.LA_CRON_SECRET;
+  process.env.APNS_KEY_ID = "ABCDE12345";
+  process.env.APNS_TEAM_ID = "P7ZN2XXS75";
+  const { createHash } = await import("node:crypto");
+  const want = createHash("sha256").update("ABCDE12345|P7ZN2XXS75").digest("hex");
+  assert.equal(handler.cronSecret(), want);
+  const f = installFetch({ rows: [] });
+  try {
+    const res = await call({ query: { op: "tick" }, headers: { "x-cron-secret": want } });
+    assert.equal(res.code, 200);
+  } finally { f.restore(); process.env.LA_CRON_SECRET = "s3cr3t"; }
+});
+
 test("handler — 알 수 없는 op / GET register", async () => {
+  envUp();
   assert.equal((await call({ method: "POST", query: { op: "nope" } })).code, 400);
   assert.equal((await call({ method: "GET", query: { op: "register" } })).code, 405);
   assert.equal((await call({ method: "POST", query: { op: "register" }, body: {} })).code, 400);   // tripId 없음
 });
 
 test("handler — dry 틱이 계산 결과를 돌려준다(푸시·쓰기 없음)", async () => {
-  process.env.LA_CRON_SECRET = "s3cr3t";
-  process.env.SUPABASE_URL = "https://fake.supabase.co";
-  process.env.SUPABASE_SERVICE_KEY = "fake";
-  process.env.SUBWAY_API_KEY = "fake";
+  envUp();
   const now = Date.now();
-  const rows = [{
+  const rows = [store.toCache({
     trip_id: "dry-1", token: "tok", env: "prod", attrs: { from: "광화문", to: "천호" },
     state: prevState(), track: baseTrack(), paused: false,
     last_push_at: new Date(now - 5000).toISOString(), expires_at: new Date(now + 3600000).toISOString(),
-  }];
-  const seen = [];
-  const realFetch = globalThis.fetch;
-  globalThis.fetch = async (url) => {
-    seen.push(String(url));
-    if (String(url).includes("supabase")) return new Response(JSON.stringify(rows), { headers: { "content-type": "application/json" } });
-    return new Response(JSON.stringify({ realtimePositionList: [train("5001", "광나루", "1")] }), { headers: { "content-type": "application/json" } });
-  };
+  }, now - 1000)];
+  const f = installFetch({ rows, feed: [train("5001", "광나루", "1")] });
   try {
     const res = await call({ query: { op: "tick", dry: "1" }, headers: { "x-cron-secret": "s3cr3t" } });
     assert.equal(res.code, 200);
@@ -308,7 +405,86 @@ test("handler — dry 틱이 계산 결과를 돌려준다(푸시·쓰기 없음
     assert.equal(r0.tripId, "dry-1");
     assert.equal(r0.state.alight, true);
     assert.equal(r0.push.priority, 10);
-    assert.ok(!seen.some((u) => u.includes("api.push.apple.com")), "dry 모드는 APNs 를 부르지 않는다");
-    assert.ok(!seen.some((u) => u.includes("supabase") && u.includes("PATCH")), "dry 모드는 쓰지 않는다");
-  } finally { globalThis.fetch = realFetch; }
+    assert.equal(f.seen.writes.length, 0, "dry 모드는 쓰지 않는다");
+    assert.equal(f.seen.chain.length, 0, "dry 모드는 체인을 띄우지 않는다");
+  } finally { f.restore(); }
+});
+
+test("handler — register(paused:false)는 잠금이 없으면 체인을 띄운다", async () => {
+  envUp();
+  const f = installFetch({ rows: [], lock: null });
+  try {
+    const res = await call({ method: "POST", query: { op: "register" },
+      body: { tripId: "t1", token: "tok", env: "prod", attrs: { to: "천호" }, state: prevState(), track: null, paused: false } });
+    assert.equal(res.code, 200);
+    assert.equal(res.body.created, true);
+    assert.equal(res.body.kicked, true);
+    assert.equal(f.seen.chain.length, 1);
+    assert.match(f.seen.chain[0], /^https:\/\/self\.test\/api\/la\?op=tick&chain=1&cid=/);
+    const saved = f.seen.writes.find((w) => w.body && w.body[0] && w.body[0].date === "ssl:la:t1");
+    assert.ok(saved, "sf_cache 에 ssl:la:t1 로 저장");
+    assert.equal(saved.body[0].events.token, "tok");
+    assert.ok(saved.body[0].events.expires_at, "만료 시각이 있어야 한다");
+  } finally { f.restore(); }
+});
+
+test("handler — 체인이 살아 있으면 새로 띄우지 않는다", async () => {
+  envUp();
+  const f = installFetch({ rows: [], lock: { id: "other", until: Date.now() + 60000 } });
+  try {
+    const res = await call({ method: "POST", query: { op: "register" },
+      body: { tripId: "t2", token: "tok", state: prevState(), paused: false } });
+    assert.equal(res.body.kicked, false);
+    assert.equal(f.seen.chain.length, 0);
+  } finally { f.restore(); }
+});
+
+test("handler — paused:true 로 등록하면 체인을 띄우지 않는다", async () => {
+  envUp();
+  const f = installFetch({ rows: [], lock: null });
+  try {
+    const res = await call({ method: "POST", query: { op: "register" },
+      body: { tripId: "t3", token: "tok", state: prevState(), paused: true } });
+    assert.equal(res.body.paused, true);
+    assert.equal(res.body.kicked, false);
+    assert.equal(f.seen.chain.length, 0);
+  } finally { f.restore(); }
+});
+
+test("handler — 체인 틱: 남의 잠금이 살아 있으면 물러난다", async () => {
+  envUp();
+  const f = installFetch({ rows: [], lock: { id: "other", until: Date.now() + 60000 } });
+  try {
+    const res = await call({ query: { op: "tick", chain: "1", cid: "mine" }, headers: { "x-cron-secret": "s3cr3t" } });
+    assert.equal(res.body.skipped, "locked");
+    assert.equal(f.seen.chain.length, 0);
+  } finally { f.restore(); }
+});
+
+test("handler — 체인 틱: 활성 주행이 없으면 잠금을 풀고 멈춘다", async () => {
+  envUp();
+  const f = installFetch({ rows: [], lock: { id: "mine", until: Date.now() + 60000 } });
+  try {
+    const res = await call({ query: { op: "tick", chain: "1", cid: "mine" }, headers: { "x-cron-secret": "s3cr3t" } });
+    assert.equal(res.body.rows, 0);
+    assert.equal(res.body.chain.next, false);
+    assert.ok(f.seen.writes.some((w) => w.method === "DELETE" && w.url.includes("lock")) ||
+              f.seen.urls.some((u) => u.startsWith("DELETE") && u.includes("lock")), "잠금 행 삭제");
+    assert.equal(f.seen.chain.length, 0);
+  } finally { f.restore(); }
+});
+
+test("handler — 만료·paused 행만 있으면 틱은 아무것도 하지 않는다", async () => {
+  envUp();
+  const now = Date.now();
+  const rows = [
+    store.toCache({ trip_id: "p", token: "tok", paused: true, state: prevState(), track: baseTrack(), expires_at: new Date(now + 60000).toISOString() }, now),
+    store.toCache({ trip_id: "e", token: "tok", paused: false, state: prevState(), track: baseTrack(), expires_at: new Date(now - 60000).toISOString() }, now),
+  ];
+  const f = installFetch({ rows, feed: [train("5001", "왕십리", "1")] });
+  try {
+    const res = await call({ query: { op: "tick" }, headers: { "x-cron-secret": "s3cr3t" } });
+    assert.deepEqual({ rows: res.body.rows, pushed: res.body.pushed }, { rows: 0, pushed: 0 });
+    assert.equal(f.seen.writes.length, 0);
+  } finally { f.restore(); }
 });
