@@ -24,7 +24,7 @@
 const crypto = require("crypto");
 const { fetchLinePositions } = require("../lib/position-feed");
 const { computeRow } = require("../lib/la-core");
-const { createPusher, isDeadToken } = require("../lib/apns");
+const { createPusher, isDeadToken, normalizePem } = require("../lib/apns");
 const store = require("../lib/supabase");
 
 const TRIP_TTL_MS = 3 * 60 * 60 * 1000;   /* 행 수명 3시간 — 앱이 죽어도 영원히 푸시하지 않도록 */
@@ -260,8 +260,9 @@ async function opDiag(req, res) {
 
   const rawKey = process.env.APNS_KEY || "";
   const key = rawKey.replace(/\\n/g, "\n");
-  let keyParses = false;
-  if (key) { try { crypto.createPrivateKey(key); keyParses = true; } catch (e) { keyParses = false; } }
+  const canParse = (k) => { if (!k) return false; try { crypto.createPrivateKey(k); return true; } catch (e) { return false; } };
+  const keyParses = canParse(key);
+  const keyNormalizedParses = canParse(normalizePem(rawKey));   /* 따옴표·한 줄·본문만 붙여넣기까지 펴 본 결과 */
 
   const keySource = process.env.SUPABASE_SERVICE_KEY ? "service"
     : process.env.SUPABASE_ANON_KEY ? "anon-env"
@@ -279,8 +280,10 @@ async function opDiag(req, res) {
   return res.status(200).json({
     apns: {
       keyPresent: !!rawKey,
-      keyLooksPem: key.includes("BEGIN PRIVATE KEY"),
+      keyLen: rawKey.length,
+      keyLooksPem: rawKey.includes("BEGIN PRIVATE KEY"),
       keyParses,
+      keyNormalizedParses,
       keyIdLen: (process.env.APNS_KEY_ID || "").length,
       teamIdLen: (process.env.APNS_TEAM_ID || "").length,
       bundleId: process.env.APNS_BUNDLE_ID || "",

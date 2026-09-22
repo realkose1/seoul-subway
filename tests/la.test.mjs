@@ -503,7 +503,8 @@ test("handler — op=diag 는 시크릿을 요구하고 값은 절대 돌려주�
     assert.equal(res.code, 200);
     const b = res.body;
     assert.deepEqual(b.apns, {
-      keyPresent: true, keyLooksPem: false, keyParses: false,
+      keyPresent: true, keyLen: "not-a-real-key".length, keyLooksPem: false,
+      keyParses: false, keyNormalizedParses: false,
       keyIdLen: 10, teamIdLen: 10, bundleId: "com.sehyunko.SeoulSubwayLive",
     });
     assert.equal(b.supabase.keySource, "anon-env");
@@ -534,4 +535,40 @@ test("handler — diag keySource: 서비스 키 / 코드 내장 폴백", async (
     assert.equal(res.body.supabase.keySource, "anon-builtin");   // lib/supabase.js 의 공개 anon 폴백
     assert.ok(!JSON.stringify(res.body).includes("eyJ"), "키가 응답에 실리면 안 된다");
   } finally { f.restore(); envUp(); }
+});
+
+/* ── APNS_KEY 정규화 ──────────────────────────────────────────────────────── */
+/* 진짜 키는 절대 쓰지 않는다 — 테스트 안에서 임시 EC P-256 키를 만들어 쓴다. */
+
+const { normalizePem } = require("../lib/apns.js");
+const { generateKeyPairSync, createPrivateKey } = await import("node:crypto");
+const { privateKey: TEST_PEM } = generateKeyPairSync("ec", {
+  namedCurve: "P-256",
+  privateKeyEncoding: { type: "pkcs8", format: "pem" },
+  publicKeyEncoding: { type: "spki", format: "pem" },
+});
+const TEST_BODY = TEST_PEM.replace(/-----[^-]+-----/g, "").replace(/\s+/g, "");
+
+test("normalizePem — 헤더 없이 본문만 붙여넣어도 PEM 으로 편다", () => {
+  const out = normalizePem(TEST_BODY);
+  assert.equal(out, TEST_PEM);
+  assert.ok(createPrivateKey(out));
+});
+
+test("normalizePem — 따옴표 + 리터럴 \\n 으로 들어와도 편다", () => {
+  const pasted = JSON.stringify(TEST_PEM);            // "…\n…\n…" (따옴표째, \n 이스케이프)
+  assert.ok(pasted.startsWith('"') && pasted.includes("\\n"));
+  const out = normalizePem(pasted);
+  assert.equal(out, TEST_PEM);
+  assert.ok(createPrivateKey(out));
+});
+
+test("normalizePem — 제대로 된 PEM 은 그대로, 한 줄로 뭉친 본문은 64자로 다시 접는다", () => {
+  assert.equal(normalizePem(TEST_PEM), TEST_PEM);
+  assert.equal(normalizePem(`  ${TEST_PEM}  `), TEST_PEM);
+  const oneLine = `-----BEGIN PRIVATE KEY-----${TEST_BODY}-----END PRIVATE KEY-----`;
+  assert.equal(normalizePem(oneLine), TEST_PEM);
+  assert.ok(createPrivateKey(normalizePem(oneLine)));
+  assert.equal(normalizePem(""), "");
+  assert.equal(normalizePem("not-a-key"), "not-a-key");   // 알아볼 수 없으면 건드리지 않는다
 });
