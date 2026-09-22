@@ -1,19 +1,9 @@
 /* Vercel 서버리스 프록시: 인증키를 서버에만 두고 실시간 열차 위치를 중계합니다.
    Vercel 대시보드 → Settings → Environment Variables 에 SUBWAY_API_KEY 등록 필요 */
 
-const ALLOWED = new Set(["1호선", "2호선", "3호선", "4호선", "5호선", "6호선", "7호선", "8호선", "9호선", "수인분당선", "신분당선", "경강선", "경의중앙선", "공항철도", "경춘선", "우이신설선", "서해선", "신림선"]);
-
-async function callUpstream(scheme, key, line) {
-  const url = `${scheme}://swopenapi.seoul.go.kr/api/subway/${key}/json/realtimePosition/0/200/${encodeURIComponent(line)}`;
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 4000);
-  try {
-    const r = await fetch(url, { signal: ctrl.signal });
-    return await r.json();
-  } finally {
-    clearTimeout(timer);
-  }
-}
+/* 노선 목록과 상위 API 호출은 lib/position-feed.js 와 공유한다(api/la.js 의 틱도 같은 코드를 쓴다).
+   동작은 예전과 같다 — 여기서는 캐시를 거치지 않는 callUpstream 을 그대로 쓴다. */
+const { ALLOWED, callUpstream } = require("../lib/position-feed");
 
 module.exports = async (req, res) => {
   res.setHeader("Cache-Control", "s-maxage=5, stale-while-revalidate=10");   /* 실시간성 우선 */

@@ -1,6 +1,7 @@
 {
   "regions": ["icn1"],
   "functions": {
-    "api/position.js": { "maxDuration": 20 }
+    "api/position.js": { "maxDuration": 20 },
+    "api/la.js": { "maxDuration": 60 }
   }
 }

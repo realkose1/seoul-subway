@@ -4549,7 +4549,7 @@ function tripTrackPayload() {
            approach, stops: es ? seg.stations.filter(n => es.has(n)) : null,
            isLast: k === segs.length - 1, dest: trip.track.dest || "",
            laterMin: k < segs.length - 1 ? ROUTE_TRANSFER_MIN + tripMinFromLeg(k + 1) : 0,
-           legs: segs.map(x => ({ line: x.line, to: x.to, min: x.min })) };
+           legs: segs.map(x => ({ line: x.line, to: x.to, min: x.min, stations: x.stations.slice() })) };
 }
 let trackPollTimer = null, trackPolling = false;
 function startTrackPoll() { stopTrackPoll(); trackPollTimer = setInterval(pollTrackedTrain, TRACK_POLL_MS); }
