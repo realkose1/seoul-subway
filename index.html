@@ -4498,6 +4498,8 @@ function tripComplete(reason) {
     elapsedMin: Math.max(0, Math.round((Date.now() - (trip.startedAt || Date.now())) / 60000)),
     transfers: (trip.result && trip.result.transfers) || 0,
     plannedMin: (trip.result && trip.result.totalMin) || 0,
+    legs: ((trip.result && trip.result.segments) || []).map(g => ({ line: g.line, color: g.color, from: g.from, to: g.to })),
+    arrivedAt: new Date().toLocaleTimeString("ko-KR", { hour: "numeric", minute: "2-digit" }),   /* "오후 9:32" */
   };
   trip.arrived = true; trip.track = null;
   haptic("heavy");              /* 네이티브 햅틱에 success 단계는 없다 → 가장 강한 heavy */
@@ -4512,6 +4514,7 @@ function showTripDone(s) {
     try {
       window.webkit.messageHandlers.ui.postMessage({
         type: "tripDone", from: s.from, to: s.to, elapsedMin: s.elapsedMin, transfers: s.transfers,
+        plannedMin: s.plannedMin, legs: s.legs, arrivedAt: s.arrivedAt,
       });
     } catch (e) {}
     return;
