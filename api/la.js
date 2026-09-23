@@ -4,9 +4,14 @@
      → 서버가 열차를 따라가며 ActivityKit 업데이트를 푸시.
 
    스케줄러는 **자기 호출 체인**이다(Vercel Hobby 는 분 단위 크론이 없다):
-     register/update(paused:false) 가 체인을 띄우고 → 틱이 일을 마친 뒤 ~50초를 기다렸다가
-     자기 자신(op=tick&chain=1)을 호출한다. 활성 주행이 하나도 없으면 체인이 멈추고
-     잠금이 풀린다. 외부 크론이 그냥 op=tick 을 때리는 예전 방식도 그대로 동작한다.
+     register/update/end/kick 이 (잠금이 비었고 할 일이 있으면) 체인을 띄우고 → 틱이 일을 마친 뒤
+     호출 시작 기준 ~50초에 자기 자신(op=tick&chain=1)을 부른다. 활성 주행이 없으면 체인이 멈추고
+     잠금이 풀린다. 응답 후 함수가 얼어 다음 호출이 안 나가던 문제 때문에:
+       - 체인 틱은 잠금만 확인하고 곧바로 202 를 돌려준 뒤, 라운드·넘기기를 Vercel waitUntil 안에서 한다
+       - 넘기는 쪽은 다음 틱이 202 를 줄 때까지(보통 <1초) waitUntil 로 붙잡고 기다린다(연결 실패는 재시도)
+       - 그래도 끊기면 잠금(75초)이 풀린 뒤 op=kick(외부 하트비트: jumo push-cron 2분마다)이 되살린다
+     매 라운드 매달린 액티비티도 정리한다(만료 → end, 도착 예정+4분·진척 없음 → 도착 end,
+     30분 방치된 paused → 삭제). 외부 크론이 그냥 op=tick 을 때리는 예전 방식도 그대로 동작한다.
 
    저장소는 기존 테이블 public.sf_cache (lib/supabase.js 참고) — SQL 실행이 필요 없다.
 
@@ -15,6 +20,8 @@
      POST ?op=update    같은 형식(부분 허용) — 앱이 포그라운드면 paused:true 로 서버 푸시를 멈춘다
      POST ?op=end       {tripId, local}
      GET  ?op=tick      헤더 x-cron-secret (chain=1 이면 체인 모드, dry=1 이면 계산만)
+     GET/POST ?op=kick  인증 없음 — 잠금이 비었고 할 일이 있으면 체인만 띄운다(스스로 푸시하지 않음)
+     GET/POST ?op=cleanup  헤더 x-cron-secret — 매달린 액티비티를 지금 정리(dry=1 이면 판정만)
      GET  ?op=diag      헤더 x-cron-secret — 환경 점검(값은 안 돌려준다)
                         probe=1 이면 APNs 에 실제로 한 번 쏴서 키/토픽 설정을 확인한다
 
@@ -24,7 +31,7 @@
 
 const crypto = require("crypto");
 const { fetchLinePositions } = require("../lib/position-feed");
-const { computeRow } = require("../lib/la-core");
+const { computeRow, sweepRow, overdueEnd, progressKey, lastProgressAt } = require("../lib/la-core");
 const { createPusher, isDeadToken, normalizePem } = require("../lib/apns");
 const store = require("../lib/supabase");
 
@@ -32,13 +39,16 @@ const TRIP_TTL_MS = 3 * 60 * 60 * 1000;   /* 행 수명 3시간 — 앱이 죽�
 const MAX_ROWS = 50;                      /* 한 틱에서 처리할 최대 행 수 */
 const DISMISS_AFTER_SEC = 8;
 const CHAIN_ROUND_MS = 50 * 1000;         /* 이 시각(호출 시작 기준)에 다음 틱을 띄운다 */
-const CHAIN_RACE_MS = 1500;               /* 다음 틱 호출은 이만큼만 기다리고 응답한다 */
+const ROUND_BUDGET_MS = 55 * 1000;        /* 한 호출이 쓰는 총 시간 상한(maxDuration 60초 안) */
+const HANDOFF_TIMEOUT_MS = 4000;          /* 다음 틱이 202 를 돌려주길 기다리는 1회 상한 */
+const KICK_WAIT_MS = 3000;                /* register/update/end/kick 가 새 체인 시작을 기다리는 상한 */
 const LOCK_TTL_MS = 75 * 1000;            /* 체인 잠금 임대 — 한 라운드(60초)보다 넉넉히 */
 const PROBE_TOKEN = "0".repeat(64);       /* 일부러 틀린 기기 토큰 — APNs 가 '키는 맞다'까지만 알려주게 한다 */
 const PROBE_TIMEOUT_MS = 8000;
 
 /* 테스트에서 APNs 전송을 갈아끼울 수 있게 한 겹 둔다 */
 let pusherFactory = createPusher;
+let chainRoundMs = CHAIN_ROUND_MS;        /* 테스트가 50초를 기다리지 않도록(_setTiming) */
 
 const PROBE_STATE = {
   remainMin: 0, arriveAt: "", line: "", colorHex: "#8A8F98", nextStation: "", legTo: "",
@@ -73,26 +83,86 @@ function readBody(req) {
   return b;
 }
 
-/* 다음 틱을 띄우고 잠깐만 기다린다 — 다음 호출은 독립적으로 돌아간다 */
-async function triggerTick(cid) {
-  const url = `${selfUrl()}/api/la?op=tick&chain=1&cid=${encodeURIComponent(cid)}`;
-  const p = fetch(url, { headers: { "x-cron-secret": cronSecret() } }).catch((e) => console.warn("[la] chain call", e && e.message));
-  await Promise.race([p, sleep(CHAIN_RACE_MS)]);
+/* Vercel waitUntil — 응답을 보낸 뒤에도 이 약속이 끝날 때까지 함수를 얼리지 않는다.
+   @vercel/functions 의 waitUntil 이 내부에서 하는 일과 같다(의존성 추가 없이). 없으면 null. */
+function getWaitUntil() {
+  try {
+    const ctx = globalThis[Symbol.for("@vercel/request-context")];
+    const c = ctx && typeof ctx.get === "function" ? ctx.get() : null;
+    return c && typeof c.waitUntil === "function" ? c.waitUntil.bind(c) : null;
+  } catch (e) { return null; }
 }
 
-/* 체인이 안 돌고 있으면 새로 띄운다(register/update 에서 호출) */
-async function kickChain() {
+/* 다음 틱 호출 1회 — 받아들였다는 응답(2xx)까지 기다린다. 타임아웃이면 AbortController 로 끊는다.
+   @returns {ok, status, timeout, error} */
+async function callTick(cid, timeoutMs) {
+  const url = `${selfUrl()}/api/la?op=tick&chain=1&cid=${encodeURIComponent(cid)}`;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), Math.max(200, timeoutMs));
+  try {
+    const r = await fetch(url, { headers: { "x-cron-secret": cronSecret() }, signal: ctrl.signal });
+    return { ok: r.ok, status: r.status };
+  } catch (e) {
+    const timeout = ctrl.signal.aborted;
+    return { ok: false, status: 0, timeout, error: timeout ? "timeout" : String((e && e.message) || e) };
+  } finally { clearTimeout(t); }
+}
+
+/* 다음 틱에게 넘긴다. 연결 자체가 실패(요청이 안 나감)·502/503 이면 기한 안에서 다시 시도하고,
+   타임아웃은 다시 보내지 않는다 — 이미 도착해 돌고 있을 수 있어서(같은 cid 로 두 줄이 되면 안 된다).
+   deadline: 이 호출이 써도 되는 마지막 시각(ms) */
+async function handoff(cid, deadline) {
+  let last = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const left = deadline - Date.now();
+    if (left < 300) break;
+    last = await callTick(cid, Math.min(HANDOFF_TIMEOUT_MS, left));
+    if (last.ok || last.timeout) break;
+    if (last.status && last.status !== 502 && last.status !== 503) break;   /* 4xx/500 — 다시 보내도 같다 */
+    console.warn("[la] handoff retry", attempt + 1, last.status, last.error || "");
+    await sleep(Math.min(500, Math.max(0, deadline - Date.now() - 300)));
+  }
+  if (last && !last.ok) console.warn("[la] handoff", last.status, last.error || "");
+  return last || { ok: false, status: 0, error: "no-time" };
+}
+
+/* 백그라운드 작업 등록. waitUntil 이 있으면 거기 맡기고 capMs 만큼만 기다린다(0 이면 안 기다림).
+   없으면(로컬·테스트) 최대 fallbackMs 까지 직접 기다린다. */
+async function background(p, { capMs = 0, fallbackMs = KICK_WAIT_MS } = {}) {
+  const guarded = Promise.resolve(p).catch((e) => console.warn("[la] bg", e && e.message));
+  const wu = getWaitUntil();
+  if (wu) {
+    wu(guarded);
+    if (capMs > 0) await Promise.race([guarded, timeoutIn(capMs)]);
+    return true;
+  }
+  await Promise.race([guarded, timeoutIn(fallbackMs)]);
+  return false;
+}
+
+/* 체인이 안 돌고 있으면 새로 띄운다 — register/update/end, op=kick(외부 하트비트) 공용.
+   조건: (a) 살아 있는 잠금이 없고 (b) 서버가 할 일이 있는 행이 하나라도 있을 것
+         (활성 = paused 아님·만료 전·토큰 있음, 또는 정리(만료 종료·오래된 paused 삭제)가 필요한 행).
+   knownActive: 호출자가 방금 활성 행을 저장했다면 목록 조회를 건너뛴다.
+   @returns {kicked, reason?, cid?} */
+async function kickChain({ knownActive = false } = {}) {
   try {
     const now = Date.now();
     const lock = await store.getLock();
-    if (!store.lockFree(lock, now)) return false;      /* 이미 누가 돌고 있다 */
+    if (!store.lockFree(lock, now)) return { kicked: false, reason: "locked" };
+    if (!knownActive) {
+      const all = await store.listTrips();
+      const work = store.activeTrips(all, now).length || all.some((r) => sweepRow(r, now));
+      if (!work) return { kicked: false, reason: "no-active-rows" };
+    }
     const cid = crypto.randomUUID();
     await store.setLock(cid, now + LOCK_TTL_MS, now);
-    await triggerTick(cid);
-    return true;
+    /* 새 틱이 받아들일 때까지(보통 <1초) — waitUntil 로 붙잡아 응답 후에도 요청이 나가게 한다 */
+    await background(handoff(cid, Date.now() + KICK_WAIT_MS), { capMs: KICK_WAIT_MS, fallbackMs: KICK_WAIT_MS });
+    return { kicked: true, cid };
   } catch (e) {
     console.warn("[la] kick", e && e.message);
-    return false;
+    return { kicked: false, reason: "error" };
   }
 }
 
@@ -111,6 +181,7 @@ async function opRegister(req, res, { isUpdate }) {
   if (b.state != null) patch.state = b.state;
   if (b.track !== undefined) patch.track = b.track || null;
   if (b.paused != null) patch.paused = !!b.paused;
+  if (b.state != null || b.track !== undefined) patch.last_progress_at = iso(now);   /* 앱이 새 위치를 줬다 = 진척 */
 
   let row = null, created = false;
   if (isUpdate) row = await store.patchTrip(tripId, patch, now);
@@ -124,9 +195,10 @@ async function opRegister(req, res, { isUpdate }) {
     created = true;
   }
 
-  /* 서버가 갱신해야 하는 상태(paused:false)면 체인이 돌고 있는지 확인하고 없으면 띄운다 */
-  const kicked = row.paused === false ? await kickChain() : false;
-  return res.status(200).json({ ok: true, created, paused: !!row.paused, kicked });
+  /* 체인이 돌고 있는지 확인하고 없으면 띄운다 — 이 행이 paused:false 면 조회 없이,
+     paused:true 여도 다른 활성 행이 있으면 띄운다(자가 복구) */
+  const k = await kickChain({ knownActive: row.paused === false && !!row.token });
+  return res.status(200).json({ ok: true, created, paused: !!row.paused, kicked: k.kicked });
 }
 
 /* ── op=end ──────────────────────────────────────────────────────────────── */
@@ -153,36 +225,77 @@ async function opEnd(req, res) {
     }
   }
   await store.deleteTrips([tripId]);
-  return res.status(200).json({ ok: true, pushed });
+  const k = await kickChain();   /* 다른 활성 주행이 있는데 체인이 죽어 있으면 되살린다 */
+  return res.status(200).json({ ok: true, pushed, kicked: k.kicked });
 }
 
-/* ── op=tick ─────────────────────────────────────────────────────────────── */
-async function opTick(req, res) {
-  const startedAt = Date.now();
-  if (req.headers["x-cron-secret"] !== cronSecret()) return res.status(401).json({ error: "unauthorized" });
+/* ── 푸시·삭제·저장 실행 ────────────────────────────────────────────────── */
+/* jobs: computeRow/sweepRow/overdueEnd 결과 모양 {tripId, token, env, state, track, push, remove}
+   byId: tripId → 원래 행 (저장할 때 합친다) */
+async function applyJobs(jobs, byId, now) {
+  let pushed = 0, ended = 0, errors = 0;
+  const dead = [], remove = [], save = [];
+  if (!jobs.length) return { pushed, ended, errors, gone: [] };
+  const pusher = pusherFactory();
+  try {
+    await Promise.all(jobs.map(async (x) => {
+      let isDead = false;
+      if (x.push && x.token) {
+        let r;
+        try {
+          r = await pusher.send({
+            token: x.token, env: x.env, contentState: x.state, event: x.push.event,
+            priority: x.push.priority, alert: x.push.alert,
+            dismissalSec: x.push.dismissalSec, staleSec: x.push.staleSec,
+          });
+        } catch (e) { r = { status: 0, reason: String((e && e.message) || e) }; }
+        if (r.status === 200) { pushed++; if (x.push.event === "end") ended++; }
+        else if (isDeadToken(r)) { isDead = true; dead.push(x.tripId); errors++; console.warn("[la] dead token", x.tripId, r.status, r.reason); }
+        else { errors++; console.warn("[la] push fail", x.tripId, x.note || "", r.status, r.reason); }
+      }
+      /* 끝내는 행은 end 푸시가 실패해도 지운다 — 남겨 두면 다음 틱에 또 끝내려다 영원히 남는다 */
+      if (x.remove || isDead) { if (!isDead) remove.push(x.tripId); return; }
+      const orig = byId.get(x.tripId) || {};
+      const moved = progressKey(x.state, x.track) !== progressKey(orig.state, orig.track);
+      const lp = moved ? now : lastProgressAt(orig);
+      save.push(Object.assign({}, orig, {
+        state: x.state,
+        track: x.track,
+        last_push_at: x.push ? iso(now) : orig.last_push_at || null,
+        last_feed_at: iso(now),
+        last_progress_at: lp ? iso(lp) : iso(now),
+      }));
+    }));
+  } finally { try { pusher.close(); } catch (e) {} }
 
-  const dry = req.query.dry === "1" || req.query.dry === "true";
-  const chain = req.query.chain === "1" || req.query.chain === "true";
-  const cid = String(req.query.cid || "") || crypto.randomUUID();
-  const now = startedAt;
+  const gone = [...new Set(remove.concat(dead))];
+  await Promise.all([
+    gone.length ? store.deleteTrips(gone).catch((e) => console.warn("[la] delete", e.message)) : null,
+    save.length ? store.saveTrips(save, now).catch((e) => console.warn("[la] save", e.message)) : null,
+  ].filter(Boolean));
+  return { pushed, ended, errors, gone };
+}
 
-  /* 체인은 한 줄만 돈다 — 잠금이 남의 것이고 아직 살아 있으면 이 호출은 조용히 물러난다 */
-  if (chain) {
-    const lock = await store.getLock();
-    if (!store.lockOwned(lock, cid, now)) {
-      return res.status(200).json({ rows: 0, pushed: 0, ended: 0, errors: 0, skipped: "locked" });
-    }
-    if (!dry) await store.setLock(cid, now + LOCK_TTL_MS, now);
-  }
+const jobView = (x) => ({
+  tripId: x.tripId, note: x.note, changed: x.changed, remove: x.remove,
+  push: x.push ? { event: x.push.event, priority: x.push.priority, alert: x.push.alert } : null,
+  state: x.state,
+  track: x.track ? { no: x.track.no, line: x.track.line, legIdx: x.track.legIdx, legEndedAt: x.track.legEndedAt || null } : null,
+});
 
+/* 틱 1라운드 — 정리(만료·오래된 paused) → 활성 행 추적·푸시(+지연 종료). 네트워크 오류는 throw. */
+async function runRound(now, { dry = false } = {}) {
   const all = await store.listTrips();
-  const active = store.activeTrips(all, now);
-  const rows = active.slice(0, MAX_ROWS);
+  const byId = new Map(all.map((r) => [r.trip_id, r]));
 
-  if (!rows.length) {
-    if (chain && !dry) await store.clearLock().catch(() => {});
-    return res.status(200).json({ rows: 0, pushed: 0, ended: 0, errors: 0, chain: chain ? { cid, remaining: 0, next: false } : undefined });
-  }
+  /* 1) 정리 — 활성 행이 하나도 없어도 매 라운드 돈다 */
+  const sweeps = [];
+  for (const r of all) { const x = sweepRow(r, now); if (x) sweeps.push(x); }
+  const swept = new Set(sweeps.map((x) => x.tripId));
+
+  /* 2) 활성 행 추적 */
+  const active = store.activeTrips(all.filter((r) => !swept.has(r.trip_id)), now);
+  const rows = active.slice(0, MAX_ROWS);
 
   /* 필요한 노선을 모아 한 번씩만 조회한다(행마다 부르지 않는다) */
   const lines = new Set();
@@ -201,70 +314,125 @@ async function opTick(req, res) {
   const feed = (ln) => feedMap.get(ln) || [];
 
   const results = rows.map((r) => {
-    try { return computeRow(r, feed, now); }
-    catch (e) { console.warn("[la] compute", r.trip_id, e && e.message); return null; }
-  });
+    try {
+      const x = computeRow(r, feed, now);
+      return overdueEnd(r, x, now) || x;   /* 도착 예정이 한참 지났고 진척 없음 → 도착으로 끝낸다 */
+    } catch (e) { console.warn("[la] compute", r.trip_id, e && e.message); return null; }
+  }).filter(Boolean);
 
   if (dry) {
-    return res.status(200).json({
+    return {
       dry: true, rows: rows.length, active: active.length, lines: [...lines],
-      results: results.filter(Boolean).map((x) => ({
-        tripId: x.tripId, note: x.note, changed: x.changed, remove: x.remove,
-        push: x.push ? { event: x.push.event, priority: x.push.priority, alert: x.push.alert } : null,
-        state: x.state,
-        track: x.track ? { no: x.track.no, line: x.track.line, legIdx: x.track.legIdx, legEndedAt: x.track.legEndedAt || null } : null,
-      })),
-    });
+      swept: sweeps.map(jobView), results: results.map(jobView), remaining: active.length,
+    };
   }
 
-  let pushed = 0, ended = 0, errors = 0;
-  const dead = [], remove = [], save = [];
-  const byId = new Map(rows.map((r) => [r.trip_id, r]));
-  const pusher = pusherFactory();
+  const out = await applyJobs(sweeps.concat(results), byId, now);
+  const goneActive = active.filter((r) => out.gone.includes(r.trip_id)).length;
+  return {
+    rows: rows.length, pushed: out.pushed, ended: out.ended, errors: out.errors, swept: sweeps.length,
+    remaining: Math.max(0, active.length - goneActive),
+  };
+}
+
+/* 체인 라운드: 일 → (남았으면) 호출 시작 기준 50초까지 대기 → 잠금 갱신 → 다음 틱에 넘김.
+   라운드가 실패해도(Supabase 순간 오류 등) 체인은 이어 간다 — 한 번의 실패로 끊기지 않게. */
+async function chainRound(cid, startedAt) {
+  let result, remaining;
   try {
-    await Promise.all(results.filter(Boolean).map(async (x) => {
-      let isDead = false;
-      if (x.push && x.token) {
-        const r = await pusher.send({
-          token: x.token, env: x.env, contentState: x.state, event: x.push.event,
-          priority: x.push.priority, alert: x.push.alert,
-          dismissalSec: x.push.dismissalSec, staleSec: x.push.staleSec,
-        });
-        if (r.status === 200) { pushed++; if (x.push.event === "end") ended++; }
-        else if (isDeadToken(r)) { isDead = true; dead.push(x.tripId); errors++; console.warn("[la] dead token", x.tripId, r.status, r.reason); }
-        else { errors++; console.warn("[la] push fail", x.tripId, r.status, r.reason); }
-      }
-      if (x.remove || isDead) { if (!isDead) remove.push(x.tripId); return; }
-      save.push(Object.assign({}, byId.get(x.tripId), {
-        state: x.state,
-        track: x.track,
-        last_push_at: x.push ? iso(now) : (byId.get(x.tripId) || {}).last_push_at || null,
-        last_feed_at: iso(now),
-      }));
-    }));
-  } finally { pusher.close(); }
+    result = await runRound(startedAt);
+    remaining = result.remaining;
+  } catch (e) {
+    console.warn("[la] round", e && e.message);
+    result = { error: String((e && e.message) || e) };
+    remaining = -1;   /* 모름 → 이어 간다 */
+  }
+  if (remaining === 0) {
+    await store.clearLock().catch(() => {});
+    return Object.assign(result, { chain: { cid, remaining: 0, next: false } });
+  }
+  await sleep(Math.max(0, chainRoundMs - (Date.now() - startedAt)));
+  /* 넘기기 직전에 잠금이 여전히 내 것인지 본다 — 사이에 다른 체인이 잡았으면 물러난다 */
+  const lock = await store.getLock().catch(() => undefined);
+  if (lock !== undefined && !store.lockOwned(lock, cid, Date.now())) {
+    return Object.assign(result, { chain: { cid, remaining, next: false, skipped: "locked" } });
+  }
+  await store.setLock(cid, Date.now() + LOCK_TTL_MS).catch(() => {});
+  const h = await handoff(cid, startedAt + ROUND_BUDGET_MS);
+  return Object.assign(result, { chain: { cid, remaining, next: !!h.ok, handoff: h.ok ? "ok" : (h.error || h.status) } });
+}
 
-  const gone = [...new Set(remove.concat(dead))];
-  await Promise.all([
-    gone.length ? store.deleteTrips(gone).catch((e) => console.warn("[la] delete", e.message)) : null,
-    save.length ? store.saveTrips(save, now).catch((e) => console.warn("[la] save", e.message)) : null,
-  ].filter(Boolean));
+/* ── op=tick ─────────────────────────────────────────────────────────────── */
+async function opTick(req, res) {
+  const startedAt = Date.now();
+  if (req.headers["x-cron-secret"] !== cronSecret()) return res.status(401).json({ error: "unauthorized" });
 
-  /* ── 체인: 남은 주행이 있으면 ~50초 뒤 다음 틱을 띄운다 ── */
-  const remaining = Math.max(0, active.length - gone.length);
-  let next = false;
-  if (chain) {
-    if (remaining > 0) {
-      await sleep(Math.max(0, CHAIN_ROUND_MS - (Date.now() - startedAt)));
-      await store.setLock(cid, Date.now() + LOCK_TTL_MS).catch(() => {});
-      await triggerTick(cid);
-      next = true;
-    } else {
-      await store.clearLock().catch(() => {});
-    }
+  const dry = req.query.dry === "1" || req.query.dry === "true";
+  const chain = req.query.chain === "1" || req.query.chain === "true";
+  const cid = String(req.query.cid || "") || crypto.randomUUID();
+
+  if (dry) return res.status(200).json(await runRound(startedAt, { dry: true }));
+
+  if (!chain) {
+    const r = await runRound(startedAt);
+    delete r.remaining;
+    return res.status(200).json(r);
   }
 
-  return res.status(200).json({ rows: rows.length, pushed, ended, errors, chain: chain ? { cid, remaining, next } : undefined });
+  /* 체인은 한 줄만 돈다 — 잠금이 남의 것이고 아직 살아 있으면 이 호출은 조용히 물러난다 */
+  const lock = await store.getLock();
+  if (!store.lockOwned(lock, cid, startedAt)) {
+    return res.status(200).json({ rows: 0, pushed: 0, ended: 0, errors: 0, skipped: "locked" });
+  }
+  await store.setLock(cid, startedAt + LOCK_TTL_MS, startedAt);
+
+  /* waitUntil 이 있으면 곧바로 202 — 부른 쪽(이전 틱)의 fetch 가 1초 안에 끝나고,
+     이 호출은 응답 뒤에도 얼지 않고 라운드와 다음 넘기기까지 마친다. */
+  const wu = getWaitUntil();
+  if (wu) {
+    wu(chainRound(cid, startedAt).catch((e) => console.warn("[la] chain", e && e.message)));
+    return res.status(202).json({ accepted: true, cid });
+  }
+  /* waitUntil 이 없는 환경(로컬 등) — 끝까지 돌고 응답한다 */
+  const r = await chainRound(cid, startedAt);
+  delete r.remaining;
+  return res.status(200).json(r);
+}
+
+/* ── op=kick ─────────────────────────────────────────────────────────────── */
+/* 인증 없는 자가 복구 — 잠금이 비었고 할 일이 있을 때만 체인을 띄운다. 스스로는 푸시하지 않는다.
+   잠금(75초 임대)이 곧 속도 제한이다. 외부 하트비트(jumo push-cron, 2분마다)가 부른다. */
+async function opKick(req, res) {
+  const k = await kickChain();
+  return res.status(200).json(k.kicked ? { kicked: true } : { kicked: false, reason: k.reason });
+}
+
+/* ── op=cleanup ──────────────────────────────────────────────────────────── */
+/* 시크릿 필요. 매달린 액티비티를 지금 바로 정리한다(피드 없이 저장된 상태만으로 판정):
+   만료 → end(즉시 dismiss), 도착 예정+4분 지남·4분간 진척 없음 → end(도착, 60초 뒤 dismiss),
+   30분 넘게 방치된 paused → 푸시 없이 삭제. 그 외 행은 건드리지 않는다. dry=1 이면 판정만. */
+async function opCleanup(req, res) {
+  if (req.headers["x-cron-secret"] !== cronSecret()) return res.status(401).json({ error: "unauthorized" });
+  const now = Date.now();
+  const dry = req.query.dry === "1" || req.query.dry === "true";
+  const all = await store.listTrips();
+  const byId = new Map(all.map((r) => [r.trip_id, r]));
+  const jobs = [];
+  for (const r of all) {
+    let x = sweepRow(r, now);
+    if (!x && !r.paused && r.token) {
+      const same = { tripId: r.trip_id, token: r.token, env: r.env || "prod", state: r.state || {}, track: r.track || null,
+        changed: false, push: null, remove: false, note: "" };
+      x = overdueEnd(r, same, now);
+    }
+    if (x) jobs.push(x);
+  }
+  if (dry) return res.status(200).json({ dry: true, rows: all.length, jobs: jobs.map(jobView) });
+  const out = await applyJobs(jobs, byId, now);
+  return res.status(200).json({
+    rows: all.length, cleaned: out.gone.length, pushed: out.pushed, ended: out.ended, errors: out.errors,
+    notes: jobs.reduce((m, x) => { m[x.note] = (m[x.note] || 0) + 1; return m; }, {}),
+  });
 }
 
 /* ── op=diag ─────────────────────────────────────────────────────────────── */
@@ -343,11 +511,13 @@ module.exports = async (req, res) => {
   try {
     if (op === "tick") return await opTick(req, res);
     if (op === "diag") return await opDiag(req, res);
+    if (op === "kick") return await opKick(req, res);
+    if (op === "cleanup") return await opCleanup(req, res);
     if (req.method !== "POST") return res.status(405).json({ error: "POST required" });
     if (op === "register") return await opRegister(req, res, { isUpdate: false });
     if (op === "update") return await opRegister(req, res, { isUpdate: true });
     if (op === "end") return await opEnd(req, res);
-    return res.status(400).json({ error: "unknown op (register|update|end|tick|diag)" });
+    return res.status(400).json({ error: "unknown op (register|update|end|tick|kick|cleanup|diag)" });
   } catch (e) {
     console.error("[la]", op, (e && e.stack) || e);
     if (res.headersSent) return;
@@ -359,6 +529,8 @@ module.exports.TRIP_TTL_MS = TRIP_TTL_MS;
 module.exports.CHAIN_ROUND_MS = CHAIN_ROUND_MS;
 module.exports.LOCK_TTL_MS = LOCK_TTL_MS;
 module.exports.cronSecret = cronSecret;
+module.exports.getWaitUntil = getWaitUntil;
 module.exports.selfUrl = selfUrl;
 /* 테스트 전용 — APNs 전송을 갈아끼운다(원복하려면 인자 없이 호출) */
 module.exports._setPusherFactory = (fn) => { pusherFactory = fn || createPusher; };
+module.exports._setTiming = (o) => { chainRoundMs = o && o.roundMs != null ? o.roundMs : CHAIN_ROUND_MS; };

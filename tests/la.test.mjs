@@ -265,6 +265,7 @@ test("sf_cache — 행 왕복(toCache → toTrip)", () => {
     trip_id: "abc", token: "tok", env: "sandbox", attrs: { from: "광화문", to: "천호", transfers: 0 },
     state: prevState(), track: baseTrack(), paused: false,
     last_push_at: new Date(now).toISOString(), last_feed_at: new Date(now).toISOString(),
+    last_progress_at: new Date(now - 60000).toISOString(),
     expires_at: new Date(now + 3600000).toISOString(),
   };
   const cache = store.toCache(row, now);
@@ -329,10 +330,15 @@ const jsonRes = (o) => new Response(JSON.stringify(o), { headers: { "content-typ
 function installFetch(opts) {
   const seen = { urls: [], writes: [], chain: [] };
   const real = globalThis.fetch;
+  let chainFail = opts.chainFail || 0;   /* 앞의 N 번은 네트워크 오류로 실패 */
   globalThis.fetch = async (url, init = {}) => {
     const u = String(url);
     seen.urls.push(`${init.method || "GET"} ${u}`);
-    if (u.includes("/api/la")) { seen.chain.push(u); return jsonRes({ ok: true }); }
+    if (u.includes("/api/la")) {
+      seen.chain.push(u);
+      if (chainFail > 0) { chainFail--; throw new TypeError("fetch failed"); }
+      return new Response(JSON.stringify({ accepted: true }), { status: 202, headers: { "content-type": "application/json" } });
+    }
     if (u.includes("swopenapi")) return jsonRes({ realtimePositionList: opts.feed || [] });
     if (u.includes("/rest/v1/sf_cache")) {
       if ((init.method || "GET") === "GET") {
@@ -355,6 +361,23 @@ function envUp() {
   process.env.LA_SELF_URL = "https://self.test";
   delete process.env.SUPABASE_SERVICE_KEY;
   delete process.env.LA_TABLE;
+}
+
+/* APNs 가짜 — 보낸 것을 모은다 */
+function fakePusher(status = 200) {
+  const sent = [];
+  handler._setPusherFactory(() => ({ send: async (o) => { sent.push(o); return { status, reason: "" }; }, close: () => {} }));
+  return { sent, restore: () => handler._setPusherFactory(null) };
+}
+/* DELETE 로 지운 sf_cache 키들 */
+const deleted = (f) => f.seen.urls.filter((u) => u.startsWith("DELETE")).map((u) => decodeURIComponent(u)).join(" ");
+
+/* Vercel 요청 컨텍스트 흉내 — @vercel/functions 가 읽는 것과 같은 심볼 */
+function installWaitUntil() {
+  const sym = Symbol.for("@vercel/request-context");
+  const pending = [];
+  globalThis[sym] = { get: () => ({ waitUntil: (p) => { pending.push(p); } }) };
+  return { pending, flush: async () => { for (let i = 0; i < pending.length; i++) await pending[i]; }, restore: () => { delete globalThis[sym]; } };
 }
 
 test("handler — tick 은 x-cron-secret 없이 401", async () => {
@@ -474,19 +497,32 @@ test("handler — 체인 틱: 활성 주행이 없으면 잠금을 풀고 멈춘
   } finally { f.restore(); }
 });
 
-test("handler — 만료·paused 행만 있으면 틱은 아무것도 하지 않는다", async () => {
+test("handler — 만료 행은 end(즉시 dismiss)로 끝내고 지운다, 방금 쓴 paused 행은 건드리지 않는다", async () => {
   envUp();
   const now = Date.now();
   const rows = [
     store.toCache({ trip_id: "p", token: "tok", paused: true, state: prevState(), track: baseTrack(), expires_at: new Date(now + 60000).toISOString() }, now),
-    store.toCache({ trip_id: "e", token: "tok", paused: false, state: prevState(), track: baseTrack(), expires_at: new Date(now - 60000).toISOString() }, now),
+    store.toCache({ trip_id: "e", token: "tok", paused: false, state: prevState({ remainMin: 12, arriveAt: "오후 9:32" }), track: baseTrack(), expires_at: new Date(now - 60000).toISOString() }, now),
   ];
+  const pz = fakePusher();
   const f = installFetch({ rows, feed: [train("5001", "왕십리", "1")] });
   try {
     const res = await call({ query: { op: "tick" }, headers: { "x-cron-secret": "s3cr3t" } });
-    assert.deepEqual({ rows: res.body.rows, pushed: res.body.pushed }, { rows: 0, pushed: 0 });
-    assert.equal(f.seen.writes.length, 0);
-  } finally { f.restore(); }
+    assert.equal(res.body.rows, 0, "만료 행은 추적 대상이 아니다");
+    assert.equal(res.body.swept, 1);
+    assert.equal(res.body.ended, 1);
+    assert.equal(pz.sent.length, 1);
+    const s = pz.sent[0];
+    assert.equal(s.event, "end");
+    assert.equal(s.token, "tok");
+    assert.equal(s.contentState.done, false, "만료는 도착이 아니다 — 마지막 값 유지");
+    assert.equal(s.contentState.remainMin, 12);
+    assert.equal(s.contentState.arriveAt, "오후 9:32");
+    assert.ok(Math.abs(s.dismissalSec - Math.floor(now / 1000)) <= 2, "dismissal-date = now");
+    assert.ok(deleted(f).includes("ssl:la:e"));
+    assert.ok(!deleted(f).includes("ssl:la:p"), "paused 행(앱 소유)은 30분 전엔 지우지 않는다");
+    assert.ok(!f.seen.writes.some((w) => w.method === "POST" && JSON.stringify(w.body).includes("ssl:la:p")));
+  } finally { f.restore(); pz.restore(); }
 });
 
 test("handler — op=diag 는 시크릿을 요구하고 값은 절대 돌려주지 않는다", async () => {
@@ -613,4 +649,238 @@ test("handler — diag probe 는 환경별로 한 번씩 쏘고 상태/이유만
     assert.equal(res.body.probe, undefined);
     assert.equal(sent.length, 0);
   } finally { f.restore(); handler._setPusherFactory(null); }
+});
+
+/* ── 체인 신뢰성: waitUntil / kick / 정리 ─────────────────────────────────── */
+
+const activeRow = (id, now, over = {}) => store.toCache(Object.assign({
+  trip_id: id, token: "tok-" + id, env: "prod", attrs: { from: "광화문", to: "천호" },
+  state: prevState(), track: baseTrack(), paused: false,
+  last_push_at: new Date(now - 5000).toISOString(), last_feed_at: new Date(now - 5000).toISOString(),
+  expires_at: new Date(now + 3600000).toISOString(),
+}, over), over.__updated || now);
+
+test("getWaitUntil — 요청 컨텍스트 심볼이 없으면 null, 있으면 그 waitUntil", () => {
+  assert.equal(handler.getWaitUntil(), null);
+  const w = installWaitUntil();
+  try {
+    const fn = handler.getWaitUntil();
+    assert.equal(typeof fn, "function");
+    fn(Promise.resolve(1));
+    assert.equal(w.pending.length, 1);
+  } finally { w.restore(); }
+});
+
+test("handler — 체인 틱(waitUntil 있음): 즉시 202, 일과 다음 틱 넘기기는 waitUntil 안에서", async () => {
+  envUp();
+  handler._setTiming({ roundMs: 0 });
+  const now = Date.now();
+  const w = installWaitUntil();
+  const pz = fakePusher();
+  const f = installFetch({ rows: [activeRow("a", now, { last_push_at: new Date(now - 90000).toISOString() })],
+    lock: { id: "mine", until: now + 60000 }, feed: [train("5001", "왕십리", "1")] });
+  try {
+    const res = await call({ query: { op: "tick", chain: "1", cid: "mine" }, headers: { "x-cron-secret": "s3cr3t" } });
+    assert.equal(res.code, 202);
+    assert.deepEqual(res.body, { accepted: true, cid: "mine" });
+    assert.equal(w.pending.length, 1, "라운드는 waitUntil 에 등록된다");
+    await w.flush();
+    assert.equal(pz.sent.length, 1, "푸시는 응답 뒤(waitUntil 안)에서 나간다");
+    assert.equal(f.seen.chain.length, 1, "다음 틱으로 넘긴다");
+    assert.match(f.seen.chain[0], /op=tick&chain=1&cid=mine$/);
+    assert.ok(f.seen.writes.some((w2) => w2.body && w2.body.date === "ssl:la:lock" && w2.body.events.id === "mine") ||
+              f.seen.writes.some((w2) => Array.isArray(w2.body) && w2.body[0] && w2.body[0].date === "ssl:la:lock"), "잠금 갱신");
+  } finally { f.restore(); pz.restore(); w.restore(); handler._setTiming(); }
+});
+
+test("handler — register 의 체인 시작도 waitUntil 에 등록된다", async () => {
+  envUp();
+  const w = installWaitUntil();
+  const f = installFetch({ rows: [], lock: null });
+  try {
+    const res = await call({ method: "POST", query: { op: "register" },
+      body: { tripId: "wu1", token: "tok", state: prevState(), paused: false } });
+    assert.equal(res.body.kicked, true);
+    assert.ok(w.pending.length >= 1);
+    await w.flush();
+    assert.equal(f.seen.chain.length, 1);
+  } finally { f.restore(); w.restore(); }
+});
+
+test("handler — 체인 넘기기: 연결 실패는 다시 시도한다(한 번의 실패로 끊기지 않는다)", async () => {
+  envUp();
+  handler._setTiming({ roundMs: 0 });
+  const now = Date.now();
+  const pz = fakePusher();
+  const f = installFetch({ rows: [activeRow("a", now)], lock: { id: "mine", until: now + 60000 },
+    feed: [train("5001", "왕십리", "1")], chainFail: 1 });
+  try {
+    const res = await call({ query: { op: "tick", chain: "1", cid: "mine" }, headers: { "x-cron-secret": "s3cr3t" } });
+    assert.equal(res.code, 200);                      // waitUntil 없음 → 끝까지 돌고 응답
+    assert.equal(f.seen.chain.length, 2);
+    assert.equal(res.body.chain.next, true);
+    assert.equal(res.body.chain.remaining, 1);
+  } finally { f.restore(); pz.restore(); handler._setTiming(); }
+});
+
+test("handler — op=kick: 잠금 없음 + 활성 행 → 체인 시작(시크릿 불필요)", async () => {
+  envUp();
+  const now = Date.now();
+  const f = installFetch({ rows: [activeRow("a", now)], lock: null });
+  try {
+    const res = await call({ query: { op: "kick" } });
+    assert.equal(res.code, 200);
+    assert.deepEqual(res.body, { kicked: true });
+    assert.equal(f.seen.chain.length, 1);
+    assert.ok(f.seen.writes.some((w) => JSON.stringify(w.body || "").includes("ssl:la:lock")), "새 잠금");
+  } finally { f.restore(); }
+});
+
+test("handler — op=kick: 잠금이 살아 있으면 띄우지 않는다", async () => {
+  envUp();
+  const now = Date.now();
+  const f = installFetch({ rows: [activeRow("a", now)], lock: { id: "other", until: now + 60000 } });
+  try {
+    const res = await call({ method: "POST", query: { op: "kick" } });
+    assert.deepEqual(res.body, { kicked: false, reason: "locked" });
+    assert.equal(f.seen.chain.length, 0);
+    assert.equal(f.seen.writes.length, 0);
+  } finally { f.restore(); }
+});
+
+test("handler — op=kick: 할 일(활성·정리 대상 행)이 없으면 띄우지 않는다", async () => {
+  envUp();
+  const now = Date.now();
+  const f = installFetch({ rows: [activeRow("p", now, { paused: true })], lock: null });   // 방금 쓴 paused 행뿐
+  try {
+    const res = await call({ query: { op: "kick" } });
+    assert.deepEqual(res.body, { kicked: false, reason: "no-active-rows" });
+    assert.equal(f.seen.chain.length, 0);
+    assert.equal(f.seen.writes.length, 0);
+  } finally { f.restore(); }
+});
+
+test("handler — end 도 체인을 되살린다(다른 활성 주행이 남아 있으면)", async () => {
+  envUp();
+  const now = Date.now();
+  const f = installFetch({ rows: [activeRow("other", now)], lock: null });
+  try {
+    const res = await call({ method: "POST", query: { op: "end" }, body: { tripId: "gone", local: true } });
+    assert.equal(res.body.kicked, true);
+    assert.equal(f.seen.chain.length, 1);
+  } finally { f.restore(); }
+});
+
+test("computeRow+overdueEnd — 도착 예정 +4분 지남·4분간 진척 없음 → 도착 end(60초 뒤 dismiss)", () => {
+  const now = Date.now();
+  const row = { trip_id: "t", token: "tok", attrs: { to: "천호" },
+    state: prevState({ remainMin: 12, endEpoch: now - 10 * 60000 }), track: baseTrack(),
+    last_push_at: new Date(now - 90000).toISOString(), last_progress_at: new Date(now - 20 * 60000).toISOString() };
+  const x = computeRow(row, feedOf({ "5호선": [] }), now);   // 피드에서 사라짐 → 상태 유지
+  const o = LA.overdueEnd(row, x, now);
+  assert.ok(o);
+  assert.equal(o.note, "overdue");
+  assert.equal(o.remove, true);
+  assert.equal(o.push.event, "end");
+  assert.equal(o.push.dismissalSec, Math.floor(now / 1000) + 60);
+  assert.deepEqual(o.push.alert, { title: "목적지 도착", body: "천호에 도착했습니다" });
+  assert.equal(o.state.done, true);
+  assert.equal(o.state.remainMin, 0);
+  assertShape(o.state, "overdue");
+
+  /* 최근 4분 안에 진척이 있었으면 아직 끝내지 않는다 */
+  assert.equal(LA.overdueEnd(Object.assign({}, row, { last_progress_at: new Date(now - 60000).toISOString() }), x, now), null);
+  /* 열차가 피드에 잡혀 움직이면(endEpoch 가 미래로 다시 계산) 걸리지 않는다 */
+  const moving = computeRow(row, feedOf({ "5호선": [train("5001", "왕십리", "1")] }), now);
+  assert.equal(LA.overdueEnd(row, moving, now), null);
+  /* 예전 행(last_progress_at 없음)은 last_feed_at 으로 판단 */
+  const legacy = Object.assign({}, row, { last_progress_at: null, last_feed_at: new Date(now - 30 * 60000).toISOString() });
+  assert.ok(LA.overdueEnd(legacy, x, now));
+});
+
+test("sweepRow — 30분 넘게 방치된 paused 는 푸시 없이 삭제, 방금 것은 유지", () => {
+  const now = Date.now();
+  const old = LA.sweepRow({ trip_id: "p", token: "tok", paused: true, state: prevState(), updated_at: new Date(now - 31 * 60000).toISOString(),
+    expires_at: new Date(now + 3600000).toISOString() }, now);
+  assert.equal(old.remove, true);
+  assert.equal(old.push, null);
+  assert.equal(old.note, "paused-stale");
+  assert.equal(LA.sweepRow({ trip_id: "p", token: "tok", paused: true, updated_at: new Date(now - 60000).toISOString(),
+    expires_at: new Date(now + 3600000).toISOString() }, now), null);
+  assert.equal(LA.sweepRow({ trip_id: "a", token: "tok", paused: false, expires_at: new Date(now + 60000).toISOString() }, now), null);
+});
+
+test("handler — 틱: 지연 행은 도착 end, 오래된 paused 는 푸시 없이 삭제, 정상 행은 계속", async () => {
+  envUp();
+  const now = Date.now();
+  const rows = [
+    /* 열차 번호는 앞 테스트들과 겹치지 않게(위치 피드 모듈이 노선별로 4초 캐시한다) */
+    activeRow("late", now, { track: baseTrack({ no: "5099" }), state: prevState({ endEpoch: now - 10 * 60000 }), last_progress_at: new Date(now - 15 * 60000).toISOString() }),
+    activeRow("ok", now, { track: baseTrack({ no: "5002" }) }),
+    activeRow("ps", now, { paused: true, __updated: now - 40 * 60000 }),
+  ];
+  const pz = fakePusher();
+  const f = installFetch({ rows, feed: [train("5002", "왕십리", "1")] });   // late 의 열차(5099)는 피드에 없음
+  try {
+    const res = await call({ query: { op: "tick" }, headers: { "x-cron-secret": "s3cr3t" } });
+    assert.equal(res.body.rows, 2);
+    assert.equal(res.body.swept, 1);
+    const late = pz.sent.find((s) => s.token === "tok-late");
+    assert.equal(late.event, "end");
+    assert.equal(late.contentState.done, true);
+    assert.equal(late.alert.title, "목적지 도착");
+    assert.ok(!pz.sent.some((s) => s.token === "tok-ps"), "paused 행엔 푸시하지 않는다");
+    const d = deleted(f);
+    assert.ok(d.includes("ssl:la:late") && d.includes("ssl:la:ps"));
+    assert.ok(!d.includes("ssl:la:ok"));
+    const saved = f.seen.writes.find((w) => Array.isArray(w.body) && w.body.some((r) => r.date === "ssl:la:ok"));
+    const ev = saved.body.find((r) => r.date === "ssl:la:ok").events;
+    assert.ok(ev.last_progress_at, "진척 시각을 남긴다");
+  } finally { f.restore(); pz.restore(); }
+});
+
+test("handler — 체인 틱: 활성 행이 없어도 정리(만료 end)는 하고 나서 잠금을 푼다", async () => {
+  envUp();
+  const now = Date.now();
+  const pz = fakePusher();
+  const f = installFetch({ rows: [activeRow("x", now, { expires_at: new Date(now - 1000).toISOString() })], lock: { id: "mine", until: now + 60000 } });
+  try {
+    const res = await call({ query: { op: "tick", chain: "1", cid: "mine" }, headers: { "x-cron-secret": "s3cr3t" } });
+    assert.equal(res.body.chain.next, false);
+    assert.equal(pz.sent.length, 1);
+    assert.equal(pz.sent[0].event, "end");
+    assert.ok(deleted(f).includes("ssl:la:x"));
+    assert.ok(deleted(f).includes("ssl:la:lock"));
+    assert.equal(f.seen.chain.length, 0);
+  } finally { f.restore(); pz.restore(); }
+});
+
+test("handler — op=cleanup: 시크릿 필요, 매달린 것만 끝내고 정상 행은 둔다", async () => {
+  envUp();
+  assert.equal((await call({ query: { op: "cleanup" } })).code, 401);
+  const now = Date.now();
+  const rows = [
+    activeRow("exp", now, { expires_at: new Date(now - 3600000).toISOString() }),
+    activeRow("late", now, { state: prevState({ endEpoch: now - 30 * 60000 }), last_feed_at: new Date(now - 28 * 60000).toISOString() }),
+    activeRow("ps", now, { paused: true, __updated: now - 2 * 3600000 }),
+    activeRow("fine", now, { state: prevState({ endEpoch: now + 5 * 60000 }) }),
+  ];
+  const pz = fakePusher();
+  const f = installFetch({ rows });
+  try {
+    const dry = await call({ query: { op: "cleanup", dry: "1" }, headers: { "x-cron-secret": "s3cr3t" } });
+    assert.deepEqual(dry.body.jobs.map((j) => j.tripId).sort(), ["exp", "late", "ps"]);
+    assert.equal(pz.sent.length, 0);
+    assert.equal(f.seen.urls.filter((u) => u.startsWith("DELETE")).length, 0);
+
+    const res = await call({ method: "POST", query: { op: "cleanup" }, headers: { "x-cron-secret": "s3cr3t" } });
+    assert.equal(res.body.cleaned, 3);
+    assert.equal(res.body.ended, 2);
+    assert.deepEqual(res.body.notes, { expired: 1, overdue: 1, "paused-stale": 1 });
+    assert.deepEqual(pz.sent.map((s) => s.token).sort(), ["tok-exp", "tok-late"]);
+    assert.equal(pz.sent.find((s) => s.token === "tok-exp").contentState.done, false);
+    assert.equal(pz.sent.find((s) => s.token === "tok-late").contentState.done, true);
+    assert.ok(!deleted(f).includes("ssl:la:fine"));
+    assert.equal(f.seen.chain.length, 0, "cleanup 은 체인을 띄우지 않는다");
+  } finally { f.restore(); pz.restore(); }
 });

@@ -18,9 +18,13 @@ create table if not exists public.ssl_live_trips (
   paused        boolean not null default false,  -- 앱이 포그라운드라 스스로 갱신 중이면 true
   last_push_at  timestamptz,
   last_feed_at  timestamptz,
+  last_progress_at timestamptz,            -- 열차 위치(다음 역·남은 분 등)가 마지막으로 바뀐 시각 — 지연 종료 판정용
   expires_at    timestamptz not null default now() + interval '3 hours',
   updated_at    timestamptz not null default now()
 );
+
+-- 이미 만든 테이블이면:
+alter table public.ssl_live_trips add column if not exists last_progress_at timestamptz;
 
 alter table public.ssl_live_trips enable row level security;
 -- anon 정책 없음: service_role 키(서버)만 읽고 쓴다.
