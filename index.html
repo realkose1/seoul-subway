@@ -4636,6 +4636,8 @@ function postTrip() {
       /* 도착역이 속한(경로 마지막 구간) 노선 — 라이브 액티비티의 도착역 배지용 */
       toLine: trip ? trip.result.segments[trip.result.segments.length - 1].line : "",
       toColor: trip ? colorHex(trip.result.segments[trip.result.segments.length - 1].color) : "",
+      /* 출발역이 속한(경로 첫 구간) 노선 — 라이브 액티비티의 출발역 배지가 환승 중에도 고정되도록 */
+      fromColor: trip ? colorHex(trip.result.segments[0].color) : "",
     });
   } catch (e) {}
 }
