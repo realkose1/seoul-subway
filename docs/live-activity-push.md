@@ -59,6 +59,12 @@ Project → Settings → Environment Variables (Production + Preview):
 | `ssl:la:<tripId>` | `{ tripId, token, env, attrs, state, track, paused, last_push_at, last_feed_at, last_progress_at, expires_at }` |
 | `ssl:la:lock` | `{ id, until }` — 체인 잠금 |
 
+**삭제는 소프트 삭제다.** anon 키는 RLS 때문에 `DELETE` 가 `200 []` 로 조용히 무시된다. 그래서
+`deleteTrips` 는 `Prefer: return=representation` 으로 먼저 DELETE 해 보고(서비스 키면 실제로 지워진다),
+지워지지 않은 행은 `events = {deleted:true, deleted_at}` 로 덮어쓴다 — 목록·조회·정리는 이 행을 없는 것으로 본다.
+잠금 해제도 같다: 지워지지 않으면 `{id:null, until:0}` 으로 덮어쓰고, 그건 빈 잠금으로 본다.
+소프트 삭제 행은 작아서 그대로 둬도 된다.
+
 접두사 덕에 그 앱의 날짜 행(`2026-09-22`)·라인업 행(`af-lineup-…`)과 섞이지 않는다.
 목록 조회는 `GET /rest/v1/sf_cache?date=like.ssl:la:*&select=date,events` 로 받아
 `paused=false` / `expires_at > now` 를 JS 에서 거른다.

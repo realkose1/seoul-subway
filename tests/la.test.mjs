@@ -884,3 +884,96 @@ test("handler — op=cleanup: 시크릿 필요, 매달린 것만 끝내고 정�
     assert.equal(f.seen.chain.length, 0, "cleanup 은 체인을 띄우지 않는다");
   } finally { f.restore(); pz.restore(); }
 });
+
+/* ── 소프트 삭제(sf_cache 는 anon 키로 DELETE 가 RLS 에 막혀 200 + [] 로 무시된다) ── */
+
+const tomb = (f, id) => f.seen.writes.find((w) => w.method === "POST" && Array.isArray(w.body) &&
+  w.body.some((r) => r.date === "ssl:la:" + id && r.events && r.events.deleted === true));
+
+test("store — DELETE 가 [] 를 돌려주면(anon RLS) {deleted:true} 로 덮어쓴다", async () => {
+  envUp();
+  const f = installFetch({ rows: [] });
+  try {
+    await store.deleteTrips(["a", "b"]);
+    const del = f.seen.urls.find((u) => u.startsWith("DELETE"));
+    assert.ok(del && decodeURIComponent(del).includes('"ssl:la:a"'), "먼저 진짜 DELETE 를 시도");
+    const w = f.seen.writes.find((x) => x.method === "POST");
+    assert.ok(w, "소프트 삭제 upsert");
+    assert.deepEqual(w.body.map((r) => r.date).sort(), ["ssl:la:a", "ssl:la:b"]);
+    for (const r of w.body) { assert.equal(r.events.deleted, true); assert.ok(r.events.deleted_at); }
+    assert.match(w.url, /on_conflict=date/);
+  } finally { f.restore(); }
+});
+
+test("store — DELETE 가 지운 행을 돌려주면(서비스 키) 그 행은 소프트 삭제하지 않는다", async () => {
+  envUp();
+  const real = globalThis.fetch;
+  const writes = [];
+  globalThis.fetch = async (url, init = {}) => {
+    const u = decodeURIComponent(String(url));
+    if (init.method === "DELETE") {
+      assert.equal(init.headers.Prefer, "return=representation");
+      return jsonRes([{ date: "ssl:la:a", events: {} }]);            // a 만 실제로 지워짐
+    }
+    if (init.method === "POST") writes.push(JSON.parse(init.body));
+    return jsonRes([]);
+  };
+  try {
+    await store.deleteTrips(["a", "b"]);
+    assert.equal(writes.length, 1);
+    assert.deepEqual(writes[0].map((r) => r.date), ["ssl:la:b"]);
+    writes.length = 0;
+    await store.deleteTrips(["a"]);
+    assert.equal(writes.length, 0, "다 지워졌으면 upsert 없음");
+  } finally { globalThis.fetch = real; }
+});
+
+test("store — 소프트 삭제된 행은 목록·조회·활성·정리에서 없는 것으로 본다", async () => {
+  envUp();
+  const now = Date.now();
+  const rows = [
+    { date: "ssl:la:gone", events: { deleted: true, deleted_at: new Date(now).toISOString() }, updated_at: new Date(now).toISOString() },
+    activeRow("live", now),
+  ];
+  const f = installFetch({ rows });
+  try {
+    const all = await store.listTrips();
+    assert.deepEqual(all.map((r) => r.trip_id), ["live"]);
+    assert.equal(store.toTrip(rows[0]), null);
+    assert.equal(store.activeTrips([{ trip_id: "x", token: "t", deleted: true }], now).length, 0);
+    assert.equal(LA.sweepRow({ trip_id: "x", deleted: true, token: "t", expires_at: new Date(now - 1).toISOString() }, now), null);
+  } finally { f.restore(); }
+});
+
+test("store — 잠금 해제: DELETE 가 무시되면 {id:null, until:0} 로 덮어쓰고, 그건 빈 잠금이다", async () => {
+  envUp();
+  const f = installFetch({ rows: [] });
+  try {
+    await store.clearLock();
+    const w = f.seen.writes.find((x) => x.method === "POST" && JSON.stringify(x.body).includes("ssl:la:lock"));
+    assert.ok(w, "잠금 행 upsert");
+    const body = Array.isArray(w.body) ? w.body[0] : w.body;
+    assert.deepEqual(body.events, { id: null, until: 0 });
+  } finally { f.restore(); }
+  /* 그렇게 '풀린' 잠금을 읽으면 비어 있다 */
+  const f2 = installFetch({ rows: [], lock: { id: null, until: 0 } });
+  try {
+    const lock = await store.getLock();
+    assert.equal(store.lockFree(lock, Date.now()), true);
+    assert.equal(store.lockOwned(lock, "anyone", Date.now()), true);
+    const res = await call({ query: { op: "kick" } });
+    assert.equal(res.body.reason, "no-active-rows", "잠금으로 막히지 않는다");
+  } finally { f2.restore(); }
+});
+
+test("handler — cleanup 은 anon 환경에서도 행을 소프트 삭제한다(다음 목록에 안 나온다)", async () => {
+  envUp();
+  const now = Date.now();
+  const pz = fakePusher();
+  const f = installFetch({ rows: [activeRow("exp", now, { expires_at: new Date(now - 1000).toISOString() })] });
+  try {
+    const res = await call({ method: "POST", query: { op: "cleanup" }, headers: { "x-cron-secret": "s3cr3t" } });
+    assert.equal(res.body.cleaned, 1);
+    assert.ok(tomb(f, "exp"), "{deleted:true} 로 덮어써야 한다");
+  } finally { f.restore(); pz.restore(); }
+});
