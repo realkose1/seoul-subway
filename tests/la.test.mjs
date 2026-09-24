@@ -404,6 +404,8 @@ function installFetch(opts) {
   return { seen, restore: () => { globalThis.fetch = real; } };
 }
 
+const positionFeed = require("../lib/position-feed.js");
+
 function envUp() {
   process.env.LA_CRON_SECRET = "s3cr3t";
   process.env.SUPABASE_URL = "https://fake.supabase.co";
@@ -412,6 +414,8 @@ function envUp() {
   process.env.LA_SELF_URL = "https://self.test";
   delete process.env.SUPABASE_SERVICE_KEY;
   delete process.env.LA_TABLE;
+  positionFeed._resetCache();   /* 노선별 5초 캐시가 테스트 사이로 새지 않도록(특히 op=kick 라운드로빈이 건드리는 노선들) */
+  handler._resetParked();       /* histFeedAt(노선당 60초 스로틀)·등록부도 테스트 사이로 새지 않도록 */
 }
 
 /* APNs 가짜 — 보낸 것을 모은다 */
@@ -795,7 +799,8 @@ test("handler — op=kick: 잠금이 살아 있으면 띄우지 않는다", asyn
     const res = await call({ method: "POST", query: { op: "kick" } });
     assert.deepEqual(res.body, { kicked: false, reason: "locked" });
     assert.equal(f.seen.chain.length, 0);
-    assert.equal(f.seen.writes.length, 0);
+    /* 라운드로빈 커서(ssl:la:scan)는 등록부·활성 행과 무관하게 전진·저장된다 — 그 외에는 쓰지 않는다 */
+    assert.equal(f.seen.writes.filter((w) => !JSON.stringify(w.body || "").includes("ssl:la:scan")).length, 0);
   } finally { f.restore(); }
 });
 
@@ -807,7 +812,7 @@ test("handler — op=kick: 할 일(활성·정리 대상 행)이 없으면 띄�
     const res = await call({ query: { op: "kick" } });
     assert.deepEqual(res.body, { kicked: false, reason: "no-active-rows" });
     assert.equal(f.seen.chain.length, 0);
-    assert.equal(f.seen.writes.length, 0);
+    assert.equal(f.seen.writes.filter((w) => !JSON.stringify(w.body || "").includes("ssl:la:scan")).length, 0);
   } finally { f.restore(); }
 });
 
@@ -1470,7 +1475,7 @@ test("handler — op=hist 는 등록부를 이력에 되돌려 쓰고 그 노선
   } finally { f.restore(); handler._memHist.clear(); handler._resetParked(); }
 });
 
-test("handler — op=kick 은 등록부 노선의 이력을 이어 받는다(주행 없어도, 노선당 60초에 한 번·최대 3노선)", async () => {
+test("handler — op=kick 은 등록부 노선의 이력을 우선 이어 받고(최대 3노선), 남는 예산은 라운드로빈으로 채운다(전체 최대 4노선)", async () => {
   envUp();
   handler._memHist.clear(); handler._resetParked();
   const now = Date.now();
@@ -1480,17 +1485,47 @@ test("handler — op=kick 은 등록부 노선의 이력을 이어 받는다(주
     feed: [Object.assign(trainAt("8123", "암사", "1", now - 20000, "모란"), { subwayNm: "8호선" })] });
   try {
     const r = await call({ query: { op: "kick" } });
-    assert.deepEqual(r.body, { kicked: false, reason: "locked", hist: ["8호선"] });
+    assert.equal(r.body.kicked, false);
+    assert.equal(r.body.reason, "locked");
+    /* 우선순위(등록부) 8호선 + 커서 0부터 라운드로빈으로 채운 3노선 = 전체 4노선 상한 */
+    assert.equal(r.body.hist.length, 4, "우선순위 + 라운드로빈 = 전체 4노선 상한");
+    assert.ok(r.body.hist.includes("8호선"), "등록부 노선이 우선 포함된다");
+    assert.deepEqual(new Set(r.body.hist), new Set(["8호선", "1호선", "2호선", "3호선"]), "커서 0부터 라운드로빈으로 남는 예산을 채운다");
     assert.ok(f.seen.urls.some((u) => u.includes("swopenapi") && decodeURIComponent(u).includes("8호선")), "8호선 피드 조회");
     assert.ok(f.seen.writes.some((w) => JSON.stringify(w.body || "").includes("ssl:la:hist:8호선")), "이력 저장");
+    assert.ok(f.seen.writes.some((w) => JSON.stringify(w.body || "").includes("ssl:la:scan")), "라운드로빈 커서 저장");
     const w = f.seen.writes.find((x) => JSON.stringify(x.body || "").includes("ssl:la:parked"));
     assert.ok(w, "등록부 저장");
     const e = w.body[0].events.trains["8호선|8123"];
     assert.equal(e.since, since, "정차 시작 유지");
     assert.ok(e.lastSeen > now - 30 * 60000, "lastSeen 갱신");
-    const n = f.seen.urls.filter((u) => u.includes("swopenapi")).length;
+    const n8 = f.seen.urls.filter((u) => u.includes("swopenapi") && decodeURIComponent(u).includes("8호선")).length;
     const r2 = await call({ query: { op: "kick" } });
-    assert.equal(r2.body.hist, undefined, "60초 안에는 다시 받지 않는다");
-    assert.equal(f.seen.urls.filter((u) => u.includes("swopenapi")).length, n);
+    /* 8호선은 60초 안에는 다시 받지 않는다 — 라운드로빈이 다른(아직 안 받은) 노선을 대신 채운다 */
+    assert.ok(!(r2.body.hist || []).includes("8호선"), "8호선은 60초 안에는 다시 받지 않는다");
+    assert.equal(f.seen.urls.filter((u) => u.includes("swopenapi") && decodeURIComponent(u).includes("8호선")).length, n8, "8호선 재조회 없음");
+  } finally { f.restore(); handler._memHist.clear(); handler._resetParked(); }
+});
+
+test("handler — op=kick 라운드로빈: 우선순위 노선이 없어도 커서부터 ALLOWED 전체를 최대 4노선까지 채운다", async () => {
+  envUp();
+  handler._memHist.clear(); handler._resetParked();
+  const now = Date.now();
+  /* 커서를 노선 배열 가운데(9호선=인덱스 8)로 미리 저장 — 다음 kick 은 여기부터 이어 돈다 */
+  const scanRow = { date: "ssl:la:scan", events: { i: 8, at: now - 5 * 60000 } };
+  const f = installFetch({ rows: [scanRow], lock: { id: "other", until: now + 60000 }, feed: [] });
+  try {
+    const r = await call({ query: { op: "kick" } });
+    assert.equal(r.body.kicked, false);
+    /* 커서 8("9호선")부터 4노선: 9호선·수인분당선·신분당선·경강선. 빈 피드는 관측이 없어 hist 목록엔 안 남지만 조회는 한다 */
+    assert.equal(r.body.hist, undefined);
+    const tried = [...new Set(f.seen.urls.filter((u) => u.includes("swopenapi")).map((u) => decodeURIComponent(u)))];
+    assert.equal(tried.length, 4, "전체 상한(4노선)을 지킨다");
+    for (const ln of ["9호선", "수인분당선", "신분당선", "경강선"]) {
+      assert.ok(tried.some((u) => u.includes(ln)), `${ln} 조회`);
+    }
+    const w = f.seen.writes.find((x) => JSON.stringify(x.body || "").includes("ssl:la:scan"));
+    assert.ok(w, "커서 저장");
+    assert.equal(w.body[0].events.i, (8 + 4) % 18, "커서가 훑은 만큼 전진한다");
   } finally { f.restore(); handler._memHist.clear(); handler._resetParked(); }
 });

@@ -1343,6 +1343,7 @@ function trainSilhouettePath(len) {
   return d;
 }
 function trainPinHtml(t, heading, len) {
+  const parked = !isTrackedTrain(t) && !!trainParkedNow(t);   /* 운행 대기(정차) 중이면 흐리게 — 추적 중인 열차는 예외 */
   const c = colorOfTrain(t);
   const ex = isExpress(t);
   const { carW, cars, gap, carL } = trainGeo(len);
@@ -1375,7 +1376,7 @@ function trainPinHtml(t, heading, len) {
       parts.push(`<rect x="${f(x0 + carW * 0.18)}" y="${f(rt * 0.7)}" width="${f(carW * 0.64)}" height="${f(Math.min(3.2, carL * 0.16))}" rx="1.1" fill="rgba(255,255,255,.92)"/>`);
     }
   }
-  return `<div class="train-shape" style="width:${len}px;height:${len}px;transform:rotate(${Math.round(heading || 0)}deg)">
+  return `<div class="train-shape${parked ? " parked" : ""}" style="width:${len}px;height:${len}px;transform:rotate(${Math.round(heading || 0)}deg)${parked ? ";opacity:.35" : ""}">
     <svg viewBox="0 0 ${W} ${len}" style="width:${W}px;height:${len}px">${parts.join("")}</svg>
   </div>`;
 }
@@ -2205,6 +2206,7 @@ setInterval(() => {
   const canDraw = !mapInteracting && !appleThrottle;
   const inView = p => canDraw && (!box || (p[0] >= box.s && p[0] <= box.n && p[1] >= box.w && p[1] <= box.e));
   for (const st of animState.values()) {
+    if (st.parked) continue;   /* 운행 대기 중 마커는 흐리게 고정 — 보간·회전 애니메이션 없이 제자리 */
     if (st.plan) {
       const nowMs = Date.now();
       const q = planPosAt(st, nowMs); if (!q) continue;
@@ -2515,6 +2517,13 @@ function parkedInfo(e) {
 }
 /* 노선 이력은 노선별(열차번호는 노선끼리 겹친다) — 반드시 노선을 넘긴다 */
 function trainParked(line, no) { const h = line ? histOf(line) : null; return h ? parkedInfo(h.trains[String(no)]) : null; }
+/* 지금 이 열차가 운행 대기(정차) 중인지 — 목록(deriveArrivals)의 판정과 같은 규칙:
+   기록된 정차역이 지금 피드의 현재 역과 같아야 한다(떠난 뒤 남은 옛 등록부 항목을 다시 쓰지 않도록) */
+function trainParkedNow(t) {
+  if (!t || String(t.trainSttus) === "2") return null;
+  const pk = trainParked(lineOfTrain(t), t.trainNo);
+  return pk && pk.stn === resolve(t.statnNm) ? pk : null;
+}
 /* ── 운행 대기 등록부 — 서버 lib/train-hist.js regUpdate/regPrune/regMerge 와 같은 모양·같은 규칙 ──
    실측(2026-09-24): 5197 이 11:42 부터 상일동에 서 있었는데 13:00~14:39 아무도 5호선을 보지 않아 이력(60분)이 비었고,
    14:39 에 처음 본 5197 이 '방금 도착'으로 보여 '승강장 도착'으로 제안됐다. 운행 대기 판정 열차를 6시간 남겨 두고
@@ -2963,7 +2972,8 @@ function renderTrains() {
           adapter.moveTrain(key, offsetLeft(cur, heading, trackOffM));
         }
         animState.set(key, { key, no: t.trainNo, cur, plan: tmp.plan, seq: tmp.seq, pins: tmp.pins, blend, hold, anchorStn: resolve(t.statnNm), feedMax,
-                                   prog: hold ? hold.prog : (q ? q.prog : null), ln, heading, anchor: r.anchor, train: t, route: [], idx: 0, speed: 0 });
+                                   prog: hold ? hold.prog : (q ? q.prog : null), ln, heading, anchor: r.anchor, train: t, route: [], idx: 0, speed: 0,
+                                   parked: !tracked && !!trainParkedNow(t) });
         continue;
       }
     }
@@ -3001,7 +3011,8 @@ function renderTrains() {
       adapter.moveTrain(key, offsetLeft(startPos, heading, trackOffM));
     }
     const speed = Math.min(28, Math.max(3, total / dur)); /* m/s */
-    animState.set(key, { key, no: t.trainNo, cur: startPos.slice(), route, idx: 0, speed, heading, anchor: r.anchor, train: t });
+    animState.set(key, { key, no: t.trainNo, cur: startPos.slice(), route, idx: 0, speed, heading, anchor: r.anchor, train: t,
+                          parked: !isTrackedTrain(t) && !!trainParkedNow(t) });
   }
   adapter.prune(seen);
   for (const no of [...animState.keys()]) if (!seen.has(no)) animState.delete(no);
@@ -5454,13 +5465,15 @@ document.getElementById("scFav").addEventListener("click", () => {
   renderFavList();
   toast(favList().includes(scStation) ? `${scStation}역을 즐겨찾기에 추가했습니다. 접속하면 자동으로 열립니다.` : `${scStation}역 즐겨찾기를 해제했습니다.`);
 });
-/* 열차 상세 카드 */
+/* 열차 상세 카드 — 운행 대기(정차) 중이면 상태 줄을 '{역}에서 출발 대기 · N분째'로 */
 function trainDetailHtml(t) {
+  const pk = trainParkedNow(t);
+  const etaLine = pk ? `${pk.stn}에서 출발 대기 · ${Math.floor(pk.durMs / 60000)}분째` : `${t.statnNm} ${STATUS_LABEL[String(t.trainSttus)] || ""}`;
   return `
-    <div class="sc-row">
+    <div class="sc-row${pk ? " parked" : ""}">
       <span class="sc-dot" style="background:${colorOfTrain(t)}"></span>
       <div class="sc-main">
-        <div class="sc-eta" style="color:var(--text)">${t.statnNm} ${STATUS_LABEL[String(t.trainSttus)] || ""}</div>
+        <div class="sc-eta" style="color:var(--text)">${etaLine}</div>
         <div class="sc-sub">${lineOfTrain(t)} · ${dirLabel(t)} · ${t.statnTnm}행${isExpress(t) ? " · 급행" : ""}${t.lstcarAt === "1" ? " · 막차" : ""} · 열차 ${t.trainNo}</div>
       </div>
     </div>`;

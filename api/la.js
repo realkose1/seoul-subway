@@ -21,7 +21,9 @@
      POST ?op=end       {tripId, local}
      GET  ?op=tick      헤더 x-cron-secret (chain=1 이면 체인 모드, dry=1 이면 계산만)
      GET/POST ?op=kick  인증 없음 — 잠금이 비었고 할 일이 있으면 체인만 띄운다(스스로 푸시하지 않음).
-                        + 운행 대기 등록부에 열차가 있거나 최근 활동이 있는 노선의 이력을 이어 받는다(최대 3노선·노선당 60초)
+                        + 운행 대기 등록부에 열차가 있거나 최근 활동이 있는 노선의 이력을 이어 받는다(우선 최대 3노선·노선당 60초)
+                        + 남는 예산은 ALLOWED 전체 노선을 라운드로빈으로 채운다(한 번에 최대 4노선 — 우선순위+로빈 합계,
+                          커서는 sf_cache 'ssl:la:scan' 에 저장돼 인스턴스·호출 사이에도 이어 돈다: 2분마다 kick → 18개 노선을 ~9분에 한 바퀴)
      GET/POST ?op=cleanup  헤더 x-cron-secret — 매달린 액티비티를 지금 정리(dry=1 이면 판정만)
      GET  ?op=hist&line=5호선  인증 없음 — 노선 관측 이력(운행 대기·탄 열차 교체 판정용, lib/train-hist.js).
                         앱이 백그라운드에 있던 동안 웹이 못 본 열차 움직임을 복귀 때 채워 넣는다(공개 피드에서 나온 값뿐)
@@ -74,7 +76,8 @@ async function loadHist(line, now) {
 let memReg = TH.emptyReg();
 const REG_ACTIVE_MS = 30 * 60000;         /* 이만큼 안에 주행·앱(op=hist)이 본 노선 = '최근 활동' — op=kick 이 이력을 이어 받는다 */
 const REG_ACTIVE_SAVE_MS = 5 * 60000;     /* 활동 시각만 바뀐 경우 이 간격으로만 저장 */
-const KICK_HIST_LINES = 3;                /* op=kick 한 번에 이력을 새로 받는 노선 수 상한 */
+const KICK_HIST_LINES = 3;                /* op=kick 한 번에 우선순위(등록부·최근 활동)로 받는 노선 수 상한 */
+const KICK_LINES_TOTAL = 4;               /* op=kick 한 번의 전체 상한(우선순위 + 라운드로빈) */
 const KICK_HIST_MIN_MS = 60 * 1000;       /* 노선당 피드 조회 간격 하한(op=kick) */
 async function loadReg(now) {
   try {
@@ -482,7 +485,10 @@ async function opKick(req, res) {
 }
 
 /* 하트비트(op=kick, 2분마다)가 주행 없는 동안에도 노선 이력·운행 대기 등록부를 이어 간다 —
-   대상: 등록부에 열차가 있는 노선(최근에 본 순) → 최근 활동(30분 안에 주행·op=hist) 노선. 한 번에 최대 3노선,
+   1) 우선순위: 등록부에 열차가 있는 노선(최근에 본 순) → 최근 활동(30분 안에 주행·op=hist) 노선. 최대 3노선.
+   2) 남는 예산(전체 상한 4노선까지)은 ALLOWED 전체를 라운드로빈으로 채운다 — 가장 오래 안 받은 노선부터,
+      커서는 sf_cache('ssl:la:scan' {i,at})에 남겨 인스턴스·호출 사이에도 이어 돈다(2분마다 4노선 → 18노선 ~9분에 한 바퀴,
+      8분 이상 벌어진 두 관측이면 정차 판정에 충분하다).
    노선당 60초에 한 번(인스턴스 메모리 + 저장된 이력의 at 으로 인스턴스 간에도). 오류는 삼킨다.
    @returns 이번에 피드를 받은 노선 목록 */
 async function refreshIdleLines(now) {
@@ -499,6 +505,29 @@ async function refreshIdleLines(now) {
     }
     const cand = [...pri].sort((a, b) => b[1] - a[1]).map(([ln]) => ln)
       .filter((ln) => now - (histFeedAt.get(ln) || 0) >= KICK_HIST_MIN_MS).slice(0, KICK_HIST_LINES);
+
+    /* 라운드로빈으로 나머지 예산을 채운다 — 저장된 커서(없으면 0)부터 ALLOWED 를 훑어,
+       이미 뽑혔거나 60초 안에 받은 노선은 건너뛴다. 커서는 훑은 만큼(비어 걸러졌어도) 전진시켜 저장한다. */
+    const picked = new Set(cand);
+    const lines = [...FEED_LINES];
+    const need = Math.max(0, KICK_LINES_TOTAL - cand.length);
+    let scan = null;
+    if (need > 0) { try { scan = await store.getScan(); } catch (e) { console.warn("[la] scan load", e && e.message); } }
+    const startI = scan && Number.isFinite(scan.i) ? ((Math.trunc(scan.i) % lines.length) + lines.length) % lines.length : 0;
+    const rot = [];
+    let steps = 0;
+    for (; need > 0 && steps < lines.length && rot.length < need; steps++) {
+      const ln = lines[(startI + steps) % lines.length];
+      if (picked.has(ln)) continue;
+      if (now - (histFeedAt.get(ln) || 0) < KICK_HIST_MIN_MS) continue;
+      rot.push(ln);
+      picked.add(ln);
+    }
+    if (steps > 0) {
+      await store.saveScan({ i: (startI + steps) % lines.length, at: now }).catch((e) => console.warn("[la] scan save", e && e.message));
+    }
+    cand.push(...rot);
+
     if (!cand.length) return [];
     let dirty = false;
     const done = [];
