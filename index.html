@@ -4574,10 +4574,40 @@ function stopTripFollow() { clearInterval(tripFollowTimer); tripFollowTimer = nu
    목표는 열차 마커의 보간 위치(있으면) → 없으면 현재 역 좌표. 사용자가 화면을 만지면 멈추고 4초 뒤 재개. */
 let tripGlideRaf = 0, tripGlideLast = 0, tripGlideCur = null;
 function tripTargetLatLng() {
-  if (!trip || !trip.track) return null;
-  const st = animState.get(trainKey(trip.track.line, trip.track.no));   /* 열차 마커가 그려지는 중이면 그 보간 위치가 가장 정확(노선까지 같은 열차) */
-  if (st && st.cur) return [st.cur[0], st.cur[1]];
-  return trackedTrainLatLng();                    /* 아니면 현재 역 좌표 */
+  if (!trip) return null;
+  if (trip.track) {
+    const st = animState.get(trainKey(trip.track.line, trip.track.no));   /* 열차 마커가 그려지는 중이면 그 보간 위치가 가장 정확(노선까지 같은 열차) */
+    if (st && st.cur) return [st.cur[0], st.cur[1]];
+    return trackedTrainLatLng();                    /* 아니면 현재 역 좌표 */
+  }
+  return tripTimeTargetLatLng();                    /* 탄 열차가 없으면(환승 대기 등) 시간 기준 진행을 따라간다 — 절대 이전 열차를 보지 않는다 */
+}
+/* 추적 열차가 없을 때(환승 직후 · 아직 승차 열차 미선택 등)의 카메라 목표.
+   trip.track과 무관하게 '지금 이 구간' 위의 위치만 계산한다 — 이전 다리에서 타던 열차의 위치는 절대 참조하지 않는다. */
+function tripTimeTargetLatLng() {
+  if (!trip || trip.arrived) return null;
+  const p = tripTimeProgress(trip.baseLeg || 0, trip.boardAt);
+  if (!p || !p.seg) return null;
+  const seg = p.seg;
+  if (p.waiting) {
+    /* 환승역/출발역에서 대기 중 → 대기 중인 역(환승역 좌표) */
+    const name = resolve(seg.from) || resolve(seg.stations[0]);
+    const c = name ? stnOn(seg.line, name) : null;
+    return c ? [c[0], c[1]] : null;
+  }
+  const prevName = resolve(p.prevStation) || resolve(seg.from);
+  const nextName = resolve(p.nextStation) || resolve(seg.to);
+  if (prevName && nextName && prevName !== nextName) {
+    try {
+      const poly = segPoly(seg.line, prevName, nextName);
+      if (poly && poly.length > 1) {
+        const q = pointAlongEx(poly, p.hopFrac != null ? p.hopFrac : 0.5);
+        if (q && q.pos) return [q.pos[0], q.pos[1]];
+      }
+    } catch (e) {}
+  }
+  const c = (nextName && stnOn(seg.line, nextName)) || (prevName && stnOn(seg.line, prevName));
+  return c ? [c[0], c[1]] : null;
 }
 function startTripGlide() {
   stopTripGlide();
@@ -4585,7 +4615,7 @@ function startTripGlide() {
   /* rAF 대신 33ms 인터벌: 백그라운드 탭·웹뷰 스로틀과 무관하게 일정한 주기로 움직인다(약 30fps) */
   const step = () => {
     const ts = performance.now();
-    if (!trip || !trip.track || !adapter.map || !adapter.getView) return;
+    if (!trip || !adapter.map || !adapter.getView) return;
     const dt = tripGlideLast ? Math.min(0.1, (ts - tripGlideLast) / 1000) : 0.016;
     tripGlideLast = ts;
     if (Date.now() < tripFollowPaused) { tripGlideCur = null; return; }   /* 조작 중: 멈추고, 재개 시 현재 뷰에서 다시 */
@@ -4725,7 +4755,10 @@ function tripTimeProgress(baseLeg, boardAt) {
   for (let i = baseLeg; i < legIdx; i++) segElapsed -= segs[i].min + ROUTE_TRANSFER_MIN;
   const idx = Math.min(seg.stations.length - 1, Math.max(0, Math.floor(segElapsed / ROUTE_HOP_MIN) + 1));
   const legRemainMin = waiting ? waitMin + seg.min : Math.max(0, seg.min - segElapsed);
-  return { remain, legIdx, seg, nextStation: seg.stations[idx] || seg.to, waiting, waitMin, done: !waiting && remain <= 0,
+  /* prevStation/hopFrac: 지도 카메라가 열차 없이도(시간 기준) 현재 구간 위를 따라가게(tripTargetLatLng) */
+  const prevStation = seg.stations[Math.max(0, idx - 1)] || seg.from;
+  const hopFrac = waiting ? 0 : Math.max(0, Math.min(1, (segElapsed - Math.max(0, idx - 1) * ROUTE_HOP_MIN) / ROUTE_HOP_MIN));
+  return { remain, legIdx, seg, nextStation: seg.stations[idx] || seg.to, prevStation, hopFrac, waiting, waitMin, done: !waiting && remain <= 0,
            alight: !waiting && idx >= seg.stations.length - 1 && remain > 0,
            alightInMin: Math.max(0, legRemainMin - ROUTE_HOP_MIN) };
 }
@@ -4981,6 +5014,21 @@ async function refreshPickList() {
   } finally { pickBusy = false; }
 }
 /* 열차 선택 → 그 열차 추적 시작. no가 비면 선택 보류(목록만 접기) */
+/* 추적 열차가 바뀌거나(다른 열차로 교체) 사라질 때(구간 종료·도착) 공통으로 부른다.
+   '이 열차 따라가기'(state.followKey)가 방금 추적을 잃은/바뀐 열차를 가리키고 있었으면 즉시 정리해
+   지도가 더 이상 존재하지 않는 구간을 달리는 옛 열차를 좇지 않게 한다. 글라이드 캐시도 함께 초기화해
+   다음 프레임이 옛 위치에서부터 이어붙이지 않고 새 목표(시간 기준 등)로 바로 향하게 한다. */
+function clearStaleTrackFollow(oldKey, newKey) {
+  tripGlideCur = null;
+  if (!oldKey || state.followKey !== oldKey) return;
+  if (newKey && newKey !== oldKey) {
+    state.followKey = newKey;   /* 같은 추적 대상이 다른 열차로 바뀐 것뿐(자동 교체) — 팔로우를 새 열차로 옮겨 이어간다 */
+    const st = animState.get(newKey);
+    if (st) { try { adapter.setView(offsetLeft(st.cur, st.heading, trackOffM), Math.max(adapter.getView().zoom, 14)); } catch (e) {} }
+  } else if (!newKey) {
+    stopFollow();                /* 구간이 끝나거나 도착 — 더 이상 따라갈 대상이 없다 */
+  }
+}
 function tripBoard(no, legIdx) {
   if (!trip) return;
   const pick = trip.pick;
@@ -4991,8 +5039,10 @@ function tripBoard(no, legIdx) {
      노선|번호 키로 와도 되지만 노선이 이 구간과 다르면 무시 */
   { const k = splitTrainKey(no); if (k.line && k.line !== seg.line) return; no = k.no; if (!no) return; }
   const row = pick && pick.legIdx === legIdx ? pick.rows.find(r => r.no === String(no) && (!r.line || r.line === seg.line)) : null;
+  const oldKey = trip.track ? trainKey(trip.track.line, trip.track.no) : null;
   trip.track = { no: String(no), legIdx, line: seg.line, dest: row ? row.dest : "", cur: row ? row.cur : null, sttus: row ? row.sttus : "", seenAt: Date.now(),
                  term: row ? row.term : "", updn: row ? row.updn : "", since: Date.now() };   /* since: 자동 교체 판정의 하한 */
+  clearStaleTrackFollow(oldKey, trainKey(trip.track.line, trip.track.no));
   trip.pick = null; trip.trackLost = false; trip.alightNotifiedLeg = -1;
   /* 아직 출발역에 오지 않은 열차: 출발역 도착 예정(계획 우선, 없으면 남은 역 수 기준) + 정차 시간을 출발 시각으로 */
   {
@@ -5018,7 +5068,9 @@ function tripLegReached(legIdx) {
   } else {
     /* 환승역 도착: 이 열차 추적 종료 → 환승 시간 뒤 승차로 가정하고 다음 열차를 다시 고르게 */
     const nextLeg = legIdx + 1;
+    const oldKey = trainKey(trip.track.line, trip.track.no);
     trip.track = null; trip.baseLeg = nextLeg; trip.boardAt = Date.now() + ROUTE_TRANSFER_MIN * 60000;
+    clearStaleTrackFollow(oldKey, null);   /* 이전 구간 열차는 더 이상 추적 대상이 아님 — 팔로우·글라이드 즉시 정리 */
     haptic("medium");
     startPick(nextLeg, true);
     /* 사용자가 고르지 않아도, 환승 도보 시간이 지난 뒤 승강장에 있는 가장 빠른 열차로 자동 선택해 추적을 잇는다 */
@@ -5039,7 +5091,9 @@ function tripComplete(reason) {
     legs: ((trip.result && trip.result.segments) || []).map(g => ({ line: g.line, color: g.color, from: g.from, to: g.to })),
     arrivedAt: new Date().toLocaleTimeString("ko-KR", { hour: "numeric", minute: "2-digit" }),   /* "오후 9:32" */
   };
+  const oldKey = trip.track ? trainKey(trip.track.line, trip.track.no) : null;
   trip.arrived = true; trip.track = null;
+  clearStaleTrackFollow(oldKey, null);
   haptic("heavy");              /* 네이티브 햅틱에 success 단계는 없다 → 가장 강한 heavy */
   postTrip();                   /* done:true를 한 번 보내 라이브 액티비티가 '도착'을 보여주고 스스로 정리하게 */
   closeCardReset();             /* X 버튼과 똑같이 카드 닫기 + 경로/지도 복구 (확인 대화상자는 생략) */
@@ -5147,11 +5201,13 @@ function tripAutoSwitch(list) {
 }
 function tripSwitchTrain(sw, list) {
   const old = trip.track;
+  const oldKey = trainKey(old.line, old.no);
   const t = pickTrain(list || [], sw.no, old.line) || pickTrain(state.trains || [], sw.no, old.line);
   const dest = (t && t.statnTnm) || sw.term || "";
   trip.track = { no: String(sw.no), legIdx: old.legIdx, line: old.line, dest, cur: (t && resolve(t.statnNm)) || sw.cur,
                  sttus: t ? String(t.trainSttus) : String(sw.sttus || ""), seenAt: Date.now(), term: dest, updn: t ? t.updnLine : old.updn,
                  since: old.since || Date.now(), switchedFrom: String(old.no), switchedAt: Date.now() };
+  clearStaleTrackFollow(oldKey, trainKey(trip.track.line, trip.track.no));   /* 자동 교체된 옛 열차를 더는 좇지 않게(따라가기 중이었으면 새 열차로 이어감) */
   trip.dwellRem = null; trip.trackLost = false;
   trip.autoNote = `탄 열차를 ${dest}행 ${sw.no}로 바꿨어요`;
   trip.autoNoteUntil = Date.now() + 15000;
