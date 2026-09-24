@@ -2702,8 +2702,21 @@ function dropStaleTrains(list) {
   if (!ref) return list; /* 수신 시각 정보 없음(모의 데이터 등): 그대로 둔다 */
   return list.filter(t => { const r = recptMs(t.recptnDt); return r == null || ref - r <= STALE_TRAIN_MS; });
 }
+/* 같은 trainNo가 서로 다른 역·수신시각으로 둘 이상 찍힐 때(피드 갱신 지연) 최신 수신분만 남긴다.
+   trainNo가 비어있는 항목은 건드리지 않는다. */
+function dedupByTrainNo(list) {
+  const seen = new Map(), noNo = [];
+  for (const t of list) {
+    const no = t.trainNo != null ? String(t.trainNo) : "";
+    if (!no) { noNo.push(t); continue; }
+    const prev = seen.get(no);
+    if (!prev || (recptMs(t.recptnDt) || 0) > (recptMs(prev.recptnDt) || 0)) seen.set(no, t);
+  }
+  return [...seen.values(), ...noNo];
+}
 /* 같은 위치·행선·방향의 열차가 둘 이상이면(느린 갱신으로 남은 유령 등) 최신 수신분만 남긴다 — 지도 마커·선택창·열차 목록 중복 방지 */
 function dedupTrains(list) {
+  list = dedupByTrainNo(list);   /* 1단계: 같은 trainNo 중복(다른 역에 찍힌 유령) 제거 */
   const seen = new Map();
   for (const t of list) {
     const k = `${t.statnNm}|${t.statnTnm}|${t.updnLine}`;
@@ -2711,6 +2724,19 @@ function dedupTrains(list) {
     if (!prev || (recptMs(t.recptnDt) || 0) > (recptMs(prev.recptnDt) || 0)) seen.set(k, t);
   }
   return [...seen.values()];
+}
+/* 한 trainNo로 피드를 조회할 때(단일 열차 추적) 여러 행이 잡히면 가장 최근 수신분을 쓴다 —
+   느린 갱신으로 옛 역에 남은 유령 행을 골라 "제자리 정지"로 보이는 문제 방지 */
+function pickTrain(list, no) {
+  if (!Array.isArray(list)) return null;
+  const want = String(no);
+  let best = null, bestMs = -1;
+  for (const t of list) {
+    if (String(t.trainNo) !== want) continue;
+    const ms = recptMs(t.recptnDt) || 0;
+    if (!best || ms > bestMs) { best = t; bestMs = ms; }
+  }
+  return best;
 }
 
 async function fetchLive(force) {
@@ -4540,7 +4566,7 @@ function tripTrackPayload() {
   const segs = trip.result.segments, k = trip.track.legIdx, seg = segs[k];
   if (!seg) return null;
   /* 급행이면 이번 구간에서 실제로 서는 역만(백그라운드 추적기의 '다음 정차역/하차' 판정용) */
-  const tk = state.trains.find(x => String(x.trainNo) === String(trip.track.no));
+  const tk = pickTrain(state.trains, trip.track.no);
   const es = tk ? expressStops(seg.line, tk) : null;
   /* 접근 구간: 열차가 아직 출발역에 오지 않았으면 현재 역→출발역 경로(출발역 제외)를 넘겨 백그라운드에서도 '대기 중'을 계산 */
   let approach = [];
@@ -4567,7 +4593,7 @@ async function pollTrackedTrain() {
       try { const d = await fetchPosition(tr.line, true); list = (d && d.realtimePositionList) || []; } catch (e) {}
       if (!trip || trip.track !== tr) return;
       if (list) {
-        const t = list.find(x => String(x.trainNo) === tr.no);
+        const t = pickTrain(list, tr.no);
         if (t) {
           const cur = resolve(t.statnNm);
           if (cur) { tr.cur = cur; tr.sttus = String(t.trainSttus); tr.seenAt = Date.now(); if (!tr.dest) tr.dest = t.statnTnm; tr.term = t.statnTnm; tr.updn = t.updnLine; }
@@ -4903,7 +4929,7 @@ function trainDetailHtml(t) {
     </div>`;
 }
 function openTrainCardByNo(no) {
-  const t = state.trains.find(x => x.trainNo === no);
+  const t = pickTrain(state.trains, no);
   if (!t) return;
   if (NATIVE) { if (closeSettingsSheet) closeSettingsSheet(); closeTrainPanelIfOpen(); }
   if (adapter.clearSelectedStation) adapter.clearSelectedStation();

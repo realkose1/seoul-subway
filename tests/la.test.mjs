@@ -56,6 +56,57 @@ test("clockAfter — 'a h:mm' ko_KR / Asia/Seoul", () => {
   assert.equal(s, "오후 1:36");
 });
 
+/* 실측 사례: 같은 trainNo가 서로 다른 역·수신시각으로 두 행 찍힘 —
+   findTrain/pickNextTrain 은 피드 안 순서와 무관하게 항상 최신 수신분을 골라야 한다
+   (옛 행을 고르면 열차가 옛 역에 멈춰 있는 것처럼 보이고 남은 시간이 계속 늘어난다) */
+test("findTrain — 같은 trainNo 중복 시 최신 recptnDt를 고른다(순서 무관)", () => {
+  const stale = { trainNo: "5049", statnNm: "상일동", statnTnm: "하남검단산", trainSttus: "1", recptnDt: "2026-09-24 11:39:16" };
+  const fresh = { trainNo: "5049", statnNm: "강일", statnTnm: "하남검단산", trainSttus: "0", recptnDt: "2026-09-24 11:41:05" };
+  // 옛 것이 배열 앞에 있어도 최신(강일)을 골라야 한다
+  assert.equal(TS.findTrain([stale, fresh], "5049").statnNm, "강일");
+  // 순서를 뒤집어도 결과는 같아야 한다
+  assert.equal(TS.findTrain([fresh, stale], "5049").statnNm, "강일");
+
+  const staleB = { trainNo: "5062", statnNm: "상일동", statnTnm: "하남검단산", trainSttus: "1", recptnDt: "2026-09-24 11:41:23" };
+  const freshB = { trainNo: "5062", statnNm: "강일", statnTnm: "하남검단산", trainSttus: "2", recptnDt: "2026-09-24 11:40:01" };
+  // 이 쌍은 배열상 나중(11:41:23, 상일동)이 실제로는 더 최신이다 — recptnDt 기준으로 골라야 한다
+  assert.equal(TS.findTrain([staleB, freshB], "5062").statnNm, "상일동");
+  assert.equal(TS.findTrain([freshB, staleB], "5062").statnNm, "상일동");
+});
+
+test("findTrain — trainNo 미매칭/빈 목록은 null", () => {
+  assert.equal(TS.findTrain([], "5049"), null);
+  assert.equal(TS.findTrain([{ trainNo: "1", recptnDt: "2026-09-24 11:00:00" }], "9999"), null);
+  assert.equal(TS.findTrain(null, "5049"), null);
+});
+
+test("dedupByTrainNo — trainNo별 최신 수신분만 남기고, 빈 trainNo는 그대로 둔다", () => {
+  const stale = { trainNo: "5049", statnNm: "상일동", recptnDt: "2026-09-24 11:39:16" };
+  const fresh = { trainNo: "5049", statnNm: "강일", recptnDt: "2026-09-24 11:41:05" };
+  const noNo = { trainNo: "", statnNm: "기타" };
+  const out = TS.dedupByTrainNo([stale, fresh, noNo]);
+  assert.equal(out.length, 2);
+  assert.ok(out.find((t) => t.statnNm === "강일"));
+  assert.ok(!out.find((t) => t.statnNm === "상일동"));
+  assert.ok(out.find((t) => t.statnNm === "기타"));
+});
+
+test("pickNextTrain — 환승역 중복 trainNo가 있어도 최신 위치 기준으로 판단한다", () => {
+  const legs = [
+    { line: "5호선", to: "천호", min: 10 },
+    { line: "8호선", to: "몽촌토성", min: 8 },
+  ];
+  const track = { legIdx: 0, legTo: "천호", legs };
+  const nextLeg8 = { line: "8호선", to: "몽촌토성", stations: ["천호", "강동구청", "몽촌토성"] };
+  legs[1] = nextLeg8;
+  // 같은 trainNo(8001)가 옛 위치(반대 방향으로 오인될 수 있는 역)와 새 위치(환승역, 올바른 방향)로 중복 등장
+  const staleWrong = { trainNo: "8001", statnNm: "몽촌토성", statnTnm: "천호", trainSttus: "1", recptnDt: "2026-09-24 11:00:00" };
+  const freshRight = { trainNo: "8001", statnNm: "천호", statnTnm: "몽촌토성", trainSttus: "0", recptnDt: "2026-09-24 11:05:00" };
+  const picked = TS.pickNextTrain(track, [staleWrong, freshRight], Date.now());
+  assert.ok(picked, "최신 위치 기준으로 승차 판단이 되어야 한다");
+  assert.equal(picked.no, "8001");
+});
+
 test("정상 진행 — 남은 시간·다음 역", () => {
   const now = Date.now();
   const r = applyTrack(baseTrack(), train("5001", "왕십리역", "1"), prevState(), now);
