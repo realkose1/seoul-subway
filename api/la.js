@@ -20,10 +20,12 @@
      POST ?op=update    같은 형식(부분 허용) — 앱이 포그라운드면 paused:true 로 서버 푸시를 멈춘다
      POST ?op=end       {tripId, local}
      GET  ?op=tick      헤더 x-cron-secret (chain=1 이면 체인 모드, dry=1 이면 계산만)
-     GET/POST ?op=kick  인증 없음 — 잠금이 비었고 할 일이 있으면 체인만 띄운다(스스로 푸시하지 않음)
+     GET/POST ?op=kick  인증 없음 — 잠금이 비었고 할 일이 있으면 체인만 띄운다(스스로 푸시하지 않음).
+                        + 운행 대기 등록부에 열차가 있거나 최근 활동이 있는 노선의 이력을 이어 받는다(최대 3노선·노선당 60초)
      GET/POST ?op=cleanup  헤더 x-cron-secret — 매달린 액티비티를 지금 정리(dry=1 이면 판정만)
      GET  ?op=hist&line=5호선  인증 없음 — 노선 관측 이력(운행 대기·탄 열차 교체 판정용, lib/train-hist.js).
                         앱이 백그라운드에 있던 동안 웹이 못 본 열차 움직임을 복귀 때 채워 넣는다(공개 피드에서 나온 값뿐)
+                        응답의 parked = 그 노선 운행 대기 등록부 항목({line,no,stn,since,lastSeen}, sf_cache 'ssl:la:parked')
      GET  ?op=diag      헤더 x-cron-secret — 환경 점검(값은 안 돌려준다)
                         probe=1 이면 APNs 에 실제로 한 번 쏴서 키/토픽 설정을 확인한다
 
@@ -64,6 +66,32 @@ async function loadHist(line, now) {
   TH.histPrune(mem, now);
   memHist.set(line, mem);
   return mem;
+}
+
+/* 운행 대기 등록부(lib/train-hist.js regUpdate) — sf_cache('ssl:la:parked') 한 행. 이력(60분)보다 오래(6시간) 남아,
+   아무도 그 노선을 보지 않던 사이에도 오래 서 있던 열차를 다시 보는 순간 '운행 대기'로 알아본다.
+   저장본이 기준이다(읽기에 성공하면 그걸로 바꾼다 — 다른 인스턴스가 지운 항목을 되살리지 않게). 읽기 실패 시에만 메모리. */
+let memReg = TH.emptyReg();
+const REG_ACTIVE_MS = 30 * 60000;         /* 이만큼 안에 주행·앱(op=hist)이 본 노선 = '최근 활동' — op=kick 이 이력을 이어 받는다 */
+const REG_ACTIVE_SAVE_MS = 5 * 60000;     /* 활동 시각만 바뀐 경우 이 간격으로만 저장 */
+const KICK_HIST_LINES = 3;                /* op=kick 한 번에 이력을 새로 받는 노선 수 상한 */
+const KICK_HIST_MIN_MS = 60 * 1000;       /* 노선당 피드 조회 간격 하한(op=kick) */
+async function loadReg(now) {
+  try {
+    const saved = await store.getParked();
+    memReg = saved ? TH.regUnpack(saved) : TH.emptyReg();
+  } catch (e) { console.warn("[la] parked load", e && e.message); }
+  TH.regPrune(memReg, now);
+  return memReg;
+}
+const saveReg = (reg, now) => store.saveParked({ trains: reg.trains, lines: reg.lines || {}, at: reg.at || now }, now)
+  .catch((e) => console.warn("[la] parked save", e && e.message));
+/* 노선 활동 표시 — 바뀌어서 저장이 필요하면 true */
+function markActive(reg, line, now) {
+  reg.lines = reg.lines || {};
+  const prev = Number(reg.lines[line]) || 0;
+  reg.lines[line] = now;
+  return now - prev >= REG_ACTIVE_SAVE_MS;
 }
 
 /* 테스트에서 APNs 전송을 갈아끼울 수 있게 한 겹 둔다 */
@@ -334,18 +362,27 @@ async function runRound(now, { dry = false } = {}) {
   }));
   const feed = (ln) => feedMap.get(ln) || [];
 
-  /* 노선 관측 이력에 이번 피드를 쌓는다(운행 대기 판정·탄 열차 자동 교체). 저장 실패는 무시한다. */
+  /* 노선 관측 이력에 이번 피드를 쌓는다(운행 대기 판정·탄 열차 자동 교체). 저장 실패는 무시한다.
+     이력은 노선별로만 쌓고 찾는다(열차번호는 노선끼리 겹친다) — 피드도 노선별, computeRow 도 track.line 의 이력만 본다. */
   const hists = new Map();
+  let reg = null, regDirty = false;
+  if (lines.size) {
+    const loadedReg = await loadReg(now);
+    reg = dry ? TH.regUnpack(JSON.parse(JSON.stringify(loadedReg))) : loadedReg;   /* dry 는 등록부도 건드리지 않는다 */
+  }
   await Promise.all([...lines].map(async (ln) => {
     const loaded = await loadHist(ln, now);
     const h = dry ? TH.histMerge(TH.emptyHist(), loaded) : loaded;   /* dry 는 메모리 이력도 건드리지 않는다 */
-    TH.histObserve(h, feed(ln), now);
+    TH.histObserve(h, feed(ln), now, ln);
     TH.histPrune(h, now);
     hists.set(ln, h);
   }));
+  /* 운행 대기 등록부: 오래 서 있는 열차를 기록하고, 다시 보인 열차의 정차 시작을 이력에 되돌린다(computeRow 전에) */
+  for (const [ln, h] of hists) { if (TH.regUpdate(reg, ln, h, now)) regDirty = true; if (markActive(reg, ln, now)) regDirty = true; }
   if (!dry) {
     await Promise.all([...hists].map(([ln, h]) =>
       store.saveHist(ln, TH.histPack(h), now).catch((e) => console.warn("[la] hist save", ln, e && e.message))));
+    if (reg && regDirty) await saveReg(reg, now);
   }
 
   const results = rows.map((r) => {
@@ -438,8 +475,50 @@ async function opTick(req, res) {
 /* 인증 없는 자가 복구 — 잠금이 비었고 할 일이 있을 때만 체인을 띄운다. 스스로는 푸시하지 않는다.
    잠금(75초 임대)이 곧 속도 제한이다. 외부 하트비트(jumo push-cron, 2분마다)가 부른다. */
 async function opKick(req, res) {
-  const k = await kickChain();
-  return res.status(200).json(k.kicked ? { kicked: true } : { kicked: false, reason: k.reason });
+  const [k, hl] = await Promise.all([kickChain(), refreshIdleLines(Date.now())]);
+  const body = k.kicked ? { kicked: true } : { kicked: false, reason: k.reason };
+  if (hl.length) body.hist = hl;
+  return res.status(200).json(body);
+}
+
+/* 하트비트(op=kick, 2분마다)가 주행 없는 동안에도 노선 이력·운행 대기 등록부를 이어 간다 —
+   대상: 등록부에 열차가 있는 노선(최근에 본 순) → 최근 활동(30분 안에 주행·op=hist) 노선. 한 번에 최대 3노선,
+   노선당 60초에 한 번(인스턴스 메모리 + 저장된 이력의 at 으로 인스턴스 간에도). 오류는 삼킨다.
+   @returns 이번에 피드를 받은 노선 목록 */
+async function refreshIdleLines(now) {
+  try {
+    const reg = await loadReg(now);
+    const pri = new Map();
+    for (const e of Object.values(reg.trains || {})) {
+      if (!e || !FEED_LINES.has(e.line)) continue;
+      pri.set(e.line, Math.max(pri.get(e.line) || 0, 2e13 + (Number(e.lastSeen) || 0)));   /* 등록부 노선이 먼저 */
+    }
+    for (const [ln, t] of Object.entries(reg.lines || {})) {
+      if (!FEED_LINES.has(ln) || now - (Number(t) || 0) > REG_ACTIVE_MS || pri.has(ln)) continue;
+      pri.set(ln, Number(t) || 0);
+    }
+    const cand = [...pri].sort((a, b) => b[1] - a[1]).map(([ln]) => ln)
+      .filter((ln) => now - (histFeedAt.get(ln) || 0) >= KICK_HIST_MIN_MS).slice(0, KICK_HIST_LINES);
+    if (!cand.length) return [];
+    let dirty = false;
+    const done = [];
+    await Promise.all(cand.map(async (ln) => {
+      const h = await loadHist(ln, now);
+      if (now - (Number(h.at) || 0) < KICK_HIST_MIN_MS) return;   /* 다른 인스턴스·체인이 방금 받았다 */
+      histFeedAt.set(ln, now);
+      const list = await fetchLinePositions(ln, { timeoutMs: 4000, maxAgeMs: 4000 }).catch(() => []);
+      if (!list.length) return;
+      TH.histObserve(h, list, now, ln); TH.histPrune(h, now);
+      if (TH.regUpdate(reg, ln, h, now)) dirty = true;
+      done.push(ln);
+      await store.saveHist(ln, TH.histPack(h), now).catch((e) => console.warn("[la] hist save", ln, e && e.message));
+    }));
+    if (dirty) await saveReg(reg, now);
+    return done;
+  } catch (e) {
+    console.warn("[la] kick hist", e && e.message);
+    return [];
+  }
 }
 
 /* ── op=cleanup ──────────────────────────────────────────────────────────── */
@@ -479,18 +558,22 @@ async function opHist(req, res) {
   const line = String((req.query && req.query.line) || "");
   if (!FEED_LINES.has(line)) return res.status(400).json({ error: "unknown line" });
   const now = Date.now();
-  const h = await loadHist(line, now);
+  const [h, reg] = await Promise.all([loadHist(line, now), loadReg(now)]);
   let observed = false;
   if (now - (Number(h.at) || 0) >= HIST_FEED_MIN_MS && now - (histFeedAt.get(line) || 0) >= HIST_FEED_MIN_MS) {
     histFeedAt.set(line, now);
     const list = await fetchLinePositions(line, { timeoutMs: 4000, maxAgeMs: 4000 }).catch(() => []);
     if (list.length) {
-      TH.histObserve(h, list, now); TH.histPrune(h, now);
+      TH.histObserve(h, list, now, line); TH.histPrune(h, now);
       observed = true;
-      await store.saveHist(line, TH.histPack(h), now).catch((e) => console.warn("[la] hist save", line, e && e.message));
     }
   }
-  return res.status(200).json({ line, observed, hist: TH.histPack(h) });
+  /* 등록부를 이력에 되돌려 쓴 뒤 돌려준다(오래 서 있던 열차가 처음 본 것처럼 보이지 않게). 등록부 항목도 함께 — 웹이 자기 등록부에 합친다 */
+  let regDirty = TH.regUpdate(reg, line, h, now);
+  if (markActive(reg, line, now)) regDirty = true;   /* 이 노선을 앱이 보고 있다 → op=kick 이 한동안 이력을 이어 받는다 */
+  if (observed) await store.saveHist(line, TH.histPack(h), now).catch((e) => console.warn("[la] hist save", line, e && e.message));
+  if (regDirty) await saveReg(reg, now);
+  return res.status(200).json({ line, observed, hist: TH.histPack(h), parked: TH.regForLine(reg, line) });
 }
 
 /* ── op=diag ─────────────────────────────────────────────────────────────── */
@@ -593,4 +676,5 @@ module.exports.selfUrl = selfUrl;
 /* 테스트 전용 — APNs 전송을 갈아끼운다(원복하려면 인자 없이 호출) */
 module.exports._setPusherFactory = (fn) => { pusherFactory = fn || createPusher; };
 module.exports._memHist = memHist;   /* 테스트 전용 */
+module.exports._resetParked = () => { memReg = TH.emptyReg(); histFeedAt.clear(); };   /* 테스트 전용 */
 module.exports._setTiming = (o) => { chainRoundMs = o && o.roundMs != null ? o.roundMs : CHAIN_ROUND_MS; };

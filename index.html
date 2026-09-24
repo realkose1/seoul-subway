@@ -1232,6 +1232,13 @@ function lineOfTrain(t) {
   if (t.subwayNm && LINES[t.subwayNm]) return t.subwayNm;
   return state.line !== "ALL" ? state.line.split(",")[0] : "2호선";
 }
+/* 열차 식별 키 = 노선|열차번호. 열차번호는 노선마다 따로 매겨져 서로 겹친다
+   (실측 2026-09-24 14:41: 5호선 5073 상일동→하남검단산 과 경의중앙선 5073 서빙고→용문 이 동시에 운행).
+   열차를 가리키는 모든 상태(마커·애니·따라가기·운행 계획·핀·피드 관측)는 이 키로 둔다 — 번호만으로 찾지 않는다. */
+function trainKey(line, no) { return String(line || "") + "|" + String(no == null ? "" : no); }
+function tkeyOf(t) { return trainKey(lineOfTrain(t), t && t.trainNo); }
+/* 키 → {line, no}. '|' 가 없으면(예전 호출) 번호만 */
+function splitTrainKey(k) { const s = String(k == null ? "" : k), i = s.indexOf("|"); return i < 0 ? { line: "", no: s } : { line: s.slice(0, i), no: s.slice(i + 1) }; }
 function colorOfTrain(t) { return LINES[lineOfTrain(t)].color; }
 function bearingDeg(a, b) {
   /* 화면 기준 방위각: 0=북, 시계방향 */
@@ -2141,7 +2148,7 @@ function currentRefreshSec() {
   if (typeof trip !== "undefined" && trip) return 8;
   return (state.line === "ALL" || state.line.includes(",")) ? 15 : 10; /* 활용사례 승인으로 한도 해제됨 */
 }
-const animState = new Map(); /* trainNo → { cur, goal, speed, heading, train } */
+const animState = new Map(); /* trainKey(노선|번호) → { key, no, cur, goal, speed, heading, train } — 번호만으로 두면 다른 노선 같은 번호 열차가 덮어쓴다 */
 const REDUCED_MOTION = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 /* 지도를 드래그·줌 하는 동안엔 열차 DOM 갱신(이동·회전)을 멈춰 팬/줌 버벅임 완화 — 특히 DOM 마커가 무거운 네이버.
    조작 중에도 경로 진행 계산(st.cur)은 계속하고 화면 그리기만 생략하며, 열차는 지도 오버레이라 자기 좌표에 그대로 붙어 있는다 */
@@ -2214,15 +2221,15 @@ setInterval(() => {
       }
       const moved = distM(pos, st.cur) > 0.3;
       st.cur = pos;
-      if (q.heading != null && Math.abs(q.heading - st.heading) > 4) { st.heading = q.heading; if (inView(st.cur)) adapter.upsertTrain(st.no, st.cur, st.train, q.heading); }
-      if (moved && inView(st.cur)) adapter.moveTrain(st.no, offsetLeft(st.cur, st.heading, trackOffM));
+      if (q.heading != null && Math.abs(q.heading - st.heading) > 4) { st.heading = q.heading; if (inView(st.cur)) adapter.upsertTrain(st.key, st.cur, st.train, q.heading); }
+      if (moved && inView(st.cur)) adapter.moveTrain(st.key, offsetLeft(st.cur, st.heading, trackOffM));
       continue;
     }
     if (st.idx >= st.route.length) continue;
     if (REDUCED_MOTION) {
       st.cur = st.route[st.route.length - 1].slice();
       st.idx = st.route.length;
-      if (inView(st.cur)) adapter.moveTrain(st.no, offsetLeft(st.cur, st.heading, trackOffM));
+      if (inView(st.cur)) adapter.moveTrain(st.key, offsetLeft(st.cur, st.heading, trackOffM));
       continue;
     }
     let remain = st.speed * dt;
@@ -2238,7 +2245,7 @@ setInterval(() => {
           if (Math.abs(nh - st.heading) > 4) {
             st.heading = nh;
             if (canDraw && (!box || (st.cur[0] >= box.s && st.cur[0] <= box.n && st.cur[1] >= box.w && st.cur[1] <= box.e)))
-              adapter.upsertTrain(st.no, st.cur, st.train, nh); /* 모서리에서 회전(화면 안·조작 아닐 때만) */
+              adapter.upsertTrain(st.key, st.cur, st.train, nh); /* 모서리에서 회전(화면 안·조작 아닐 때만) */
           }
         }
       } else {
@@ -2248,12 +2255,12 @@ setInterval(() => {
         remain = 0; moved = true;
       }
     }
-    if (moved && inView(st.cur)) adapter.moveTrain(st.no, offsetLeft(st.cur, st.heading, trackOffM));
+    if (moved && inView(st.cur)) adapter.moveTrain(st.key, offsetLeft(st.cur, st.heading, trackOffM));
   }
   /* 추적 모드: 따라가는 열차로 시점 이동(주행 중 사용자가 지도를 만지면 잠시 멈춤) */
-  if (state.followNo && Date.now() >= tripFollowPaused) {
-    const st = animState.get(state.followNo);
-    if (!st) { if (!(trip && trip.track && trip.track.no === state.followNo)) stopFollow(); }
+  if (state.followKey && Date.now() >= tripFollowPaused) {
+    const st = animState.get(state.followKey);
+    if (!st) { if (!(trip && trip.track && trainKey(trip.track.line, trip.track.no) === state.followKey)) stopFollow(); }
     else if (!window.__lastFollowPan || performance.now() - window.__lastFollowPan > 400) {
       window.__lastFollowPan = performance.now();
       const v = adapter.getView();
@@ -2267,8 +2274,8 @@ function scheduleReIcon() { clearTimeout(reIconTimer); reIconTimer = setTimeout(
 function reIconTrains() {
   updateTrackOffset();
   for (const st of animState.values()) {
-    adapter.upsertTrain(st.no, st.cur, st.train, st.heading);
-    adapter.moveTrain(st.no, offsetLeft(st.cur, st.heading, trackOffM));
+    adapter.upsertTrain(st.key, st.cur, st.train, st.heading);
+    adapter.moveTrain(st.key, offsetLeft(st.cur, st.heading, trackOffM));
   }
 }
 
@@ -2345,9 +2352,10 @@ const PLAN_CORRECT_MS = 600;          /* 피드가 확인한 역으로 마커를
    실측(5호선 5197 상일동): '도착'이 20초마다 새 기록으로 20분 넘게 이어짐 → 30초 정차 가정으로 출발시키면 안 된다. */
 const DWELL_LONG_MS = 3 * 60000;      /* 이만큼 같은 역 '도착'이 이어지면 '출발 대기'로 안내 */
 const FEED_CONFIRM_MS = 40000;        /* 같은 역 새 기록 2개 이상이 이만큼 이어지면 '피드가 확인한 위치' */
-const feedObs = new Map();            /* trainNo → { stn, sttus, recpt, prevRecpt, firstRecpt, run, dwellRecpt, dwellSince, seenAt } */
-function observeFeedTrain(t, recWall) {
-  const no = t && t.trainNo != null ? String(t.trainNo) : ""; if (!no) return null;
+const feedObs = new Map();            /* trainKey → { stn, sttus, recpt, prevRecpt, firstRecpt, run, dwellRecpt, dwellSince, seenAt } */
+function observeFeedTrain(t, recWall, line) {
+  const no0 = t && t.trainNo != null ? String(t.trainNo) : ""; if (!no0) return null;
+  const no = trainKey(line || lineOfTrain(t), no0);
   const cur = resolve(t.statnNm); if (!cur) return null;
   const sttus = String(t.trainSttus), r = recptMs(t.recptnDt), nowMs = Date.now();
   let o = feedObs.get(no);
@@ -2372,14 +2380,15 @@ function observeFeedList(list, line) {
   histObserveList(list, line);
   let ref = 0; for (const t of list) { const r = recptMs(t.recptnDt); if (r && r > ref) ref = r; }
   const now = Date.now();
-  for (const t of dedupByTrainNo(list)) observeFeedTrain(t, planRecordTime(t, ref, now));
+  for (const t of dedupByTrainNo(list)) observeFeedTrain(t, planRecordTime(t, ref, now), line || null);
   if (feedObs.size > 1500) for (const [k, o] of feedObs) if (now - o.seenAt > 10 * 60000) feedObs.delete(k);
 }
 /* 피드가 같은 역을 새 기록 2개 이상·40초 이상으로 확인했는가(지터가 아니다) */
 function feedConfirmed(o) { return !!o && o.run >= 2 && o.recpt != null && o.firstRecpt != null && o.recpt - o.firstRecpt >= FEED_CONFIRM_MS; }
 /* 같은 역 '도착(1)'이 새 기록으로 이어진 시간(ms). 새 기록이 하나뿐이면 0(정상 정차와 구분 불가) */
 function feedDwellMs(o) { return o && o.sttus === "1" && o.dwellRecpt != null && o.run >= 2 && o.recpt != null ? Math.max(0, o.recpt - o.dwellRecpt) : 0; }
-function trainDwellMs(no, stn) { const o = feedObs.get(String(no)); return o && (!stn || o.stn === stn) ? feedDwellMs(o) : 0; }
+/* key = trainKey(노선, 번호) */
+function trainDwellMs(key, stn) { const o = feedObs.get(String(key)); return o && (!stn || o.stn === stn) ? feedDwellMs(o) : 0; }
 /* ── 노선별 열차 관측 이력 (서버 lib/train-hist.js 와 같은 모양·같은 규칙) ──
    실측(2026-09-24, 5호선): 5197 이 상일동 '도착'을 47분 동안 새 기록으로 보냄(사실상 운행 대기). 그 사이 5055 가
    상일동→강일로 지나갔고 사용자는 5055 를 탔는데 추적은 5197 에 묶여 있었다.
@@ -2399,7 +2408,7 @@ function recptEpoch(s) { const r = recptMs(s); return r == null ? null : r - KST
 function histKey(line) { return "trainHist:" + line; }
 function histOf(line) {
   let h = trainHist.get(line);
-  if (!h) { h = histLoad(line); trainHist.set(line, h); }
+  if (!h) { h = histLoad(line); trainHist.set(line, h); parkRegObserve(line); }
   return h;
 }
 function histLoad(line) {
@@ -2435,6 +2444,7 @@ function histObserveList(list, line) {
   const now = Date.now(), touched = new Set();
   for (const t of dedupByTrainNo(list)) {
     const no = t && t.trainNo != null ? String(t.trainNo) : ""; if (!no) continue;
+    if (line && t.subwayNm && LINES[t.subwayNm] && t.subwayNm !== line) continue;   /* 다른 노선 열차(번호가 같을 수 있다) — 이력은 노선별 */
     const ln = line || (t.subwayNm && LINES[t.subwayNm] ? t.subwayNm : null); if (!ln) continue;
     const stn = resolve(t.statnNm); if (!stn) continue;
     const h = histOf(ln);
@@ -2446,7 +2456,7 @@ function histObserveList(list, line) {
     h.at = Math.max(h.at || 0, now);
     touched.add(ln);
   }
-  for (const ln of touched) { histPrune(trainHist.get(ln), now); histDirty.add(ln); }
+  for (const ln of touched) { histPrune(trainHist.get(ln), now); parkRegObserve(ln); histDirty.add(ln); }
   histSave(false);
 }
 function histPrune(h, now) {
@@ -2503,7 +2513,86 @@ function parkedInfo(e) {
   const dur = Number(v[2]) - Number(v[1]);
   return dur >= PARKED_MS ? { stn: v[0], since: Number(v[1]), last: Number(v[2]), durMs: dur } : null;
 }
+/* 노선 이력은 노선별(열차번호는 노선끼리 겹친다) — 반드시 노선을 넘긴다 */
 function trainParked(line, no) { const h = line ? histOf(line) : null; return h ? parkedInfo(h.trains[String(no)]) : null; }
+/* ── 운행 대기 등록부 — 서버 lib/train-hist.js regUpdate/regPrune/regMerge 와 같은 모양·같은 규칙 ──
+   실측(2026-09-24): 5197 이 11:42 부터 상일동에 서 있었는데 13:00~14:39 아무도 5호선을 보지 않아 이력(60분)이 비었고,
+   14:39 에 처음 본 5197 이 '방금 도착'으로 보여 '승강장 도착'으로 제안됐다. 운행 대기 판정 열차를 6시간 남겨 두고
+   같은 역에 출발(2) 아닌 상태로 (다시) 보이면 곧바로 운행 대기(since 는 등록부 값)로 본다. 다른 역·출발(2)이면 지운다.
+   localStorage 'trainParked' = { trains: {"노선|번호": {line, no, stn, since, lastSeen}}, at } — 서버 op=hist 의 parked 도 합친다 */
+const PARKED_REG_KEEP_MS = 6 * 3600 * 1000;
+const PARK_REG_LS = "trainParked";
+let parkReg = null;
+function parkRegOf() {
+  if (!parkReg) {
+    parkReg = { trains: {}, at: 0 };
+    try { const o = JSON.parse(localStorage.getItem(PARK_REG_LS) || "null"); if (o && o.trains) parkRegMerge(parkReg, o); } catch (e) {}
+    parkRegPrune(parkReg, Date.now());
+  }
+  return parkReg;
+}
+function parkRegSave() { try { localStorage.setItem(PARK_REG_LS, JSON.stringify({ trains: parkRegOf().trains, at: parkRegOf().at })); } catch (e) {} }
+function parkRegUpdate(reg, line, h, now) {
+  if (!reg || !reg.trains || !line || !h || !h.trains) return false;
+  let changed = false;
+  for (const no of Object.keys(h.trains)) {
+    const e = h.trains[no];
+    if (!e || !Array.isArray(e.v) || !e.v.length) continue;
+    const k = trainKey(line, no), lv = e.v[e.v.length - 1];
+    let ent = reg.trains[k];
+    if (ent && now - (Number(ent.lastSeen) || 0) > PARKED_REG_KEEP_MS) { delete reg.trains[k]; ent = null; changed = true; }
+    if (ent) {
+      const since = Number(ent.since) || 0, lastSeen = Number(ent.lastSeen) || 0;
+      const moved = e.v.some(x => x[0] !== ent.stn && Number(x[2]) > since);
+      const departed = lv[0] === ent.stn && lv[3] === "2" && Number(lv[2]) >= lastSeen;
+      if (moved || departed) { delete reg.trains[k]; ent = null; changed = true; }
+      else if (lv[0] === ent.stn && lv[3] !== "2") {
+        if (Number(lv[2]) > lastSeen) { ent.lastSeen = Number(lv[2]); changed = true; }
+        if (since && since < Number(lv[1])) lv[1] = since;
+        lv[4] = Math.max(Number(lv[4]) || 1, 2);
+      }
+    }
+    const pi = parkedInfo(e);
+    if (pi) {
+      const cur = reg.trains[k];
+      const nx = cur && cur.stn === pi.stn
+        ? { line, no: String(no), stn: pi.stn, since: Math.min(Number(cur.since) || pi.since, pi.since), lastSeen: Math.max(Number(cur.lastSeen) || 0, pi.last) }
+        : { line, no: String(no), stn: pi.stn, since: pi.since, lastSeen: pi.last };
+      if (!cur || cur.stn !== nx.stn || cur.since !== nx.since || cur.lastSeen !== nx.lastSeen) { reg.trains[k] = nx; changed = true; }
+    }
+  }
+  if (changed) reg.at = Math.max(Number(reg.at) || 0, now);
+  return changed;
+}
+function parkRegPrune(reg, now) {
+  let changed = false;
+  for (const k of Object.keys(reg.trains || {})) {
+    const ent = reg.trains[k];
+    if (!ent || !ent.line || ent.no == null || !ent.stn || now - (Number(ent.lastSeen) || 0) > PARKED_REG_KEEP_MS) { delete reg.trains[k]; changed = true; }
+  }
+  return changed;
+}
+/* src: 등록부 {trains} 또는 항목 배열(op=hist 의 parked). 역명은 웹 표기로 */
+function parkRegMerge(dst, src) {
+  const list = Array.isArray(src) ? src : Object.values((src && src.trains) || {});
+  for (const s0 of list) {
+    if (!s0 || !s0.line || s0.no == null || !s0.stn) continue;
+    const e = { line: String(s0.line), no: String(s0.no), stn: resolve(s0.stn) || String(s0.stn), since: Number(s0.since) || 0, lastSeen: Number(s0.lastSeen) || 0 };
+    const k = trainKey(e.line, e.no), d = dst.trains[k];
+    if (!d) dst.trains[k] = e;
+    else if (d.stn === e.stn) { d.since = Math.min(Number(d.since) || e.since, e.since || Number(d.since)); d.lastSeen = Math.max(Number(d.lastSeen) || 0, e.lastSeen); }
+    else if (e.lastSeen > (Number(d.lastSeen) || 0)) dst.trains[k] = e;
+  }
+  if (!Array.isArray(src) && src) dst.at = Math.max(Number(dst.at) || 0, Number(src.at) || 0);
+  return dst;
+}
+/* 노선 이력이 바뀐 뒤: 등록부 갱신 + 등록부의 정차 시작 시각을 이력에 되돌려 쓴다 */
+function parkRegObserve(line) {
+  const h = trainHist.get(line); if (!h) return;
+  const reg = parkRegOf(), now = Date.now();
+  const pruned = parkRegPrune(reg, now);
+  if (parkRegUpdate(reg, line, h, now) || pruned) parkRegSave();
+}
 /* 탄 열차 자동 교체 판정 — 서버 findSwitch 와 같은 규칙(같은 피드면 같은 결론):
    추적 열차가 구간 X역(출발역~하차역 직전)에 4분 넘게 서 있고, 그 정차 시작(및 추적 시작 2분 전) 뒤
    같은 방향(같은 updnLine·종착역이 구간에서 X 이전/같은 역 아님) 다른 열차가 X에 있다가 구간의 X 뒤쪽 역에서 잡혔으면
@@ -2558,7 +2647,9 @@ async function histSyncFromServer(line) {
     clearTimeout(tm);
     if (!r.ok) return;
     const d = await r.json();
-    if (d && d.hist) { histMerge(histOf(line), histPrune(histUnpack(d.hist), Date.now())); histDirty.add(line); histSave(true); }
+    if (d && Array.isArray(d.parked) && d.parked.length) parkRegMerge(parkRegOf(), d.parked);   /* 서버 운행 대기 등록부(6시간) */
+    if (d && d.hist) histMerge(histOf(line), histPrune(histUnpack(d.hist), Date.now()));
+    if (d && (d.hist || d.parked)) { parkRegObserve(line); parkRegSave(); histDirty.add(line); histSave(true); }
   } catch (e) {}
 }
 /* 이 노선 이력이 비었거나 얕으면(가장 오래된 관측이 운행 대기 판정 시간보다 짧음) 서버 이력을 한 번 받아 둔다.
@@ -2777,9 +2868,9 @@ function planHoldBlend(prev, tmp, q, obs, curStn, sttus, nowTs) {
   else out.hold = { prog: markerProg };
   return out;
 }
-/* 도착 카운트다운으로 타임라인 보정: now+etaSec에 station 도착하도록 그 사이 구간을 비례 조정 */
-function pinArrival(no, station, etaSec) {
-  const st = animState.get(String(no)); if (!st || !st.plan) return;
+/* 도착 카운트다운으로 타임라인 보정: now+etaSec에 station 도착하도록 그 사이 구간을 비례 조정. key = trainKey(노선, 번호) */
+function pinArrival(key, station, etaSec) {
+  const st = animState.get(String(key)); if (!st || !st.plan) return;
   const X = resolve(station); if (!X) return;
   const now = Date.now();
   st.pins = st.pins || {}; st.pins[X] = { t: now + etaSec * 1000, at: now };
@@ -2799,31 +2890,33 @@ function applyPins(st, now) {
     for (let j = i; j < st.plan.length; j++) st.plan[j].t += delta;
   }
 }
-/* 계획상 X역 도착까지 남은 초(없으면 null) — 역 카드·주행 카드가 마커와 같은 값을 쓴다 */
-function planEtaSec(no, X) {
-  const st = animState.get(String(no)); if (!st || !st.plan) return null;
+/* 계획상 X역 도착까지 남은 초(없으면 null) — 역 카드·주행 카드가 마커와 같은 값을 쓴다. key = trainKey(노선, 번호) */
+function planEtaSec(key, X) {
+  const st = animState.get(String(key)); if (!st || !st.plan) return null;
   const now = Date.now(); const f = st.plan.find(x => x.kind === "arr" && x.stn === X && x.t > now - 5000);
   return f ? Math.max(0, (f.t - now) / 1000) : null;
 }
-function planNextArr(no) {
-  const st = animState.get(String(no)); if (!st || !st.plan) return null;
+function planNextArr(key) {
+  const st = animState.get(String(key)); if (!st || !st.plan) return null;
   const now = Date.now(); return st.plan.find(x => x.kind === "arr" && x.t > now) || null;
 }
 /* 추적 열차의 다음 역 도착 카운트다운을 받아 타임라인·남은 시간을 실측에 맞춘다 */
 async function pinTrackedArrival(tr) {
   try {
-    if (tr.sttus === "1" && trainDwellMs(tr.no, tr.cur) > 0) return;   /* 역에서 출발 대기 확인 중 — 카운트다운이 출발을 앞당기지 않게 */
+    const tk = trainKey(tr.line, tr.no);
+    if (tr.sttus === "1" && trainDwellMs(tk, tr.cur) > 0) return;   /* 역에서 출발 대기 확인 중 — 카운트다운이 출발을 앞당기지 않게 */
     const seg = trip && trip.result.segments[tr.legIdx];
     let stnName = null;
     if (seg && tr.cur) {   /* 피드가 알려준 현재 역 기준 다음 정차역(진입 중이면 그 역) — 계획이 앞서가도 실제 다음 역에 맞춘다 */
       const i = seg.stations.indexOf(tr.cur);
       if (i >= 0) stnName = tr.sttus === "0" ? tr.cur : (i < seg.stations.length - 1 ? seg.stations[i + 1] : null);
     }
-    if (!stnName) { const nx = planNextArr(tr.no); stnName = nx ? nx.stn : null; }
+    if (!stnName) { const nx = planNextArr(tk); stnName = nx ? nx.stn : null; }
     if (!stnName) return;
     const arr = await fetchArrival(stnName, true);
-    const a = (arr || []).find(x => String(x.btrainNo) === String(tr.no) && Number(x.barvlDt) > 0);
-    if (a) pinArrival(tr.no, stnName, Number(a.barvlDt));
+    /* 환승역 도착 목록엔 다른 노선의 같은 번호 열차가 섞일 수 있다 — 노선까지 맞는 것만 */
+    const a = (arr || []).find(x => String(x.btrainNo) === String(tr.no) && Number(x.barvlDt) > 0 && (!SUBWAY_ID[Number(x.subwayId)] || SUBWAY_ID[Number(x.subwayId)] === tr.line));
+    if (a) pinArrival(tk, stnName, Number(a.barvlDt));
   } catch (e) {}
 }
 
@@ -2838,16 +2931,20 @@ function renderTrains() {
     if (!trainVisibleNow(t)) continue;   /* 선택 중: 전부 숨김 / 주행 중: 경로와 무관한 열차 숨김 */
     const r = trainCoord(t);
     if (!r) continue;
-    seen.add(t.trainNo);
+    /* 마커·애니 상태는 노선|번호 키로 — 다른 노선의 같은 번호 열차(5호선 5073 ↔ 경의중앙선 5073)가
+       추적 중인 열차의 상태를 덮어쓰지 않는다 */
+    const key = tkeyOf(t);
+    if (seen.has(key)) continue;   /* 같은 노선·같은 번호가 두 행이면 첫 행만(dedupTrains 가 최신 수신분을 남긴다) */
+    seen.add(key);
     if (state.mode === "live") {
       /* 시간 기반 운행 계획: 기록 시각 앵커 + 앞 역들 도착/출발 키프레임. 새 기록이면 현재 마커에서 2.5초 미끄러져 재정렬 */
       /* 추적 중인 열차는 이번 구간 끝(환승/도착역)까지 계획을 이어 붙여 주행 카드가 같은 시계를 쓰게 한다 */
-      const tracked = !!(trip && trip.track && String(trip.track.no) === String(t.trainNo));
+      const tracked = isTrackedTrain(t);
       const recMs = planRecordTime(t, refMs, fetchedAt);
       const obs = observeFeedTrain(t, recMs);
       const plan = buildPlan(t, recMs, tracked ? 40 : PLAN_AHEAD, obs);
       if (plan) {
-        const ln = lineOfTrain(t), prev = animState.get(t.trainNo);
+        const ln = lineOfTrain(t), prev = animState.get(key);
         const tmp = { plan, ln, pins: prev && prev.pins ? prev.pins : null, anchorStn: resolve(t.statnNm) };
         /* 확인된 장시간 정차 중엔 도착 카운트다운 핀을 쓰지 않는다(핀이 출발을 앞당겨 마커를 끌고 나감) */
         if (tmp.pins && feedDwellMs(obs) > 0) tmp.pins = null;
@@ -2862,15 +2959,15 @@ function renderTrains() {
         if (!hold && !blend && prev && distM(cur, target) > 30) blend = { from: cur.slice(), t0: nowTs, t1: nowTs + PLAN_BLEND_MS };
         const heading = q && q.heading != null ? q.heading : (prev ? prev.heading : r.heading);
         if (trainTier !== "hidden") {
-          adapter.upsertTrain(t.trainNo, offsetLeft(cur, heading, trackOffM), t, heading);
-          adapter.moveTrain(t.trainNo, offsetLeft(cur, heading, trackOffM));
+          adapter.upsertTrain(key, offsetLeft(cur, heading, trackOffM), t, heading);
+          adapter.moveTrain(key, offsetLeft(cur, heading, trackOffM));
         }
-        animState.set(t.trainNo, { no: t.trainNo, cur, plan: tmp.plan, seq: tmp.seq, pins: tmp.pins, blend, hold, anchorStn: resolve(t.statnNm), feedMax,
+        animState.set(key, { key, no: t.trainNo, cur, plan: tmp.plan, seq: tmp.seq, pins: tmp.pins, blend, hold, anchorStn: resolve(t.statnNm), feedMax,
                                    prog: hold ? hold.prog : (q ? q.prog : null), ln, heading, anchor: r.anchor, train: t, route: [], idx: 0, speed: 0 });
         continue;
       }
     }
-    const st = animState.get(t.trainNo);
+    const st = animState.get(key);
     let startPos = st ? st.cur.slice() : r.pos.slice();
     let route = null;
     /* 이전 이동의 종착 역 → 이번 종착 역을 잇는 역 경로를 따라 웨이포인트 구성 */
@@ -2900,11 +2997,11 @@ function renderTrains() {
     while (route.length > 1 && distM(startPos, route[0]) < 25) route.shift();
     const heading = distM(startPos, route[0]) > 5 ? bearingDeg(startPos, route[0]) : r.heading;
     if (trainTier !== "hidden") { /* static도 30초 주기 위치 갱신은 받는다 */
-      adapter.upsertTrain(t.trainNo, offsetLeft(startPos, heading, trackOffM), t, heading);
-      adapter.moveTrain(t.trainNo, offsetLeft(startPos, heading, trackOffM));
+      adapter.upsertTrain(key, offsetLeft(startPos, heading, trackOffM), t, heading);
+      adapter.moveTrain(key, offsetLeft(startPos, heading, trackOffM));
     }
     const speed = Math.min(28, Math.max(3, total / dur)); /* m/s */
-    animState.set(t.trainNo, { no: t.trainNo, cur: startPos.slice(), route, idx: 0, speed, heading, anchor: r.anchor, train: t });
+    animState.set(key, { key, no: t.trainNo, cur: startPos.slice(), route, idx: 0, speed, heading, anchor: r.anchor, train: t });
   }
   adapter.prune(seen);
   for (const no of [...animState.keys()]) if (!seen.has(no)) animState.delete(no);
@@ -2919,7 +3016,7 @@ function renderList() {
     list.innerHTML = `<div class="empty">표시할 열차가 없습니다.<br>${state.mode === "live" ? "운행 시간이 아니거나 데이터 수신에 실패했을 수 있습니다." : ""}</div>`;
     return;
   }
-  list.innerHTML = filtered.map(t => `<div class="train-item" data-no="${t.trainNo}">
+  list.innerHTML = filtered.map(t => `<div class="train-item" data-key="${tkeyOf(t)}">
       <div class="t-marker${isExpress(t) ? " express" : ""}" style="background:${colorOfTrain(t)}">${isExpress(t) ? "急" : "🚇"}</div>
       <div class="t-info">
         <div class="t-top"><span class="t-station">${t.statnNm}</span><span class="t-status">${STATUS_LABEL[String(t.trainSttus)] || ""}</span></div>
@@ -2928,11 +3025,11 @@ function renderList() {
     </div>`).join("");
   list.querySelectorAll(".train-item").forEach(el =>
     el.addEventListener("click", () => {
-      const no = el.dataset.no;
+      const key = el.dataset.key;   /* 노선|번호 — 마커·애니 상태의 키 */
       /* 줌아웃으로 마커가 내려간 상태면 어댑터의 마커 조회가 실패하므로 보간 상태로 직접 이동 */
-      const st = trainTier === "hidden" && animState.get(no);
-      if (st) { adapter.setView(st.cur, Math.max(adapter.getView().zoom, 13)); openTrainCardByNo(no); }
-      else adapter.focusTrain(no);
+      const st = trainTier === "hidden" && animState.get(key);
+      if (st) { adapter.setView(st.cur, Math.max(adapter.getView().zoom, 13)); openTrainCardByNo(key); }
+      else adapter.focusTrain(key);
     }));
 }
 
@@ -2980,15 +3077,17 @@ function dropStaleTrains(list) {
   if (!ref) return list; /* 수신 시각 정보 없음(모의 데이터 등): 그대로 둔다 */
   return list.filter(t => { const r = recptMs(t.recptnDt); return r == null || ref - r <= STALE_TRAIN_MS; });
 }
-/* 같은 trainNo가 서로 다른 역·수신시각으로 둘 이상 찍힐 때(피드 갱신 지연) 최신 수신분만 남긴다.
+/* 같은 열차(같은 노선·같은 trainNo)가 서로 다른 역·수신시각으로 둘 이상 찍힐 때(피드 갱신 지연) 최신 수신분만 남긴다.
+   노선이 다르면 번호가 같아도 다른 열차다(5호선 5073 ≠ 경의중앙선 5073) — 여러 노선을 합친 피드에서 한쪽을 지우면 안 된다.
    trainNo가 비어있는 항목은 건드리지 않는다. */
 function dedupByTrainNo(list) {
   const seen = new Map(), noNo = [];
   for (const t of list) {
     const no = t.trainNo != null ? String(t.trainNo) : "";
     if (!no) { noNo.push(t); continue; }
-    const prev = seen.get(no);
-    if (!prev || (recptMs(t.recptnDt) || 0) > (recptMs(prev.recptnDt) || 0)) seen.set(no, t);
+    const k = trainKey(t.subwayNm || "", no);
+    const prev = seen.get(k);
+    if (!prev || (recptMs(t.recptnDt) || 0) > (recptMs(prev.recptnDt) || 0)) seen.set(k, t);
   }
   return [...seen.values(), ...noNo];
 }
@@ -3003,14 +3102,18 @@ function dedupTrains(list) {
   }
   return [...seen.values()];
 }
-/* 한 trainNo로 피드를 조회할 때(단일 열차 추적) 여러 행이 잡히면 가장 최근 수신분을 쓴다 —
-   느린 갱신으로 옛 역에 남은 유령 행을 골라 "제자리 정지"로 보이는 문제 방지 */
-function pickTrain(list, no) {
+/* 한 열차를 피드에서 찾을 때(단일 열차 추적) 여러 행이 잡히면 가장 최근 수신분을 쓴다 —
+   느린 갱신으로 옛 역에 남은 유령 행을 골라 "제자리 정지"로 보이는 문제 방지.
+   line: 그 노선의 열차만(열차번호는 노선끼리 겹친다). 여러 노선이 섞인 목록(state.trains)에선 반드시 넘긴다.
+   no 자리에 trainKey(노선|번호)를 넘겨도 된다 */
+function pickTrain(list, no, line) {
   if (!Array.isArray(list)) return null;
-  const want = String(no);
+  const k = splitTrainKey(no);
+  const want = k.no, ln = line || k.line || "";
   let best = null, bestMs = -1;
   for (const t of list) {
     if (String(t.trainNo) !== want) continue;
+    if (ln && lineOfTrain(t) !== ln) continue;
     const ms = recptMs(t.recptnDt) || 0;
     if (!best || ms > bestMs) { best = t; bestMs = ms; }
   }
@@ -3251,7 +3354,7 @@ if (NATIVE) {
       open: () => document.getElementById("listFab").click(),
       close: () => closeTrainPanelIfOpen(),
       tab: dir => { const b = document.querySelector('#dirTabs button[data-dir="' + dir + '"]'); if (b) b.click(); },
-      itemTap: no => { const el = document.querySelector('.train-item[data-no="' + no + '"]'); if (el) el.click(); },
+      itemTap: key => { const el = [...document.querySelectorAll(".train-item")].find(x => x.dataset.key === String(key)); if (el) el.click(); },   /* 네이티브는 items[].no(=노선|번호 키)를 그대로 돌려준다 */
     },
   };
 }
@@ -3444,7 +3547,7 @@ function postTrainPanel() {
     const items = [...document.querySelectorAll("#trainList .train-item")].map(el => {
       const marker = el.querySelector(".t-marker");
       return {
-        no: el.dataset.no,
+        no: el.dataset.key,   /* 노선|번호 — 네이티브는 식별자(id·itemTap)로만 쓰고 표시하지 않는다 */
         color: marker ? (marker.style.background || getComputedStyle(marker).backgroundColor) : "#8a8d93",
         express: marker ? marker.classList.contains("express") : false,
         station: (el.querySelector(".t-station")?.textContent || "").trim(),
@@ -3753,7 +3856,7 @@ async function filterGhostArrivals(name, list, force) {
     try {
       const data = await fetchPosition(ln, force);
       const arr = (data && data.realtimePositionList) || [];
-      if (arr.length) { okLines.add(ln); for (const t of arr) { const s = resolve(t.statnNm); if (s && t.trainNo) trainPos[t.trainNo] = s; } }
+      if (arr.length) { okLines.add(ln); for (const t of arr) { const s = resolve(t.statnNm); if (s && t.trainNo) trainPos[trainKey(ln, t.trainNo)] = s; } }   /* 노선|번호 */
     } catch (e) {}
   }));
   if (!okLines.size) return list;
@@ -3769,7 +3872,7 @@ async function filterGhostArrivals(name, list, force) {
     else if (cd === "0" || cd === "1" || cd === "2") claimed = 0;            /* 진입/도착/출발 = 당역 */
     else if (cd === "3" || cd === "4" || cd === "5") claimed = 1;            /* 전역 */
     else return true;                                                       /* 'N분 후' 등 거리 주장 없음 → 유지 */
-    const cur = trainPos[a.btrainNo];
+    const cur = trainPos[trainKey(ln, a.btrainNo)];
     if (!cur) return false;                                                  /* 운행 중 아님 → 유령 */
     if (cur === X) return true;                                              /* 당역에 있음 → 진짜 */
     const k = ln + "|" + cur;
@@ -3878,15 +3981,16 @@ function deriveArrivals(name, posByLine) {
       /* 기록이 찍힌 뒤 흐른 시간만큼 열차는 이미 다가와 있다 → ETA에서 차감 */
       const aged = recordAgeSec(t, refMs);
       /* 마커에 운행 계획이 있으면 그 도착 시각을 그대로(카드와 마커가 같은 값), 없으면 역 수 기반 추정 */
-      const pe = planEtaSec(t.trainNo, X);
-      const pst = animState.get(String(t.trainNo));
+      const key = trainKey(ln, t.trainNo);   /* 노선|번호 — 환승역엔 다른 노선의 같은 번호 열차가 있을 수 있다 */
+      const pe = planEtaSec(key, X);
+      const pst = animState.get(key);
       if (pe == null && pst && pst.plan && pst.plan.some(f => f.kind === "dep" && f.stn === X && f.t < Date.now() - 15000)) continue;   /* 계획상 이미 X를 떠난 열차 */
       const eta = pe != null ? pe : (away === 0 ? (st === "1" ? 0 : 25)
         : Math.max(0, away * SEC_PER_STATION - (st === "0" ? 90 : st === "2" ? 45 : 0) - aged));
       const pk = st !== "2" ? trainParked(ln, t.trainNo) : null;   /* 출발 대기(시발역일 수 있음) — 경로 대기 시간 추정에서 뺀다 */
       const isParked = !!(pk && pk.stn === cur);
       out.push({ line: ln, color: LINES[ln].color, updn: dirLabelLine(ln, t), dest: t.statnTnm,
-        express: isExpress(t), btrainNo: t.trainNo, away, etaSec: Math.round(eta), curStn: t.statnNm, measured: false,
+        express: isExpress(t), btrainNo: t.trainNo, key, away, etaSec: Math.round(eta), curStn: t.statnNm, measured: false,
         parked: isParked, dwellMin: isParked ? Math.floor(pk.durMs / 60000) : null });
     }
   }
@@ -3900,7 +4004,7 @@ function deriveArrivals(name, posByLine) {
 function dedupArrivals(items) {
   const byNo = new Map(), byPos = new Map(), out = [];
   for (const it of items) {
-    const nk = it.btrainNo ? `no:${it.btrainNo}` : null;
+    const nk = it.btrainNo ? `no:${trainKey(it.line, it.btrainNo)}` : null;   /* 노선까지 — 다른 노선 같은 번호는 다른 열차 */
     /* 위치가 완전히 같은 도출 열차(같은 방향·목적지·현재역·거리)는 trainNo가 달라도 같은 도착 — 유령/중복 합침 */
     const pk = (it.away != null) ? `${it.updn}|${it.dest}|${it.curStn}|${it.away}` : null;
     let idx = (nk && byNo.has(nk)) ? byNo.get(nk) : (pk && byPos.has(pk)) ? byPos.get(pk) : null;
@@ -3926,16 +4030,18 @@ async function loadArrivals(name, force) {
   ]);
   const items = deriveArrivals(name, posByLine);
   /* API barvlDt(실측 카운트다운)로 같은 열차 ETA 보정 */
+  /* 열차번호는 노선끼리 겹친다 → 도착 API 항목은 subwayId 의 노선과 함께 노선|번호 키로 맞춘다 */
+  const apiKeyOf = a => trainKey(SUBWAY_ID[Number(a.subwayId)] || "", a.btrainNo);
   const apiBy = {};
-  for (const a of apiArr) { const bd = Number(a.barvlDt) || 0; if (a.btrainNo && bd > 0) apiBy[a.btrainNo] = bd; }
+  for (const a of apiArr) { const bd = Number(a.barvlDt) || 0; if (a.btrainNo && bd > 0) apiBy[apiKeyOf(a)] = bd; }
   /* 지도 마커의 타임라인도 같은 카운트다운에 맞춘다(카드 숫자 ↔ 마커 일치) */
-  for (const a of apiArr) { const bd = Number(a.barvlDt) || 0; if (a.btrainNo && bd > 0) pinArrival(a.btrainNo, X, bd); }
-  for (const it of items) if (apiBy[it.btrainNo] != null) { it.etaSec = apiBy[it.btrainNo]; it.measured = true; }
+  for (const a of apiArr) { const bd = Number(a.barvlDt) || 0; if (a.btrainNo && bd > 0) pinArrival(apiKeyOf(a), X, bd); }
+  for (const it of items) if (apiBy[it.key] != null) { it.etaSec = apiBy[it.key]; it.measured = true; }
   /* 위치 도출 불가 노선(경의중앙·공항철도 등)은 API 항목으로 보강 */
-  const supported = new Set(lines), seen = new Set(items.map(it => it.btrainNo));
+  const supported = new Set(lines), seen = new Set(items.map(it => it.key));
   for (const a of apiArr) {
     const ln = SUBWAY_ID[Number(a.subwayId)];
-    if ((ln && LINES[ln] && supported.has(ln)) || (a.btrainNo && seen.has(a.btrainNo))) continue;
+    if ((ln && LINES[ln] && supported.has(ln)) || (a.btrainNo && seen.has(apiKeyOf(a)))) continue;
     const sec = etaSec(a);
     if (sec >= 99998) continue;
     items.push({ line: ln || "", color: colorOfArrival(a), updn: a.updnLine, dest: a.bstatnNm || (a.trainLineNm || "").split(" - ")[0].replace(/행$/, ""),
@@ -4457,7 +4563,7 @@ function stopTripFollow() { clearInterval(tripFollowTimer); tripFollowTimer = nu
 let tripGlideRaf = 0, tripGlideLast = 0, tripGlideCur = null;
 function tripTargetLatLng() {
   if (!trip || !trip.track) return null;
-  const st = animState.get(trip.track.no);        /* 열차 마커가 그려지는 중이면 그 보간 위치가 가장 정확 */
+  const st = animState.get(trainKey(trip.track.line, trip.track.no));   /* 열차 마커가 그려지는 중이면 그 보간 위치가 가장 정확(노선까지 같은 열차) */
   if (st && st.cur) return [st.cur[0], st.cur[1]];
   return trackedTrainLatLng();                    /* 아니면 현재 역 좌표 */
 }
@@ -4503,7 +4609,7 @@ function needsRecenter(target, zoom) {
 }
 /* 추적 열차 위치로 지도 재중심(사용자가 방금 지도를 만졌으면 건너뜀) */
 function followTrackedTrain() {
-  if (state.followNo && animState.has(state.followNo)) return;   /* 애니 루프가 이미 부드럽게 따라가는 중 */
+  if (state.followKey && animState.has(state.followKey)) return;   /* 애니 루프가 이미 부드럽게 따라가는 중 */
   const tp = trackedTrainLatLng();
   if (!tp || !adapter.map || Date.now() < tripFollowPaused) return;
   const v = adapter.getView ? adapter.getView() : null;
@@ -4536,10 +4642,14 @@ function trainVisibleNow(t) {
   if (routeMode === "select" || routeMode === "result") return false;
   return tripTrainVisible(t);
 }
+/* 추적 중인 열차인가 — 노선까지 같아야(다른 노선의 같은 번호 열차는 아님) */
+function isTrackedTrain(t) {
+  return !!(t && trip && trip.track && String(t.trainNo) === String(trip.track.no) && lineOfTrain(t) === trip.track.line);
+}
 /* 경로와 무관한 열차는 숨긴다 — 같은 노선이면서, 경로 구간의 역들 근처를 지나는 열차만 표시 */
 function tripTrainVisible(t) {
   if (!trip) return true;
-  if (trip.track && String(t.trainNo) === String(trip.track.no)) return true;   /* 추적 열차는 출발역 접근 중이어도 표시 */
+  if (isTrackedTrain(t)) return true;   /* 추적 열차는 출발역 접근 중이어도 표시 */
   const ln = lineOfTrain(t);
   if (!trip.lines.has(ln)) return false;
   const cur = resolve(t.statnNm);
@@ -4585,18 +4695,19 @@ function tripTimeProgress(baseLeg, boardAt) {
 /* 추적 기준: 열차의 실제 현재 역으로 진행률 계산. 위치를 아직 못 받았거나 경로 밖이면 null(→시간 기준) */
 function tripTrackProgress() {
   const tr = trip.track;
+  const tk = trainKey(tr.line, tr.no);   /* 운행 계획·피드 관측은 노선|번호 키(다른 노선 같은 번호 열차와 섞이지 않게) */
   const segs = trip.result.segments, seg = segs[tr.legIdx];
   const idx = tr.cur ? seg.stations.indexOf(tr.cur) : -1;
   if (idx < 0) {
     /* 아직 출발역에 오지 않은 열차: 계획(있으면)으로 출발역 도착·구간 끝 도착 시각을 그대로 쓴다 → '대기 중 · N분 후 출발' */
     const originC = resolve(seg.stations[0]), legToC0 = resolve(seg.to);
-    const peO = planEtaSec(tr.no, originC), peL = planEtaSec(tr.no, legToC0);
+    const peO = planEtaSec(tk, originC), peL = planEtaSec(tk, legToC0);
     const laterMin0 = tr.legIdx < segs.length - 1 ? ROUTE_TRANSFER_MIN + tripMinFromLeg(tr.legIdx + 1) : 0;
     const waitMin = peO != null ? peO / 60 + 0.4 : Math.max(0, (trip.boardAt - Date.now()) / 60000);
     if (peO == null && peL == null && trip.boardAt <= Date.now()) return null;   /* 정보 없음 → 시간 기준 폴백 */
     const legRemainMin = peL != null ? peL / 60 : waitMin + seg.min;
     /* 출발역 앞 역에서 3분 넘게 '도착' 상태로 서 있음 → 'N분 후 출발'을 지어내지 않고 'OO에서 출발 대기 중' */
-    const dwellA = tr.cur && tr.sttus === "1" && trainDwellMs(tr.no, tr.cur) >= DWELL_LONG_MS;
+    const dwellA = tr.cur && tr.sttus === "1" && trainDwellMs(tk, tr.cur) >= DWELL_LONG_MS;
     const remainA = tripDwellClamp(dwellA ? tr : null, Math.max(0, Math.round(legRemainMin + laterMin0)));
     return { remain: remainA, legIdx: tr.legIdx, seg,
              nextStation: seg.stations[0], waiting: true, waitMin: Math.max(1, Math.round(waitMin)), done: false,
@@ -4612,7 +4723,7 @@ function tripTrackProgress() {
   const extra = tr.sttus === "0" ? 0.5 : (tr.sttus === "2" ? -0.4 : 0);
   const legToC = resolve(seg.to);
   /* 마커의 운행 계획(카운트다운 보정 포함)이 있으면 그 도착 시각으로 — 카드 숫자와 마커가 같은 시계를 쓴다 */
-  const pe = atEnd ? null : planEtaSec(tr.no, legToC);
+  const pe = atEnd ? null : planEtaSec(tk, legToC);
   const legRemainMin = atEnd ? 0 : (pe != null ? pe / 60 : Math.max(0, last - idx + extra) * ROUTE_HOP_MIN);
   const laterMin = tr.legIdx < segs.length - 1 ? ROUTE_TRANSFER_MIN + tripMinFromLeg(tr.legIdx + 1) : 0;
   /* 계획이 없을 때만: 마지막 수신 후 흐른 시간만큼 매초 줄여 표시 */
@@ -4620,9 +4731,9 @@ function tripTrackProgress() {
   const base = legRemainMin + laterMin;
   /* 구간 도중 역에서 3분 넘게 '도착' 상태로 서 있음(출발 대기): 다음 역으로 앞당기지 않고, 남은 시간은
      그 역 출발 기준 계획값을 유지한다(출발 시각을 알 수 없으므로). 늘어나더라도 벽시계보다 빨리 늘지 않게 */
-  const dwelling = !atEnd && tr.sttus === "1" && trainDwellMs(tr.no, tr.cur) >= DWELL_LONG_MS;
+  const dwelling = !atEnd && tr.sttus === "1" && trainDwellMs(tk, tr.cur) >= DWELL_LONG_MS;
   const remain = tripDwellClamp(dwelling ? tr : null, Math.max(0, Math.round(pe != null ? base : base - Math.min(sinceMin, base))));
-  const na = planNextArr(tr.no);
+  const na = planNextArr(tk);
   const alightPlan = !!(na && na.stn === legToC);
   const nextStop = na && seg.stations.indexOf(na.stn) > idx ? na.stn : null;   /* 급행이면 통과역을 건너뛴 다음 정차역 */
   const isLast = tr.legIdx === segs.length - 1;
@@ -4631,7 +4742,7 @@ function tripTrackProgress() {
            dwelling, dwellStation: dwelling ? tr.cur : "",
            alight: !atEnd && nextIdx >= last,   /* 피드 기준: 내릴 역 바로 앞 역에 도착/출발했을 때(계획이 앞서가도 먼저 울리지 않음) */
            alightInMin: atEnd ? null : (() => {   /* 하차 알림 예약용: 내릴 역 바로 앞 역 도착 예정(계획), 없으면 남은 시간−1역 */
-             const pre = last >= 1 ? planEtaSec(tr.no, resolve(seg.stations[last - 1])) : null;
+             const pre = last >= 1 ? planEtaSec(tk, resolve(seg.stations[last - 1])) : null;
              return Math.max(0, pre != null ? pre / 60 : legRemainMin - ROUTE_HOP_MIN);
            })(),
            tracking: true, trainDest: tr.dest || "", stale: Date.now() - tr.seenAt > TRACK_LOST_MS };
@@ -4721,6 +4832,7 @@ async function findBoardCandidates(legIdx) {
   for (const t of list) {
     const cur = resolve(t.statnNm), term = resolve(t.statnTnm);
     if (!cur || !term || !t.trainNo) continue;
+    if (t.subwayNm && LINES[t.subwayNm] && t.subwayNm !== seg.line) continue;   /* 이 구간 노선 열차만(번호는 노선끼리 겹친다) */
     if (cur === term) continue;   /* 이미 종착역에 도착해 서 있는 열차 — 더 갈 수 없어 후보가 아니다 */
     const es = expressStops(seg.line, t);
     if (es && !es.has(resolve(seg.to))) continue;   /* 이 급행은 내릴 역(환승/도착)을 통과한다 → 타면 안 됨 */
@@ -4731,10 +4843,10 @@ async function findBoardCandidates(legIdx) {
     if (idx !== R_idx) { if (stationsToX(seg.line, t, R, cur, term) !== R_idx - idx) continue; }
     else if (idx > 0 && sts[idx - 1]) { const back = stationsToX(seg.line, t, sts[idx - 1], cur, term); if (back >= 0 && back <= sts.length) continue; }
     const rel = idx - O;
-    let score, short, status, etaMin = null;
+    let score, short, status, etaMin = null, dwellMin = null;
     /* 출발역(또는 그 앞 역)에서 3분 넘게 '도착' 상태로 서 있는 열차 = 출발 대기(언제 떠날지 모름).
        비슷한 시각에 오는 움직이는 열차보다 뒤에 두고(ETA +5분 취급), 승강장 도착 알림·자동 선택 대상에서 뺀다 */
-    const dwMs = st === "1" && rel <= 0 ? trainDwellMs(t.trainNo, cur) : 0;
+    const dwMs = st === "1" && rel <= 0 ? trainDwellMs(trainKey(seg.line, t.trainNo), cur) : 0;
     /* 운행 대기(같은 역에 8분 넘게 — 앱을 켜기 전 이력 포함): 그 역이 시발역이면 진짜 다음 출발일 수 있어
        목록에서 빼지 않는다 — 대신 맨 뒤로 정렬하고 '{역}에서 출발 대기 · N분째'로 표시. 자동 선택하지 않는다 */
     const pk = st !== "2" ? trainParked(seg.line, t.trainNo) : null;
@@ -4742,22 +4854,39 @@ async function findBoardCandidates(legIdx) {
     const dwelling = parked || dwMs >= DWELL_LONG_MS;
     if (parked) {
       etaMin = null; score = 9 + Math.abs(rel) * 0.001;
-      short = "출발 대기"; status = `${cur}에서 출발 대기 · ${Math.floor(pk.durMs / 60000)}분째`;
+      dwellMin = Math.floor(pk.durMs / 60000);
+      short = "출발 대기"; status = `${cur}에서 출발 대기 · ${dwellMin}분째`;
     }
     else if (dwelling) {
       const away = -rel; etaMin = away ? Math.max(1, Math.round(away * SEC_PER_STATION / 60)) : 0;
-      score = 3 + (etaMin + 5.5) * 0.001; short = "출발 대기"; status = `${cur}에서 출발 대기 중 · ${Math.floor(dwMs / 60000)}분째`;
+      dwellMin = Math.floor(dwMs / 60000);
+      score = 3 + (etaMin + 5.5) * 0.001; short = "출발 대기"; status = `${cur}에서 출발 대기 중 · ${dwellMin}분째`;
     }
     else if (rel === 0) { score = st === "1" ? 0 : 1; etaMin = 0; short = st === "1" ? "승강장 도착" : st === "0" ? "진입 중" : "막 출발"; status = short; }
     else if (rel > 0) { score = 2 + rel * 0.01; const w = st === "0" ? "진입 중" : st === "1" ? "정차" : "출발"; short = w; status = (rel === 1 && st !== "1" ? "방금 출발 · " : "출발함 · ") + `${cur} ${w}`; }
     else { const away = -rel; const eta = Math.max(1, Math.round((away * SEC_PER_STATION - (st === "0" ? 90 : st === "2" ? 45 : 0)) / 60)); etaMin = eta; score = 3 + eta * 0.001 + away * 0.00001; short = `약 ${eta}분`; status = `${cur}에서 오는 중 · 약 ${eta}분`; }
-    out.push({ score, no: String(t.trainNo), dest: t.statnTnm, cur, sttus: st, status, short, line: seg.line, color: seg.color, dwelling, parked, etaMin,
+    out.push({ score, no: String(t.trainNo), dest: t.statnTnm, cur, sttus: st, status, short, line: seg.line, color: seg.color, dwelling, parked, etaMin, dwellMin,
                express: isExpress(t), pos: idx + off(st), away: Math.max(0, O - idx), term: t.statnTnm, updn: t.updnLine });
   }
   out.sort((a, b) => a.score - b.score);
+  pickDisambiguate(out);
   /* 출발 대기(운행 대기) 열차도 목록에서 빼지 않는다 — 그 역이 시발역인 경우 진짜 다음 출발일 수 있다.
      점수가 높아(9+) 움직이는·다가오는 열차 뒤로 정렬될 뿐, 자동 선택 대상에서만 제외한다(아래 refreshPickList) */
   return out;
+}
+/* 띠에 같은 글자(행선·급행 + 작은 상태 short)로 보이는 열차가 둘 이상이면 구분자를 붙인다 —
+   실측(14:41): '하남검단산행 · 승강장 도착' 이 5197(운행 대기)·5073 두 번 떴다.
+   출발 대기(운행 대기·장시간 정차)면 '출발 대기 · N분째', 그래도 겹치면 작은 열차번호 '#5073'.
+   short 는 웹 띠(.ps-st)와 네이티브 띠(PickRow.short, 작은 회색 글자)가 그대로 보여 준다 */
+function pickDisambiguate(rows) {
+  const label = r => `${r.dest}|${r.express ? 1 : 0}|${r.short}`;
+  const dupOf = () => { const c = {}; for (const r of rows) c[label(r)] = (c[label(r)] || 0) + 1; return r => c[label(r)] > 1; };
+  let dup = dupOf();
+  for (const r of rows) if (dup(r) && (r.parked || r.dwelling) && r.dwellMin != null && !/분째$/.test(r.short)) r.short = `${r.short} · ${r.dwellMin}분째`;
+  dup = dupOf();
+  const tag = rows.filter(dup);
+  for (const r of tag) r.short = `${r.short} · #${r.no}`;
+  return rows;
 }
 /* 탈 열차 선택 시작 — 카드에 근처 열차 목록을 띄우고 8초마다 갱신. 고르면 tripBoard로 추적 시작 */
 function startPick(legIdx, isTransfer) {
@@ -4791,7 +4920,7 @@ async function refreshPickList() {
   try {
     const rows = await findBoardCandidates(pick.legIdx);
     if (!trip || trip.pick !== pick) return;
-    const before = pick.rows.map(r => r.no + r.status).join("|"), after = rows.map(r => r.no + r.status).join("|");
+    const before = pick.rows.map(r => r.no + r.status + r.short).join("|"), after = rows.map(r => r.no + r.status + r.short).join("|");
     /* 새 열차가 승강장에 들어오면 가볍게 알림(목록이 닫혀 있어도) */
     const prevAt = new Set(pick.rows.filter(r => r.score <= 1).map(r => r.no));   /* score 0/1 = 승강장(운행 대기는 9) */
     if (pick.loaded && rows.some(r => r.score <= 1 && !prevAt.has(r.no))) haptic("medium");
@@ -4821,14 +4950,17 @@ function tripBoard(no, legIdx) {
   if (!no) { if (pick) pick.dismissed = true; renderRoute(); if (NATIVE) postCard(); return; }
   const seg = trip.result.segments[legIdx];
   if (!seg) return;
-  const row = pick && pick.rows.find(r => r.no === String(no));
+  /* 밖(네이티브 띠·목록 행·자동 선택)에서 오는 건 번호뿐 — 항상 이 구간의 노선 안에서 해석한다(전역으로 찾지 않는다).
+     노선|번호 키로 와도 되지만 노선이 이 구간과 다르면 무시 */
+  { const k = splitTrainKey(no); if (k.line && k.line !== seg.line) return; no = k.no; if (!no) return; }
+  const row = pick && pick.legIdx === legIdx ? pick.rows.find(r => r.no === String(no) && (!r.line || r.line === seg.line)) : null;
   trip.track = { no: String(no), legIdx, line: seg.line, dest: row ? row.dest : "", cur: row ? row.cur : null, sttus: row ? row.sttus : "", seenAt: Date.now(),
                  term: row ? row.term : "", updn: row ? row.updn : "", since: Date.now() };   /* since: 자동 교체 판정의 하한 */
   trip.pick = null; trip.trackLost = false; trip.alightNotifiedLeg = -1;
   /* 아직 출발역에 오지 않은 열차: 출발역 도착 예정(계획 우선, 없으면 남은 역 수 기준) + 정차 시간을 출발 시각으로 */
   {
     const originC = resolve(seg.stations[0]);
-    const peO = planEtaSec(String(no), originC);
+    const peO = planEtaSec(trainKey(seg.line, no), originC);
     const away = row ? (row.away || 0) : 0;
     const waitSec = peO != null ? peO + 20 : away * SEC_PER_STATION;
     trip.boardAt = Date.now() + Math.max(0, waitSec) * 1000; trip.waitKnown = true;
@@ -4909,7 +5041,7 @@ function tripTrackPayload() {
   const segs = trip.result.segments, k = trip.track.legIdx, seg = segs[k];
   if (!seg) return null;
   /* 급행이면 이번 구간에서 실제로 서는 역만(백그라운드 추적기의 '다음 정차역/하차' 판정용) */
-  const tk = pickTrain(state.trains, trip.track.no);
+  const tk = pickTrain(state.trains, trip.track.no, trip.track.line);   /* 여러 노선이 섞인 목록 — 노선까지 맞춘다 */
   const es = tk ? expressStops(seg.line, tk) : null;
   /* 접근 구간: 열차가 아직 출발역에 오지 않았으면 현재 역→출발역 경로(출발역 제외)를 넘겨 백그라운드에서도 '대기 중'을 계산 */
   let approach = [];
@@ -4942,7 +5074,7 @@ async function pollTrackedTrain() {
       if (!trip || trip.track !== tr) return;
       if (list) {
         observeFeedList(list, tr.line);   /* 같은 역 연속 기록(출발 대기) 관측 + 노선 이력 */
-        const t = pickTrain(list, tr.no);
+        const t = pickTrain(list, tr.no, tr.line);
         if (t) {
           const cur = resolve(t.statnNm);
           if (cur) { tr.cur = cur; tr.sttus = String(t.trainSttus); tr.seenAt = Date.now(); if (!tr.dest) tr.dest = t.statnTnm; tr.term = t.statnTnm; tr.updn = t.updnLine; }
@@ -4978,7 +5110,7 @@ function tripAutoSwitch(list) {
 }
 function tripSwitchTrain(sw, list) {
   const old = trip.track;
-  const t = pickTrain(list || [], sw.no) || pickTrain(state.trains || [], sw.no);
+  const t = pickTrain(list || [], sw.no, old.line) || pickTrain(state.trains || [], sw.no, old.line);
   const dest = (t && t.statnTnm) || sw.term || "";
   trip.track = { no: String(sw.no), legIdx: old.legIdx, line: old.line, dest, cur: (t && resolve(t.statnNm)) || sw.cur,
                  sttus: t ? String(t.trainSttus) : String(sw.sttus || ""), seenAt: Date.now(), term: dest, updn: t ? t.updnLine : old.updn,
@@ -5306,33 +5438,35 @@ function trainDetailHtml(t) {
       </div>
     </div>`;
 }
-function openTrainCardByNo(no) {
-  const t = pickTrain(state.trains, no);
+/* key = trainKey(노선|번호) — 마커·목록·탭 선택이 넘기는 값. 번호만 오면(예전 호출) 번호로 찾는다 */
+function openTrainCardByNo(key) {
+  const t = pickTrain(state.trains, key);
   if (!t) return;
+  key = tkeyOf(t);
   if (NATIVE) { if (closeSettingsSheet) closeSettingsSheet(); closeTrainPanelIfOpen(); }
   if (adapter.clearSelectedStation) adapter.clearSelectedStation();
   scStation = null;
   stopScTimer();
   syncFavBtn();
   document.getElementById("scTitle").textContent = `${lineOfTrain(t)} ${t.statnTnm}행`;
-  const following = state.followNo === no;
+  const following = state.followKey === key;
   document.getElementById("scBody").innerHTML = trainDetailHtml(t) +
     `<button class="sc-follow${following ? " on" : ""}" id="scFollow">${following ? "따라가기 해제" : "이 열차 따라가기"}</button>`;
   document.getElementById("stationCard").classList.add("open");
   document.getElementById("scFollow").addEventListener("click", () => {
-    if (state.followNo === no) stopFollow();
+    if (state.followKey === key) stopFollow();
     else {
-      state.followNo = no;
-      const st = animState.get(no);
+      state.followKey = key;
+      const st = animState.get(key);
       if (st) adapter.setView(offsetLeft(st.cur, st.heading, trackOffM), Math.max(adapter.getView().zoom, 14));
       toast("열차를 따라갑니다. 지도를 드래그하면 해제됩니다.");
     }
-    openTrainCardByNo(no);
+    openTrainCardByNo(key);
   });
 }
 function stopFollow() {
-  if (!state.followNo) return;
-  state.followNo = null;
+  if (!state.followKey) return;
+  state.followKey = null;
   const btn = document.getElementById("scFollow");
   if (btn) { btn.classList.remove("on"); btn.textContent = "이 열차 따라가기"; }
 }
@@ -5381,7 +5515,7 @@ function onMapClick(pos) {
   if (!stn && !trains.length) { document.documentElement.classList.toggle("immersive"); return; } /* 여백 탭: 상/하단 레이어 토글 */
   document.documentElement.classList.remove("immersive"); /* 역·열차 선택 시 크롬 복귀 */
   if (stn && !trains.length) return openStationCard(stn);
-  if (!stn && trains.length === 1) return openTrainCardByNo(trains[0].trainNo);
+  if (!stn && trains.length === 1) return openTrainCardByNo(tkeyOf(trains[0]));
   showChooser(stn, trains);
 }
 /* 역/열차 선택 레이어 */
@@ -5401,7 +5535,7 @@ function showChooser(stn, trains) {
       </div>
     </div>`);
   for (const t of trains) rows.push(`
-    <div class="sc-row sc-pick" data-pick="train" data-v="${t.trainNo}">
+    <div class="sc-row sc-pick" data-pick="train" data-v="${tkeyOf(t)}">
       <span class="sc-dot" style="background:${colorOfTrain(t)}"></span>
       <div class="sc-main">
         <div class="sc-eta" style="color:var(--text)">${lineOfTrain(t)} ${t.statnTnm}행</div>

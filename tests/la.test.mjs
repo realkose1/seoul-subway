@@ -1294,6 +1294,8 @@ test("handler — 틱이 노선 이력을 sf_cache(ssl:la:hist:<노선>)에 저�
     assert.ok(w, "노선 이력 저장");
     assert.equal(w.body[0].events.trains["5197"].v[0][0], "상일동");
     assert.ok(f.seen.urls.some((u) => u.includes("not.like")), "주행 목록 조회는 이력 행을 받아 오지 않는다");
+    assert.ok(f.seen.urls.some((u) => decodeURIComponent(u).includes("date=neq.ssl:la:parked")), "운행 대기 등록부 행도 받아 오지 않는다");
+    assert.ok(f.seen.writes.some((x) => JSON.stringify(x.body || "").includes("ssl:la:parked")), "틱이 노선 활동을 등록부에 남긴다(op=kick 이 이어 받게)");
     const h = await call({ query: { op: "hist", line: "6호선" } });
     assert.equal(h.code, 200);
     assert.equal(h.body.hist.trains["5197"].v[0][0], "상일동");
@@ -1323,4 +1325,172 @@ test("handler — op=hist: 이력이 묵었으면 피드를 한 번 받아 쌓�
     assert.equal(b.body.observed, false, "20초 안 재요청은 피드를 다시 부르지 않는다");
     assert.equal(feeds(), n);
   } finally { f.restore(); handler._memHist.clear(); }
+});
+
+/* ── 열차번호 충돌 — 번호는 노선끼리 겹친다(실측 2026-09-24 14:41: 5호선 5073 상일동→하남검단산 ↔ 경의중앙선 5073 서빙고→용문) ── */
+test("열차번호 충돌 — 경의중앙선 5073 이 5호선 5073 추적(피드 찾기·이력·computeRow)에 섞이지 않는다", () => {
+  const now = KST(14, 41, 30);
+  const t5 = Object.assign(trainAt("5073", "상일동", "1", KST(14, 40, 40), "하남검단산"), { subwayNm: "5호선" });
+  const tg = Object.assign(trainAt("5073", "서빙고", "1", KST(14, 41, 0), "용문"), { subwayNm: "경의중앙선", updnLine: "0" });   /* 더 최근 수신 */
+  /* 피드 찾기: 노선을 주면 그 노선 열차만 — 안 주면(예전) 더 최근인 경의중앙선 행을 잡는다 */
+  assert.equal(TS.findTrain([t5, tg], "5073", "5호선").statnNm, "상일동");
+  assert.equal(TS.findTrain([t5, tg], "5073").statnNm, "서빙고", "노선 없이 찾으면 섞인다(그래서 computeRow 는 track.line 을 넘긴다)");
+  assert.equal(TS.dedupByTrainNo([t5, tg]).length, 2, "노선이 다르면 같은 번호라도 둘 다 남긴다");
+  /* 이력은 노선별 — 5호선 이력에 경의중앙선 행이 섞여 와도 5호선 5073 만 */
+  const h5 = TH.emptyHist(), hg = TH.emptyHist();
+  TH.histObserve(h5, [t5, tg], now, "5호선");
+  TH.histObserve(hg, [tg], now, "경의중앙선");
+  assert.equal(h5.trains["5073"].v.length, 1);
+  assert.equal(h5.trains["5073"].v[0][0], "상일동");
+  assert.equal(hg.trains["5073"].v[0][0], "서빙고");
+  const hists = { "5호선": h5, "경의중앙선": hg };
+  const row = (track) => ({ trip_id: "c", token: "tok", attrs: { to: "하남풍산" }, state: prevState({ nextStation: "강일", legTo: "하남풍산" }), track,
+    last_push_at: new Date(now).toISOString() });
+  const track = legTrack({ no: "5073", since: KST(14, 41) });
+  const clean = computeRow(row(track), feedOf({ "5호선": [t5], "경의중앙선": [tg] }), now, (ln) => hists[ln]);
+  const dirty = computeRow(row(track), feedOf({ "5호선": [t5, tg], "경의중앙선": [tg] }), now, (ln) => hists[ln]);
+  assert.notEqual(clean.note, "train-not-in-feed");
+  assert.notEqual(clean.note, "unknown-position");
+  assert.equal(clean.state.nextStation, "강일", "상일동의 5호선 5073 기준");
+  assert.deepEqual(dirty.state, clean.state, "같은 번호 경의중앙선 행이 5호선 피드에 섞여도 결과가 같다");
+  assert.equal(dirty.track.no, "5073"); assert.equal(dirty.track.line, "5호선");
+  assert.ok(!dirty.switched);
+  /* 경의중앙선 피드만 있는 경우(5호선 피드엔 5073 없음) — 경의중앙선 5073 을 5호선 열차로 잡지 않는다 */
+  const lost = computeRow(row(track), feedOf({ "5호선": [], "경의중앙선": [tg] }), now, (ln) => hists[ln]);
+  assert.equal(lost.note, "train-not-in-feed");
+  /* 환승 자동 승차도 노선까지 맞는 열차만 */
+  const xfer = legTrack({ no: "5001", legTo: "왕십리", legEndedAt: now - 5 * 60000,
+    legs: [{ line: "5호선", to: "왕십리", min: 6 }, { line: "경의중앙선", to: "옥수", min: 4, stations: ["왕십리", "응봉", "옥수"] }] });
+  const wrong = Object.assign(trainAt("5073", "왕십리", "1", KST(14, 41), "용문"), { subwayNm: "5호선" });   /* 경의중앙선 피드에 5호선 행 */
+  const nb = TS.pickNextTrain(xfer, [wrong], now);
+  assert.equal(nb, null, "다른 노선 행으로 환승 열차를 잡지 않는다");
+});
+
+/* ── 운행 대기 등록부(sf_cache 'ssl:la:parked') ── */
+const p5 = (no, stn, st, at, term = "하남검단산") => Object.assign(trainAt(no, stn, st, at, term), { subwayNm: "5호선" });
+function parkedHist(from, to) {
+  const h = TH.emptyHist();
+  for (let t = from; t <= to; t += 20000) TH.histObserve(h, [p5("5197", "상일동", "1", t)], t + 15000, "5호선");
+  return h;
+}
+test("운행 대기 등록부 — 기록: 8분 넘게 선 열차를 {line,no,stn,since,lastSeen} 로 남긴다(같은 번호 다른 노선과 따로)", () => {
+  const reg = TH.emptyReg();
+  const h = parkedHist(KST(11, 42), KST(13, 0));
+  assert.equal(TH.regUpdate(reg, "5호선", h, KST(13, 0, 15)), true);
+  const e = reg.trains["5호선|5197"];
+  assert.deepEqual(e, { line: "5호선", no: "5197", stn: "상일동", since: KST(11, 42), lastSeen: KST(13, 0) });
+  assert.equal(TH.regUpdate(reg, "5호선", h, KST(13, 0, 15)), false, "같은 내용이면 바뀐 것 없음");
+  /* 짧은 정차는 남기지 않는다 */
+  const reg2 = TH.emptyReg();
+  TH.regUpdate(reg2, "5호선", parkedHist(KST(11, 42), KST(11, 45)), KST(11, 45, 15));
+  assert.equal(Object.keys(reg2.trains).length, 0);
+  /* 다른 노선의 같은 번호는 영향 없음 */
+  const hg = TH.emptyHist();
+  TH.histObserve(hg, [Object.assign(trainAt("5197", "서빙고", "1", KST(13, 0), "용문"), { subwayNm: "경의중앙선" })], KST(13, 0, 15), "경의중앙선");
+  TH.regUpdate(reg, "경의중앙선", hg, KST(13, 0, 15));
+  assert.ok(reg.trains["5호선|5197"]);
+  assert.ok(!reg.trains["경의중앙선|5197"]);
+});
+
+test("운행 대기 등록부 — 아무도 안 보던 1시간 40분 뒤 같은 역에 다시 보이면 곧바로 운행 대기(since 는 등록부), 다른 역·출발(2)이면 지운다", () => {
+  const reg = TH.emptyReg();
+  TH.regUpdate(reg, "5호선", parkedHist(KST(11, 42), KST(13, 0)), KST(13, 0, 15));
+  /* 14:39 — 서버 이력은 60분 보관이라 비었다: 처음 본 것처럼 한 장면 */
+  const h = TH.emptyHist();
+  TH.histObserve(h, [p5("5197", "상일동", "1", KST(14, 39)), p5("5073", "상일동", "1", KST(14, 39))], KST(14, 39, 15), "5호선");
+  assert.equal(TH.parkedInfo(h.trains["5197"]), null, "등록부 없이는 방금 도착으로 보인다(버그)");
+  TH.regUpdate(reg, "5호선", h, KST(14, 39, 15));
+  const pi = TH.parkedInfo(h.trains["5197"]);
+  assert.ok(pi, "곧바로 운행 대기");
+  assert.equal(pi.since, KST(11, 42));
+  assert.equal(Math.floor(pi.durMs / 60000), 177);
+  assert.equal(reg.trains["5호선|5197"].lastSeen, KST(14, 39));
+  assert.equal(TH.isParked(h, "5073"), false, "막 들어온 5073 은 아니다");
+  /* 환승 자동 승차도 운행 대기 열차는 건너뛴다(isParked) */
+  const xfer = legTrack({ no: "5000", legTo: "상일동", legEndedAt: KST(14, 30), legs: [{ line: "5호선", to: "상일동", min: 6 },
+    { line: "5호선", to: "하남풍산", min: 6, stations: ["상일동", "강일", "미사", "하남풍산"] }] });
+  const nb = TS.pickNextTrain(xfer, [p5("5197", "상일동", "1", KST(14, 39))], KST(14, 40), { skip: (no) => TH.isParked(h, no) });
+  assert.equal(nb, null);
+  /* 다른 역에서 보이면 즉시 지운다 */
+  TH.histObserve(h, [p5("5197", "강일", "1", KST(14, 45))], KST(14, 45, 15), "5호선");
+  assert.equal(TH.regUpdate(reg, "5호선", h, KST(14, 45, 15)), true);
+  assert.ok(!reg.trains["5호선|5197"]);
+  /* 그 역에서 출발(2)해도 지운다 */
+  const reg2 = TH.emptyReg();
+  const h2 = parkedHist(KST(11, 42), KST(12, 0));
+  TH.regUpdate(reg2, "5호선", h2, KST(12, 0, 15));
+  assert.ok(reg2.trains["5호선|5197"]);
+  TH.histObserve(h2, [p5("5197", "상일동", "2", KST(12, 1))], KST(12, 1, 15), "5호선");
+  TH.regUpdate(reg2, "5호선", h2, KST(12, 1, 15));
+  assert.ok(!reg2.trains["5호선|5197"]);
+  assert.equal(TH.parkedInfo(h2.trains["5197"]), null);
+});
+
+test("운행 대기 등록부 — 6시간 못 본 항목은 가지치기, 오래된 항목은 되살리지 않는다, 합치기·왕복", () => {
+  const reg = TH.regUnpack({ trains: {
+    "5호선|5197": { line: "5호선", no: "5197", stn: "상일동", since: KST(5, 0), lastSeen: KST(6, 0) },
+    "5호선|5073": { line: "5호선", no: "5073", stn: "상일동", since: KST(11, 0), lastSeen: KST(12, 0) },
+  }, lines: { "5호선": KST(6, 0), "7호선": KST(12, 0) }, at: KST(12, 0) });
+  assert.equal(TH.regPrune(reg, KST(12, 30)), true);
+  assert.deepEqual(Object.keys(reg.trains), ["5호선|5073"]);
+  assert.deepEqual(Object.keys(reg.lines), ["7호선"]);
+  /* regUpdate 도 6시간 지난 항목의 since 를 쓰지 않는다 */
+  const reg2 = TH.regUnpack({ trains: { "5호선|5197": { line: "5호선", no: "5197", stn: "상일동", since: KST(5, 0), lastSeen: KST(6, 0) } } });
+  const h = TH.emptyHist();
+  TH.histObserve(h, [p5("5197", "상일동", "1", KST(12, 30))], KST(12, 30, 15), "5호선");
+  TH.regUpdate(reg2, "5호선", h, KST(12, 30, 15));
+  assert.equal(TH.parkedInfo(h.trains["5197"]), null);
+  assert.ok(!reg2.trains["5호선|5197"]);
+  /* 합치기: 같은 역이면 since 는 이른 쪽·lastSeen 은 늦은 쪽 */
+  const a = TH.regUnpack({ trains: { "5호선|5197": { line: "5호선", no: "5197", stn: "상일동", since: KST(11, 50), lastSeen: KST(14, 0) } } });
+  TH.regMerge(a, [{ line: "5호선", no: "5197", stn: "상일동", since: KST(11, 42), lastSeen: KST(13, 0) }]);
+  assert.deepEqual(a.trains["5호선|5197"], { line: "5호선", no: "5197", stn: "상일동", since: KST(11, 42), lastSeen: KST(14, 0) });
+  assert.deepEqual(TH.regForLine(a, "5호선").map((e) => e.no), ["5197"]);
+  assert.deepEqual(TH.regForLine(a, "경의중앙선"), []);
+  assert.equal(store.toTrip({ date: "ssl:la:parked", events: { trains: {}, lines: {}, at: 0 } }), null, "등록부 행은 주행이 아니다");
+});
+
+test("handler — op=hist 는 등록부를 이력에 되돌려 쓰고 그 노선 등록부 항목(parked)을 함께 돌려준다", async () => {
+  envUp();
+  handler._memHist.clear(); handler._resetParked();
+  const now = Date.now();
+  const since = now - 3 * 3600e3;
+  const parkedRow = { date: "ssl:la:parked", events: { trains: { "9호선|9100": { line: "9호선", no: "9100", stn: "가양", since, lastSeen: now - 90 * 60000 } }, lines: {}, at: now - 90 * 60000 } };
+  const f = installFetch({ rows: [parkedRow], feed: [Object.assign(trainAt("9100", "가양", "1", now - 20000, "중앙보훈병원"), { subwayNm: "9호선" })] });
+  try {
+    const r = await call({ query: { op: "hist", line: "9호선" } });
+    assert.equal(r.code, 200);
+    assert.equal(r.body.parked.length, 1);
+    assert.equal(r.body.parked[0].no, "9100");
+    assert.equal(r.body.hist.trains["9100"].v[0][1], since, "처음 본 기록이지만 정차 시작은 등록부 값");
+    assert.ok(TH.parkedInfo(TH.histUnpack(r.body.hist).trains["9100"]));
+    const w = f.seen.writes.find((x) => JSON.stringify(x.body || "").includes("ssl:la:parked"));
+    assert.ok(w, "등록부 저장(lastSeen·활동 노선)");
+    assert.ok(w.body[0].events.lines["9호선"] >= now, "이 노선 최근 활동");
+  } finally { f.restore(); handler._memHist.clear(); handler._resetParked(); }
+});
+
+test("handler — op=kick 은 등록부 노선의 이력을 이어 받는다(주행 없어도, 노선당 60초에 한 번·최대 3노선)", async () => {
+  envUp();
+  handler._memHist.clear(); handler._resetParked();
+  const now = Date.now();
+  const since = now - 2 * 3600e3;
+  const parkedRow = { date: "ssl:la:parked", events: { trains: { "8호선|8123": { line: "8호선", no: "8123", stn: "암사", since, lastSeen: now - 30 * 60000 } }, lines: {}, at: now - 30 * 60000 } };
+  const f = installFetch({ rows: [parkedRow], lock: { id: "other", until: now + 60000 },
+    feed: [Object.assign(trainAt("8123", "암사", "1", now - 20000, "모란"), { subwayNm: "8호선" })] });
+  try {
+    const r = await call({ query: { op: "kick" } });
+    assert.deepEqual(r.body, { kicked: false, reason: "locked", hist: ["8호선"] });
+    assert.ok(f.seen.urls.some((u) => u.includes("swopenapi") && decodeURIComponent(u).includes("8호선")), "8호선 피드 조회");
+    assert.ok(f.seen.writes.some((w) => JSON.stringify(w.body || "").includes("ssl:la:hist:8호선")), "이력 저장");
+    const w = f.seen.writes.find((x) => JSON.stringify(x.body || "").includes("ssl:la:parked"));
+    assert.ok(w, "등록부 저장");
+    const e = w.body[0].events.trains["8호선|8123"];
+    assert.equal(e.since, since, "정차 시작 유지");
+    assert.ok(e.lastSeen > now - 30 * 60000, "lastSeen 갱신");
+    const n = f.seen.urls.filter((u) => u.includes("swopenapi")).length;
+    const r2 = await call({ query: { op: "kick" } });
+    assert.equal(r2.body.hist, undefined, "60초 안에는 다시 받지 않는다");
+    assert.equal(f.seen.urls.filter((u) => u.includes("swopenapi")).length, n);
+  } finally { f.restore(); handler._memHist.clear(); handler._resetParked(); }
 });
