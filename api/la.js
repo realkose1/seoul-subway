@@ -22,6 +22,8 @@
      GET  ?op=tick      헤더 x-cron-secret (chain=1 이면 체인 모드, dry=1 이면 계산만)
      GET/POST ?op=kick  인증 없음 — 잠금이 비었고 할 일이 있으면 체인만 띄운다(스스로 푸시하지 않음)
      GET/POST ?op=cleanup  헤더 x-cron-secret — 매달린 액티비티를 지금 정리(dry=1 이면 판정만)
+     GET  ?op=hist&line=5호선  인증 없음 — 노선 관측 이력(운행 대기·탄 열차 교체 판정용, lib/train-hist.js).
+                        앱이 백그라운드에 있던 동안 웹이 못 본 열차 움직임을 복귀 때 채워 넣는다(공개 피드에서 나온 값뿐)
      GET  ?op=diag      헤더 x-cron-secret — 환경 점검(값은 안 돌려준다)
                         probe=1 이면 APNs 에 실제로 한 번 쏴서 키/토픽 설정을 확인한다
 
@@ -30,7 +32,8 @@
              SUBWAY_API_KEY / (선택) LA_CRON_SECRET, LA_SELF_URL, LA_TABLE */
 
 const crypto = require("crypto");
-const { fetchLinePositions } = require("../lib/position-feed");
+const { fetchLinePositions, ALLOWED: FEED_LINES } = require("../lib/position-feed");
+const TH = require("../lib/train-hist");
 const { computeRow, sweepRow, overdueEnd, progressKey, lastProgressAt } = require("../lib/la-core");
 const { createPusher, isDeadToken, normalizePem } = require("../lib/apns");
 const store = require("../lib/supabase");
@@ -45,6 +48,23 @@ const KICK_WAIT_MS = 3000;                /* register/update/end/kick 가 새 �
 const LOCK_TTL_MS = 75 * 1000;            /* 체인 잠금 임대 — 한 라운드(60초)보다 넉넉히 */
 const PROBE_TOKEN = "0".repeat(64);       /* 일부러 틀린 기기 토큰 — APNs 가 '키는 맞다'까지만 알려주게 한다 */
 const PROBE_TIMEOUT_MS = 8000;
+
+/* 노선 관측 이력 — 인스턴스가 살아 있는 동안 메모리에 이어 두고, 라운드마다 sf_cache('ssl:la:hist:<노선>')와 합쳐 저장한다.
+   (체인 호출은 다른 인스턴스에 떨어질 수 있다 → 저장본이 기준, 메모리는 저장 실패·지연 대비) */
+const memHist = new Map();   /* line → hist */
+const histFeedAt = new Map();   /* line → op=hist 가 마지막으로 피드를 직접 받은 시각(노선당 20초에 한 번) */
+const HIST_FEED_MIN_MS = 20 * 1000;
+
+/* 메모리 + 저장본을 합친 이력. 저장소 오류는 삼킨다(메모리만으로 계속). */
+async function loadHist(line, now) {
+  const mem = memHist.get(line) || TH.emptyHist();
+  let saved = null;
+  try { saved = await store.getHist(line); } catch (e) { console.warn("[la] hist load", line, e && e.message); }
+  if (saved) TH.histMerge(mem, TH.histUnpack(saved));
+  TH.histPrune(mem, now);
+  memHist.set(line, mem);
+  return mem;
+}
 
 /* 테스트에서 APNs 전송을 갈아끼울 수 있게 한 겹 둔다 */
 let pusherFactory = createPusher;
@@ -280,7 +300,8 @@ const jobView = (x) => ({
   tripId: x.tripId, note: x.note, changed: x.changed, remove: x.remove,
   push: x.push ? { event: x.push.event, priority: x.push.priority, alert: x.push.alert } : null,
   state: x.state,
-  track: x.track ? { no: x.track.no, line: x.track.line, legIdx: x.track.legIdx, legEndedAt: x.track.legEndedAt || null } : null,
+  track: x.track ? { no: x.track.no, line: x.track.line, legIdx: x.track.legIdx, legEndedAt: x.track.legEndedAt || null,
+    switchedFrom: x.track.switchedFrom || null } : null,
 });
 
 /* 틱 1라운드 — 정리(만료·오래된 paused) → 활성 행 추적·푸시(+지연 종료). 네트워크 오류는 throw. */
@@ -313,9 +334,23 @@ async function runRound(now, { dry = false } = {}) {
   }));
   const feed = (ln) => feedMap.get(ln) || [];
 
+  /* 노선 관측 이력에 이번 피드를 쌓는다(운행 대기 판정·탄 열차 자동 교체). 저장 실패는 무시한다. */
+  const hists = new Map();
+  await Promise.all([...lines].map(async (ln) => {
+    const loaded = await loadHist(ln, now);
+    const h = dry ? TH.histMerge(TH.emptyHist(), loaded) : loaded;   /* dry 는 메모리 이력도 건드리지 않는다 */
+    TH.histObserve(h, feed(ln), now);
+    TH.histPrune(h, now);
+    hists.set(ln, h);
+  }));
+  if (!dry) {
+    await Promise.all([...hists].map(([ln, h]) =>
+      store.saveHist(ln, TH.histPack(h), now).catch((e) => console.warn("[la] hist save", ln, e && e.message))));
+  }
+
   const results = rows.map((r) => {
     try {
-      const x = computeRow(r, feed, now);
+      const x = computeRow(r, feed, now, (ln) => hists.get(ln) || null);
       return overdueEnd(r, x, now) || x;   /* 도착 예정이 한참 지났고 진척 없음 → 도착으로 끝낸다 */
     } catch (e) { console.warn("[la] compute", r.trip_id, e && e.message); return null; }
   }).filter(Boolean);
@@ -435,6 +470,29 @@ async function opCleanup(req, res) {
   });
 }
 
+/* ── op=hist ─────────────────────────────────────────────────────────────── */
+/* 인증 없음(공개 위치 피드에서 나온 값뿐). 웹이 앱 실행·복귀·열차 고르기 전에 자기 이력에 합친다.
+   체인은 활성 주행이 있는 노선만 관측하므로, 이력이 20초 넘게 묵었으면 여기서 피드를 한 번 받아 쌓고 저장한다
+   (노선당 20초에 한 번 — 호출이 몰려도 상위 API 는 그 이상 부르지 않는다). 첫 요청은 한 장면뿐이지만,
+   그 뒤로는 앱이 이 노선을 볼 때마다 서버 이력이 자라 다음 실행 때 운행 대기 열차를 바로 알 수 있다. */
+async function opHist(req, res) {
+  const line = String((req.query && req.query.line) || "");
+  if (!FEED_LINES.has(line)) return res.status(400).json({ error: "unknown line" });
+  const now = Date.now();
+  const h = await loadHist(line, now);
+  let observed = false;
+  if (now - (Number(h.at) || 0) >= HIST_FEED_MIN_MS && now - (histFeedAt.get(line) || 0) >= HIST_FEED_MIN_MS) {
+    histFeedAt.set(line, now);
+    const list = await fetchLinePositions(line, { timeoutMs: 4000, maxAgeMs: 4000 }).catch(() => []);
+    if (list.length) {
+      TH.histObserve(h, list, now); TH.histPrune(h, now);
+      observed = true;
+      await store.saveHist(line, TH.histPack(h), now).catch((e) => console.warn("[la] hist save", line, e && e.message));
+    }
+  }
+  return res.status(200).json({ line, observed, hist: TH.histPack(h) });
+}
+
 /* ── op=diag ─────────────────────────────────────────────────────────────── */
 /* 배포 환경 점검 — 값은 절대 돌려주지 않는다(존재 여부·길이·파싱 성공만). */
 async function opDiag(req, res) {
@@ -513,11 +571,12 @@ module.exports = async (req, res) => {
     if (op === "diag") return await opDiag(req, res);
     if (op === "kick") return await opKick(req, res);
     if (op === "cleanup") return await opCleanup(req, res);
+    if (op === "hist") return await opHist(req, res);
     if (req.method !== "POST") return res.status(405).json({ error: "POST required" });
     if (op === "register") return await opRegister(req, res, { isUpdate: false });
     if (op === "update") return await opRegister(req, res, { isUpdate: true });
     if (op === "end") return await opEnd(req, res);
-    return res.status(400).json({ error: "unknown op (register|update|end|tick|kick|cleanup|diag)" });
+    return res.status(400).json({ error: "unknown op (register|update|end|tick|kick|cleanup|hist|diag)" });
   } catch (e) {
     console.error("[la]", op, (e && e.stack) || e);
     if (res.headersSent) return;
@@ -533,4 +592,5 @@ module.exports.getWaitUntil = getWaitUntil;
 module.exports.selfUrl = selfUrl;
 /* 테스트 전용 — APNs 전송을 갈아끼운다(원복하려면 인자 없이 호출) */
 module.exports._setPusherFactory = (fn) => { pusherFactory = fn || createPusher; };
+module.exports._memHist = memHist;   /* 테스트 전용 */
 module.exports._setTiming = (o) => { chainRoundMs = o && o.roundMs != null ? o.roundMs : CHAIN_ROUND_MS; };

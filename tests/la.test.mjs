@@ -1116,3 +1116,211 @@ test("overdueEnd — 확인된 출발 대기 중이면 도착 예정이 지나�
   const gone = Object.assign({}, x, { track: Object.assign({}, x.track, { dwell: Object.assign({}, dwell, { seen: now - 5 * 60000 }) }) });
   assert.ok(LA.overdueEnd(row, gone, now));
 });
+
+/* ── 운행 대기(주박) 판정 · 탄 열차 자동 교체 ─────────────────────────────────
+   실측(2026-09-24, 5호선 하남검단산 방면): 5197 이 11:42~12:28+ 상일동 '도착(1)'을 20초마다 새 기록으로 보냄(47분).
+   그 사이 5055 가 상일동(12:25:14) → 강일(12:28:09) → 미사로 지나감. 사용자는 상일동에서 하남풍산까지 5055 를 탔다. */
+const TH = require("../lib/train-hist.js");
+const KST = (h, m, s = 0) => Date.UTC(2026, 8, 24, h - 9, m, s);
+const LEG = ["상일동", "강일", "미사", "하남풍산"];
+/* 열차별 기록 [{at, stn, st}] → 조회 시각 now 의 피드(각 열차의 now-lag 이전 최신 기록) */
+function scenario({ parked = true, with5055 = true, opposite = false, shortDwell = false } = {}) {
+  const recs = { "5197": [], "5049": [], "5055": [], "5100": [] };
+  const term = { "5197": "하남검단산", "5049": "하남검단산", "5055": "하남검단산", "5100": "방화" };
+  const upd = { "5197": "1", "5049": "1", "5055": "1", "5100": "0" };
+  if (parked) for (let t = KST(11, 42); t <= KST(12, 40); t += 20000) recs["5197"].push({ at: t, stn: "상일동", st: "1" });
+  if (shortDwell) {   /* 정상 40초 정차 뒤 출발 */
+    recs["5197"] = [{ at: KST(11, 50), stn: "상일동", st: "1" }, { at: KST(11, 50, 20), stn: "상일동", st: "1" },
+      { at: KST(11, 50, 40), stn: "상일동", st: "2" }, { at: KST(11, 52, 10), stn: "강일", st: "0" }, { at: KST(11, 52, 40), stn: "강일", st: "1" },
+      { at: KST(11, 53, 10), stn: "강일", st: "2" }, { at: KST(11, 54, 40), stn: "미사", st: "1" }, { at: KST(11, 55, 10), stn: "미사", st: "2" },
+      { at: KST(11, 56, 40), stn: "하남풍산", st: "1" }];
+  }
+  recs["5049"] = [{ at: KST(11, 39, 16), stn: "상일동", st: "1" }, { at: KST(11, 41, 5), stn: "강일", st: "1" },
+    { at: KST(11, 43, 0), stn: "미사", st: "1" }, { at: KST(11, 45, 0), stn: "하남풍산", st: "1" }];
+  if (with5055) recs["5055"] = [{ at: KST(12, 23, 40), stn: "고덕", st: "2" }, { at: KST(12, 25, 14), stn: "상일동", st: "1" },
+    { at: KST(12, 25, 54), stn: "상일동", st: "2" }, { at: KST(12, 28, 9), stn: "강일", st: "2" },
+    { at: KST(12, 30, 0), stn: "미사", st: "0" }, { at: KST(12, 30, 30), stn: "미사", st: "1" }, { at: KST(12, 31, 0), stn: "미사", st: "2" },
+    { at: KST(12, 32, 30), stn: "하남풍산", st: "0" }, { at: KST(12, 33, 0), stn: "하남풍산", st: "1" }];
+  if (opposite) recs["5100"] = [{ at: KST(12, 10), stn: "미사", st: "2" }, { at: KST(12, 12), stn: "강일", st: "1" },
+    { at: KST(12, 12, 40), stn: "강일", st: "2" }, { at: KST(12, 14), stn: "상일동", st: "1" }, { at: KST(12, 14, 40), stn: "상일동", st: "2" },
+    { at: KST(12, 16), stn: "고덕", st: "1" }];
+  return (now, lag = 15000) => {
+    const out = [];
+    for (const [no, rs] of Object.entries(recs)) {
+      const r = rs.filter((x) => x.at <= now - lag).pop();
+      if (!r || now - r.at > 3 * 60000) continue;   /* 오래 멈춘 행은 피드에서 빠진다(dropStale 과 같은 효과) */
+      out.push(Object.assign(trainAt(no, r.stn, r.st, r.at, term[no]), { updnLine: upd[no] }));
+    }
+    return out;
+  };
+}
+const legTrack = (over = {}) => baseTrack(Object.assign({ no: "5197", stations: LEG, legTo: "하남풍산",
+  legs: [{ line: "5호선", to: "하남풍산", min: 6 }], since: KST(11, 50) }, over));
+
+/* 서버 체인 흉내: 11:42 부터 이력만 쌓고(앱이 지도를 보던 시간), 11:50 부터 50초마다 computeRow */
+function runServer(feedAt, { from = KST(11, 50), to = KST(12, 36), track = legTrack() } = {}) {
+  const hist = TH.emptyHist();
+  for (let t = KST(11, 42); t < from; t += 15000) TH.histObserve(hist, feedAt(t), t);
+  let row = { trip_id: "t", token: "tok", attrs: { to: "하남풍산" }, state: prevState({ nextStation: "강일", legTo: "하남풍산" }),
+    track, last_push_at: new Date(from).toISOString() };
+  const log = [];
+  for (let now = from; now <= to; now += 50000) {
+    const list = feedAt(now);
+    TH.histObserve(hist, list, now); TH.histPrune(hist, now);
+    const x = computeRow(row, feedOf({ "5호선": list }), now, () => hist);
+    log.push({ now, x });
+    if (x.remove) break;
+    row = Object.assign({}, row, { state: x.state, track: x.track, last_push_at: x.push ? new Date(now).toISOString() : row.last_push_at });
+  }
+  return { log, hist, row };
+}
+
+test("운행 대기 — 같은 역(종착역 아님) 새 기록 8분 이상이면 parked, 종착역·출발(2)·짧은 정차는 아니다", () => {
+  const feedAt = scenario({ with5055: false });
+  const h = TH.emptyHist();
+  for (let t = KST(11, 42); t <= KST(11, 49); t += 15000) TH.histObserve(h, feedAt(t), t);
+  assert.equal(TH.isParked(h, "5197"), false, "7분 — 아직");
+  for (let t = KST(11, 49); t <= KST(11, 51); t += 15000) TH.histObserve(h, feedAt(t), t);
+  assert.equal(TH.isParked(h, "5197"), true, "8분 넘음");
+  assert.equal(TH.parkedInfo(h.trains["5197"]).stn, "상일동");
+  /* 종착역에 서 있는 것은 운행 대기로 보지 않는다 */
+  const h2 = TH.emptyHist();
+  for (let t = KST(11, 0); t <= KST(11, 20); t += 20000) TH.histObserve(h2, [trainAt("5300", "하남검단산", "1", t, "하남검단산")], t + 15000);
+  assert.equal(TH.isParked(h2, "5300"), false);
+  /* 유령(옛) 기록·같은 기록 반복은 시간을 늘리지 않는다 */
+  const h3 = TH.emptyHist();
+  for (let i = 0; i < 40; i++) TH.histObserve(h3, [trainAt("5400", "강일", "1", KST(11, 0), "하남검단산")], KST(11, 0) + i * 20000);
+  assert.equal(TH.isParked(h3, "5400"), false);
+  assert.equal(h3.trains["5400"].v[0][4], 1);
+});
+
+test("이력 — 저장/합치기 왕복: 웹·서버·인스턴스 간 이력을 합쳐도 방문이 겹치지 않는다", () => {
+  const feedAt = scenario();
+  const a = TH.emptyHist(), b = TH.emptyHist();
+  for (let t = KST(11, 42); t <= KST(12, 0); t += 15000) TH.histObserve(a, feedAt(t), t);
+  for (let t = KST(11, 55); t <= KST(12, 30); t += 15000) TH.histObserve(b, feedAt(t), t);
+  const m = TH.histMerge(TH.histUnpack(JSON.parse(JSON.stringify(TH.histPack(a)))), TH.histUnpack(JSON.parse(JSON.stringify(TH.histPack(b)))));
+  const v = m.trains["5197"].v;
+  assert.equal(v.length, 1, "상일동 한 방문");
+  assert.equal(v[0][1], KST(11, 42));
+  assert.ok(v[0][2] >= KST(12, 29, 40));
+  assert.deepEqual(m.trains["5055"].v.map((x) => x[0]), ["고덕", "상일동", "강일"]);
+  TH.histPrune(m, KST(13, 20));
+  assert.equal(m.trains["5049"], undefined, "60분 넘은 열차는 버린다");
+});
+
+test("환승 자동 승차 — 운행 대기 열차는 태우지 않는다", () => {
+  const legs = [{ line: "8호선", to: "천호", min: 4, stations: ["잠실", "석촌", "송파", "천호"] },
+                { line: "5호선", to: "하남검단산", min: 6, stations: ["천호", "강동", "길동", "하남검단산"] }];
+  const tk = { no: "8001", line: "8호선", legIdx: 0, legTo: "천호", legs };
+  const list = [trainAt("5197", "천호", "1", KST(12, 0), "하남검단산"), trainAt("5055", "천호", "0", KST(12, 0), "하남검단산")];
+  assert.equal(TS.pickNextTrain(tk, list, KST(12, 0)).no, "5197", "기본은 첫 열차");
+  assert.equal(TS.pickNextTrain(tk, list, KST(12, 0), { skip: (no) => no === "5197" }).no, "5055");
+  assert.equal(TS.pickNextTrain(tk, [list[0]], KST(12, 0), { skip: () => true }), null);
+});
+
+test("탄 열차 자동 교체(서버) — 5197 상일동 47분 대기 중 5055 가 상일동→강일 → 5055 로 교체, 이후 남은 시간이 줄고 하남풍산 도착", () => {
+  const { log } = runServer(scenario({ opposite: true }));
+  const sw = log.find((l) => l.x.note === "switch");
+  assert.ok(sw, "교체가 일어나야 한다");
+  /* 5055 의 강일 기록(12:28:09)이 피드에 보인(+15초) 뒤 첫 틱 */
+  assert.ok(sw.now >= KST(12, 28, 24) && sw.now < KST(12, 28, 24) + 50000, `교체 시각 ${new Date(sw.now).toISOString()}`);
+  for (const l of log.filter((l) => l.now < sw.now)) {
+    assert.equal(l.x.track.no, "5197", "그 전에는 바꾸지 않는다(5049 는 대기 시작 전에 떠났다, 반대 방향 5100 은 무시)");
+  }
+  assert.equal(sw.x.track.no, "5055");
+  assert.equal(sw.x.track.switchedFrom, "5197");
+  assert.equal(sw.x.track.dest, "하남검단산");
+  assert.equal(sw.x.track.dwell, null);
+  assert.equal(sw.x.push.priority, 10);
+  assert.equal(sw.x.state.waiting, false, "출발 대기 해제");
+  assert.equal(sw.x.state.nextStation, "미사");
+  assertShape(sw.x.state, "switch");
+  const after = log.filter((l) => l.now >= sw.now);
+  for (const l of after) assert.equal(l.x.track.no, "5055", "다시 5197 로 돌아가지 않는다");
+  const rem = after.filter((l) => !l.x.remove).map((l) => l.x.state.remainMin);
+  for (let i = 1; i < rem.length; i++) assert.ok(rem[i] <= rem[i - 1], `남은 시간이 늘면 안 된다: ${rem}`);
+  assert.ok(rem[0] > rem[rem.length - 1] || after.some((l) => l.x.remove), `남은 시간이 줄어야 한다: ${rem}`);
+  const end = log[log.length - 1];
+  assert.equal(end.x.push.event, "end", "하남풍산 도착으로 끝난다");
+});
+
+test("탄 열차 자동 교체(서버) — 다른 열차가 없으면 대기만(교체 없음), 반대 방향 열차만 지나가도 교체 없음", () => {
+  const a = runServer(scenario({ with5055: false }));
+  assert.ok(a.log.every((l) => l.x.track.no === "5197" && l.x.note !== "switch"));
+  assert.ok(a.log.some((l) => l.x.note === "dwell"), "출발 대기 표시는 그대로");
+  const b = runServer(scenario({ with5055: false, opposite: true }));
+  assert.ok(b.log.every((l) => l.x.track.no === "5197"), "반대 방향(updnLine 0, 방화행)은 교체 근거가 아니다");
+});
+
+test("탄 열차 자동 교체(서버) — 정상 40초 정차 후 출발하면 교체하지 않는다(뒤따르는 열차가 있어도)", () => {
+  const feedAt = scenario({ parked: false, shortDwell: true });
+  const { log } = runServer(feedAt, { from: KST(11, 49), to: KST(11, 58) });
+  assert.ok(log.every((l) => l.x.track.no === "5197" && l.x.note !== "switch"));
+  assert.equal(log[log.length - 1].x.push.event, "end", "5197 로 하남풍산 도착");
+});
+
+test("탄 열차 자동 교체 — 추적 시작 훨씬 전에 떠난 열차로는 바꾸지 않는다(since 하한)", () => {
+  /* 5197 이 11:42 부터 서 있고 5061 이 11:45 에 상일동→강일. 사용자는 12:00 에 5197 을 골랐다 → 5061 은 사용자의 열차가 아니다 */
+  const h = TH.emptyHist();
+  const obs = (no, stn, st, at, u = "1") => TH.histObserve(h, [Object.assign(trainAt(no, stn, st, at, "하남검단산"), { updnLine: u })], at + 15000);
+  for (let t = KST(11, 42); t <= KST(12, 10); t += 20000) obs("5197", "상일동", "1", t);
+  obs("5061", "상일동", "1", KST(11, 45)); obs("5061", "강일", "1", KST(11, 47));
+  assert.equal(TH.findSwitch(h, { no: "5197", stations: LEG, since: KST(12, 0) }), null);
+  assert.equal(TH.findSwitch(h, { no: "5197", stations: LEG, since: KST(11, 44) }).no, "5061", "추적을 그 전에 시작했으면 바꾼다");
+  /* 여러 대면 상일동을 가장 먼저 떠난 열차 */
+  obs("5063", "상일동", "1", KST(11, 46)); obs("5063", "강일", "1", KST(11, 48));
+  assert.equal(TH.findSwitch(h, { no: "5197", stations: LEG, since: KST(11, 44) }).no, "5061");
+  /* 종착역이 X 이전(회차)인 열차는 아니다 */
+  const h2 = TH.emptyHist();
+  for (let t = KST(11, 42); t <= KST(12, 10); t += 20000) TH.histObserve(h2, [trainAt("5197", "상일동", "1", t, "하남검단산")], t + 15000);
+  TH.histObserve(h2, [trainAt("5070", "상일동", "1", KST(12, 0), "상일동")], KST(12, 0, 15));
+  TH.histObserve(h2, [trainAt("5070", "강일", "1", KST(12, 2), "상일동")], KST(12, 2, 15));
+  assert.equal(TH.findSwitch(h2, { no: "5197", stations: LEG, since: KST(11, 50) }), null);
+});
+
+test("handler — 틱이 노선 이력을 sf_cache(ssl:la:hist:<노선>)에 저장하고, op=hist 로 돌려준다(시크릿 불필요)", async () => {
+  envUp();
+  handler._memHist.clear();
+  const now = Date.now();
+  const tripRow = { date: "ssl:la:h1", events: { tripId: "h1", token: "tok", env: "prod", attrs: { to: "하남풍산" }, state: prevState(),
+    track: legTrack({ since: now - 60000, line: "6호선" }), paused: false, expires_at: new Date(now + 3600000).toISOString() }, updated_at: new Date(now).toISOString() };
+  const f = installFetch({ rows: [tripRow], feed: [trainAt("5197", "상일동", "1", now - 20000, "하남검단산")] });
+  const pz = fakePusher();
+  try {
+    const res = await call({ query: { op: "tick" }, headers: { "x-cron-secret": "s3cr3t" } });
+    assert.equal(res.code, 200);
+    const w = f.seen.writes.find((x) => x.method === "POST" && JSON.stringify(x.body).includes("ssl:la:hist:6호선"));   /* 6호선: 앞 테스트들의 5호선 피드 캐시(4초)를 피한다 */
+    assert.ok(w, "노선 이력 저장");
+    assert.equal(w.body[0].events.trains["5197"].v[0][0], "상일동");
+    assert.ok(f.seen.urls.some((u) => u.includes("not.like")), "주행 목록 조회는 이력 행을 받아 오지 않는다");
+    const h = await call({ query: { op: "hist", line: "6호선" } });
+    assert.equal(h.code, 200);
+    assert.equal(h.body.hist.trains["5197"].v[0][0], "상일동");
+    assert.equal((await call({ query: { op: "hist", line: "없는선" } })).code, 400);
+  } finally { f.restore(); pz.restore(); handler._memHist.clear(); }
+});
+
+test("sf_cache — 노선 이력 행은 주행으로 읽지 않는다", () => {
+  const store = require("../lib/supabase.js");
+  assert.equal(store.toTrip({ date: "ssl:la:hist:5호선", events: { trains: {}, at: 0 } }), null);
+});
+
+test("handler — op=hist: 이력이 묵었으면 피드를 한 번 받아 쌓고 저장(노선당 20초에 한 번), 첫 요청도 한 장면을 돌려준다", async () => {
+  envUp();
+  handler._memHist.clear();
+  const now = Date.now();
+  const f = installFetch({ rows: [], feed: [trainAt("7101", "군자", "1", now - 20000, "장암")] });
+  try {
+    const a = await call({ query: { op: "hist", line: "7호선" } });
+    assert.equal(a.code, 200);
+    assert.equal(a.body.observed, true);
+    assert.equal(a.body.hist.trains["7101"].v[0][0], "군자", "첫 요청도 현재 한 장면");
+    assert.ok(f.seen.writes.some((w) => w.method === "POST" && JSON.stringify(w.body).includes("ssl:la:hist:7호선")), "저장");
+    const feeds = () => f.seen.urls.filter((u) => u.includes("swopenapi")).length;
+    const n = feeds();
+    const b = await call({ query: { op: "hist", line: "7호선" } });
+    assert.equal(b.body.observed, false, "20초 안 재요청은 피드를 다시 부르지 않는다");
+    assert.equal(feeds(), n);
+  } finally { f.restore(); handler._memHist.clear(); }
+});

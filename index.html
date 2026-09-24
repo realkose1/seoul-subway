@@ -475,6 +475,7 @@
   .sc-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; margin-top: 4px; }
   .sc-main { flex: 1; min-width: 0; }
   .sc-eta { font-size: 13px; font-weight: 700; color: #f87171; }
+  .sc-row.parked .sc-eta { color: var(--faint-text); font-weight: 600; }   /* 운행 대기 — 흐리게(네이티브 카드도 이 색을 읽는다) */
   .sc-sub { font-size: 11.5px; color: var(--muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .sc-empty.small { padding: 10px 4px; text-align: left; font-size: 12px; }
   .sc-follow {
@@ -2364,9 +2365,11 @@ function observeFeedTrain(t, recWall) {
   else { o.dwellRecpt = null; o.dwellSince = null; }
   return o;
 }
-/* 목록 단위 관측(추적 폴러·승차 후보가 받은 피드) — 기록 시각은 planRecordTime과 같은 방식으로 추정 */
-function observeFeedList(list) {
+/* 목록 단위 관측(추적 폴러·승차 후보가 받은 피드) — 기록 시각은 planRecordTime과 같은 방식으로 추정.
+   노선 관측 이력(운행 대기·탄 열차 교체)에도 쌓는다 */
+function observeFeedList(list, line) {
   if (!Array.isArray(list) || !list.length) return;
+  histObserveList(list, line);
   let ref = 0; for (const t of list) { const r = recptMs(t.recptnDt); if (r && r > ref) ref = r; }
   const now = Date.now();
   for (const t of dedupByTrainNo(list)) observeFeedTrain(t, planRecordTime(t, ref, now));
@@ -2377,6 +2380,198 @@ function feedConfirmed(o) { return !!o && o.run >= 2 && o.recpt != null && o.fir
 /* 같은 역 '도착(1)'이 새 기록으로 이어진 시간(ms). 새 기록이 하나뿐이면 0(정상 정차와 구분 불가) */
 function feedDwellMs(o) { return o && o.sttus === "1" && o.dwellRecpt != null && o.run >= 2 && o.recpt != null ? Math.max(0, o.recpt - o.dwellRecpt) : 0; }
 function trainDwellMs(no, stn) { const o = feedObs.get(String(no)); return o && (!stn || o.stn === stn) ? feedDwellMs(o) : 0; }
+/* ── 노선별 열차 관측 이력 (서버 lib/train-hist.js 와 같은 모양·같은 규칙) ──
+   실측(2026-09-24, 5호선): 5197 이 상일동 '도착'을 47분 동안 새 기록으로 보냄(사실상 운행 대기). 그 사이 5055 가
+   상일동→강일로 지나갔고 사용자는 5055 를 탔는데 추적은 5197 에 묶여 있었다.
+   → 앱이 받는 모든 위치 피드(지도 갱신·역 카드·승차 후보·추적 폴러)를 노선별 이력에 쌓아
+     (1) 고르기 전에도 '운행 대기' 열차를 알아보고 (2) 탄 열차가 서 있는 동안 다른 열차가 떠났으면 그 열차로 바꾼다.
+   열차마다 최근 방문 역 v = [[역, 첫 수신ms, 마지막 수신ms, 마지막 상태, 새 기록 수], ...] + t(종착) + u(updnLine).
+   시각은 실제 epoch ms(recptEpoch) — 서버 이력(op=hist)을 그대로 합칠 수 있게. localStorage 에 60분까지 남긴다. */
+const HIST_KEEP_MS = 60 * 60000, HIST_MAX_VISITS = 8;
+const PARKED_MS = 8 * 60000;          /* 같은 역(종착역 아님) 새 기록이 이만큼 → 운행 대기(출발 시각 미정) */
+const SWITCH_DWELL_MS = 4 * 60000;    /* 탄 열차가 이만큼 서 있으면 다른 열차로 떠났는지 본다 */
+const SWITCH_SINCE_GRACE_MS = 2 * 60000;
+const KST_OFFSET_MS = 9 * 3600 * 1000;
+const trainHist = new Map();          /* line → { trains: {no: {t,u,v}}, at } */
+const histDirty = new Set(); let histSavedAt = 0;
+/* 웹 recptMs 는 KST 벽시계를 UTC 로 읽는다 → 실제 epoch 로 */
+function recptEpoch(s) { const r = recptMs(s); return r == null ? null : r - KST_OFFSET_MS; }
+function histKey(line) { return "trainHist:" + line; }
+function histOf(line) {
+  let h = trainHist.get(line);
+  if (!h) { h = histLoad(line); trainHist.set(line, h); }
+  return h;
+}
+function histLoad(line) {
+  try {
+    const o = JSON.parse(localStorage.getItem(histKey(line)) || "null");
+    if (!o || Date.now() - (Number(o.savedAt) || 0) > HIST_KEEP_MS) return { trains: {}, at: 0 };
+    return histPrune(histUnpack(o), Date.now());
+  } catch (e) { return { trains: {}, at: 0 }; }
+}
+function histSave(force) {
+  const now = Date.now();
+  if (!force && now - histSavedAt < 30000) return;
+  histSavedAt = now;
+  for (const ln of histDirty) {
+    const h = trainHist.get(ln); if (!h) continue;
+    /* 저장본은 열차당 최근 3개 방문만(운행 대기 판정·교체 근거엔 충분) — 전체 노선을 볼 때도 수십 KB 안쪽 */
+    const trains = {};
+    for (const no of Object.keys(h.trains)) { const e = h.trains[no]; trains[no] = { t: e.t, u: e.u, v: e.v.slice(-3) }; }
+    try { localStorage.setItem(histKey(ln), JSON.stringify({ trains, at: h.at, savedAt: now })); } catch (e) {}
+  }
+  histDirty.clear();
+}
+function histAdd(e, stn, r, sttus) {
+  const v = e.v, last = v[v.length - 1];
+  if (last && r <= last[2]) return;                        /* 옛 기록(유령 행)·같은 기록 반복 */
+  if (!last || last[0] !== stn) v.push([stn, r, r, sttus, 1]);
+  else { last[2] = r; last[3] = sttus; last[4] = (Number(last[4]) || 1) + 1; }
+  if (v.length > HIST_MAX_VISITS) v.splice(0, v.length - HIST_MAX_VISITS);
+}
+/* 피드 목록을 이력에 쌓는다. line 을 모르면(여러 노선 합친 피드) 열차별 subwayNm 으로 */
+function histObserveList(list, line) {
+  if (!Array.isArray(list) || !list.length) return;
+  const now = Date.now(), touched = new Set();
+  for (const t of dedupByTrainNo(list)) {
+    const no = t && t.trainNo != null ? String(t.trainNo) : ""; if (!no) continue;
+    const ln = line || (t.subwayNm && LINES[t.subwayNm] ? t.subwayNm : null); if (!ln) continue;
+    const stn = resolve(t.statnNm); if (!stn) continue;
+    const h = histOf(ln);
+    const e = h.trains[no] || (h.trains[no] = { t: "", u: "", v: [] });
+    e.t = resolve(t.statnTnm) || String(t.statnTnm || "").trim();
+    e.u = String(t.updnLine == null ? "" : t.updnLine);
+    const r = recptEpoch(t.recptnDt);
+    histAdd(e, stn, r != null ? r : now, String(t.trainSttus == null ? "" : t.trainSttus));
+    h.at = Math.max(h.at || 0, now);
+    touched.add(ln);
+  }
+  for (const ln of touched) { histPrune(trainHist.get(ln), now); histDirty.add(ln); }
+  histSave(false);
+}
+function histPrune(h, now) {
+  if (!h || !h.trains) return h;
+  const cut = now - HIST_KEEP_MS;
+  for (const no of Object.keys(h.trains)) {
+    const e = h.trains[no];
+    const v = Array.isArray(e && e.v) ? e.v.filter(x => Array.isArray(x) && Number(x[2]) >= cut) : [];
+    if (!v.length) delete h.trains[no]; else e.v = v;
+  }
+  return h;
+}
+/* 저장본/서버 이력 → 이력(역명은 웹 표기로 맞춘다) */
+function histUnpack(o) {
+  const h = { trains: {}, at: Number(o && o.at) || 0 };
+  if (!o || !o.trains || typeof o.trains !== "object") return h;
+  for (const no of Object.keys(o.trains)) {
+    const e = o.trains[no];
+    if (!e || !Array.isArray(e.v)) continue;
+    const v = e.v.filter(x => Array.isArray(x) && x.length >= 5 && typeof x[0] === "string" && isFinite(+x[1]) && isFinite(+x[2]))
+      .map(x => [resolve(x[0]) || x[0], +x[1], +x[2], String(x[3]), +x[4] || 1]);
+    if (v.length) h.trains[no] = { t: resolve(e.t) || String(e.t || ""), u: String(e.u == null ? "" : e.u), v };
+  }
+  return h;
+}
+/* src 이력을 dst 에 합친다 — 방문을 시각순으로 섞고 같은 역이 이어지면 하나로 */
+function histMerge(dst, src) {
+  if (!dst || !dst.trains || !src || !src.trains) return dst;
+  for (const no of Object.keys(src.trains)) {
+    const s = src.trains[no];
+    if (!s || !Array.isArray(s.v) || !s.v.length) continue;
+    const d = dst.trains[no];
+    if (!d || !Array.isArray(d.v) || !d.v.length) { dst.trains[no] = { t: s.t || "", u: s.u || "", v: s.v.map(x => x.slice()) }; continue; }
+    const all = d.v.concat(s.v).map(x => x.slice()).sort((a, b) => a[1] - b[1] || a[2] - b[2]);
+    const out = [];
+    for (const x of all) {
+      const p = out[out.length - 1];
+      if (p && p[0] === x[0] && x[1] <= p[2] + 1) { if (x[2] > p[2]) { p[2] = x[2]; p[3] = x[3]; } p[4] = Math.max(Number(p[4]) || 1, Number(x[4]) || 1); }
+      else if (p && p[0] === x[0]) { p[2] = Math.max(p[2], x[2]); if (x[2] >= p[2]) p[3] = x[3]; p[4] = (Number(p[4]) || 1) + (Number(x[4]) || 1); }
+      else out.push(x);
+    }
+    if (s.v[s.v.length - 1][2] > d.v[d.v.length - 1][2]) { d.t = s.t || d.t; d.u = s.u || d.u; }
+    d.v = out.slice(-HIST_MAX_VISITS);
+  }
+  dst.at = Math.max(Number(dst.at) || 0, Number(src.at) || 0);
+  return dst;
+}
+/* 운행 대기: 최신 방문이 종착역이 아닌 역에서 출발(2) 없이 새 기록 8분 이상 → {stn, since, last, durMs} */
+function parkedInfo(e) {
+  if (!e || !Array.isArray(e.v) || !e.v.length) return null;
+  const v = e.v[e.v.length - 1];
+  if (v[3] === "2" || (Number(v[4]) || 0) < 2) return null;
+  if (e.t && v[0] === e.t) return null;
+  const dur = Number(v[2]) - Number(v[1]);
+  return dur >= PARKED_MS ? { stn: v[0], since: Number(v[1]), last: Number(v[2]), durMs: dur } : null;
+}
+function trainParked(line, no) { const h = line ? histOf(line) : null; return h ? parkedInfo(h.trains[String(no)]) : null; }
+/* 탄 열차 자동 교체 판정 — 서버 findSwitch 와 같은 규칙(같은 피드면 같은 결론):
+   추적 열차가 구간 X역(출발역~하차역 직전)에 4분 넘게 서 있고, 그 정차 시작(및 추적 시작 2분 전) 뒤
+   같은 방향(같은 updnLine·종착역이 구간에서 X 이전/같은 역 아님) 다른 열차가 X에 있다가 구간의 X 뒤쪽 역에서 잡혔으면
+   그 열차(X를 가장 먼저 떠난 것, 같으면 X에 가장 가까운 것) */
+function findSwitch(h, tracked) {
+  if (!h || !h.trains || !tracked || tracked.no == null) return null;
+  const no = String(tracked.no), te = h.trains[no];
+  if (!te || !Array.isArray(te.v) || !te.v.length) return null;
+  const stations = tracked.stations || [];
+  const tv = te.v[te.v.length - 1];
+  if (tv[3] === "2" || (Number(tv[4]) || 0) < 2) return null;
+  const X = tv[0], xi = stations.indexOf(X);
+  if (xi < 0 || xi >= stations.length - 1) return null;
+  const dwellMs = Number(tv[2]) - Number(tv[1]);
+  if (dwellMs < SWITCH_DWELL_MS) return null;
+  const since = Number(tracked.since) || 0;
+  const bound = Math.max(Number(tv[1]), since ? since - SWITCH_SINCE_GRACE_MS : 0);
+  let best = null;
+  for (const no2 of Object.keys(h.trains)) {
+    const e = h.trains[no2];
+    if (no2 === no || !e || !Array.isArray(e.v) || e.v.length < 2) continue;
+    if (String(e.u) !== String(te.u)) continue;
+    const ti = e.t ? stations.indexOf(e.t) : -1;
+    if (ti >= 0 && ti <= xi) continue;
+    if (parkedInfo(e)) continue;
+    const lv = e.v[e.v.length - 1], curIdx = stations.indexOf(lv[0]);
+    if (curIdx <= xi) continue;
+    let dep = null;
+    for (let k = e.v.length - 2; k >= 0; k--) {
+      const a = e.v[k];
+      if (a[0] !== X || Number(a[2]) < bound) continue;
+      const after = e.v.slice(k + 1);
+      if (!after.length || stations.indexOf(after[0][0]) <= xi) continue;
+      if (after.some(b => { const j = stations.indexOf(b[0]); return j >= 0 && j <= xi; })) continue;
+      dep = Number(after[0][1]); break;
+    }
+    if (dep == null) continue;
+    const c = { no: no2, from: no, stn: X, dep, cur: lv[0], curIdx, sttus: lv[3], term: e.t, dwellMs };
+    if (!best || c.dep < best.dep || (c.dep === best.dep && c.curIdx < best.curIdx)) best = c;
+  }
+  return best;
+}
+/* 서버가 쌓은 노선 이력(op=hist)을 받아 합친다 — (1) 앱이 백그라운드에 있던 동안(웹 JS 정지) 못 본 열차 움직임,
+   (2) 첫 실행처럼 이 기기 이력이 얕을 때 이미 오래 서 있던 열차(운행 대기)를 곧바로 알아보기 위해 */
+const histSyncAt = new Map();   /* line → 마지막 서버 동기화 시각 */
+async function histSyncFromServer(line) {
+  if (!line || location.protocol === "file:" || Date.now() - (histSyncAt.get(line) || 0) < 5000) return;
+  histSyncAt.set(line, Date.now());
+  try {
+    const ctrl = new AbortController(); const tm = setTimeout(() => ctrl.abort(), 4000);
+    const r = await fetch(`/api/la?op=hist&line=${encodeURIComponent(line)}`, { cache: "no-store", signal: ctrl.signal });
+    clearTimeout(tm);
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d && d.hist) { histMerge(histOf(line), histPrune(histUnpack(d.hist), Date.now())); histDirty.add(line); histSave(true); }
+  } catch (e) {}
+}
+/* 이 노선 이력이 비었거나 얕으면(가장 오래된 관측이 운행 대기 판정 시간보다 짧음) 서버 이력을 한 번 받아 둔다.
+   같은 노선은 5분에 한 번까지. 고르기(startPick·승차 후보)·역 카드 앞에서 부른다 */
+async function histEnsure(line) {
+  if (!line || !LINES[line]) return;
+  if (Date.now() - (histSyncAt.get(line) || 0) < 5 * 60000) return;
+  const h = histOf(line), now = Date.now();
+  let oldest = Infinity;
+  for (const no of Object.keys(h.trains)) { const v = h.trains[no].v; if (v && v.length) oldest = Math.min(oldest, v[0][1]); }
+  if (oldest <= now - PARKED_MS) return;           /* 이미 8분 넘게 봐 왔다 — 로컬 이력으로 충분 */
+  await histSyncFromServer(line);
+}
 /* 급행 정차역 — 확실한 패턴만. 표에 없는 급행은 전역 정차로 취급(잘못 건너뛰는 쪽이 더 나쁘다) */
 const EXPRESS_STOPS = {
   "9호선": { any: ["김포공항", "마곡나루", "가양", "염창", "당산", "여의도", "노량진", "동작", "고속터미널", "신논현", "선정릉", "봉은사", "종합운동장", "석촌", "올림픽공원", "중앙보훈병원"] },
@@ -2862,7 +3057,9 @@ async function fetchLive(force) {
   state.calls++;
   addUsage(upstreamCost);
   state.dataPath = used.name;
-  state.trains = dedupTrains(dropStaleTrains(data.realtimePositionList || []));
+  const fresh = dropStaleTrains(data.realtimePositionList || []);
+  try { histObserveList(fresh, !sub && !state.line.includes(",") ? state.line : null); } catch (e) {}   /* 보이는 노선 전부 — 고르기 전부터 운행 대기를 알아본다 */
+  state.trains = dedupTrains(fresh);
   /* 2단계: 표시 (렌더링 오류는 별도로 보고한다) */
   try {
     renderTrains();
@@ -3641,7 +3838,11 @@ function stationsToX(ln, t, X, cur, term) {
 }
 async function fetchPositionsForLines(lines, force) {
   return Promise.all(lines.map(async ln => {
-    try { const d = await fetchPosition(ln, force); return { line: ln, trains: dropStaleTrains((d && d.realtimePositionList) || []) }; }
+    try {
+      const d = await fetchPosition(ln, force), trains = dropStaleTrains((d && d.realtimePositionList) || []);
+      try { histObserveList(trains, ln); } catch (e) {}
+      return { line: ln, trains };
+    }
     catch (e) { return { line: ln, trains: [] }; }
   }));
 }
@@ -3682,8 +3883,10 @@ function deriveArrivals(name, posByLine) {
       if (pe == null && pst && pst.plan && pst.plan.some(f => f.kind === "dep" && f.stn === X && f.t < Date.now() - 15000)) continue;   /* 계획상 이미 X를 떠난 열차 */
       const eta = pe != null ? pe : (away === 0 ? (st === "1" ? 0 : 25)
         : Math.max(0, away * SEC_PER_STATION - (st === "0" ? 90 : st === "2" ? 45 : 0) - aged));
+      const pk = st !== "2" ? trainParked(ln, t.trainNo) : null;   /* 운행 대기(출발 시각 미정) — 경로 대기 시간 추정에서 뺀다 */
       out.push({ line: ln, color: LINES[ln].color, updn: dirLabelLine(ln, t), dest: t.statnTnm,
-        express: isExpress(t), btrainNo: t.trainNo, away, etaSec: Math.round(eta), curStn: t.statnNm, measured: false });
+        express: isExpress(t), btrainNo: t.trainNo, away, etaSec: Math.round(eta), curStn: t.statnNm, measured: false,
+        parked: !!(pk && pk.stn === cur) });
     }
   }
   return out;
@@ -3715,6 +3918,7 @@ function dedupArrivals(items) {
 }
 async function loadArrivals(name, force) {
   const X = resolve(name), lines = X ? linesAt(X) : [];
+  if (lines.length) await Promise.race([Promise.all(lines.map(histEnsure)), new Promise(r => setTimeout(r, 1500))]);   /* 운행 대기 표시용(늦으면 기다리지 않음) */
   const [posByLine, apiArr] = await Promise.all([
     lines.length ? fetchPositionsForLines(lines, force) : Promise.resolve([]),
     fetchArrival(name, force).catch(() => [])
@@ -3739,6 +3943,14 @@ async function loadArrivals(name, force) {
   return dedupArrivals(items);
 }
 function arrivalItemRowHtml(it, elapsed) {
+  /* 운행 대기(같은 역에 8분 넘게 서 있는 열차): '지금 도착'·카운트다운이 아니라 흐린 '운행 대기' — 곧 탈 열차가 아니다 */
+  if (it.parked) return `<div class="sc-row parked">
+      <span class="sc-dot" style="background:${it.color}"></span>
+      <div class="sc-main">
+        <div class="sc-eta">운행 대기</div>
+        <div class="sc-sub">${it.line ? it.line + " · " : ""}${it.dest}행 · ${it.curStn || ""} 정차 · 출발 시각 미정</div>
+      </div>
+    </div>`;
   const sec = Math.max(0, Math.round(it.etaSec - elapsed));
   let eta;
   if (sec <= 15) eta = "지금 도착";
@@ -3782,7 +3994,7 @@ function renderArrival(items, elapsed = 0) {
     </div>`;
     if (cur !== "전체") all = all.filter(it => it.line === cur);
   } else if (scLineFilter) scLineFilter = null;
-  const valid = all.sort((a, b) => a.etaSec - b.etaSec);
+  const valid = all.sort((a, b) => (!!a.parked - !!b.parked) || a.etaSec - b.etaSec);   /* 운행 대기는 실제 도착 뒤로 */
   const up = valid.filter(a => a.updn === "상행" || a.updn === "내선");
   const down = valid.filter(a => a.updn === "하행" || a.updn === "외선");
   body.innerHTML = tabs + `<div class="sc-cols">${arrivalColHtml(up, "상행", elapsed, "1")}${arrivalColHtml(down, "하행", elapsed, "2")}</div>`
@@ -3844,7 +4056,7 @@ function routeNextWaitSec(list, res) {
   const since = scFetchedAt ? (Date.now() - scFetchedAt) / 1000 : 0;
   let best = Infinity;
   for (const it of L) {
-    if (typeof it.etaSec !== "number") continue;
+    if (typeof it.etaSec !== "number" || it.parked) continue;   /* 운행 대기 열차는 '곧 탈 열차'가 아니다 */
     const eta = it.etaSec - since;
     if (eta < 0) continue;                 /* 이미 지나간 열차 */
     if (firstLine && it.line && it.line !== firstLine) continue;
@@ -4498,9 +4710,10 @@ async function findBoardCandidates(legIdx) {
   let R_idx = sts.length - 1; while (R_idx > O && !sts[R_idx]) R_idx--;   /* 창의 가장 앞쪽 역 */
   const R = sts[R_idx];
   let list = [];
+  await histEnsure(seg.line);   /* 첫 실행에도 운행 대기 열차를 바로 알아보게 서버 이력을 먼저 */
   try { const d = await fetchPosition(seg.line, true); list = dropStaleTrains((d && d.realtimePositionList) || []); }
   catch (e) { return []; }
-  observeFeedList(list);
+  observeFeedList(list, seg.line);
   const out = [];
   const off = st => st === "0" ? -0.35 : st === "2" ? 0.35 : 0;
   for (const t of list) {
@@ -4519,26 +4732,36 @@ async function findBoardCandidates(legIdx) {
     /* 출발역(또는 그 앞 역)에서 3분 넘게 '도착' 상태로 서 있는 열차 = 출발 대기(언제 떠날지 모름).
        비슷한 시각에 오는 움직이는 열차보다 뒤에 두고(ETA +5분 취급), 승강장 도착 알림·자동 선택 대상에서 뺀다 */
     const dwMs = st === "1" && rel <= 0 ? trainDwellMs(t.trainNo, cur) : 0;
-    const dwelling = dwMs >= DWELL_LONG_MS;
-    if (dwelling) {
+    /* 운행 대기(같은 역에 8분 넘게 — 앱을 켜기 전 이력 포함): 사실상 운행하지 않는 열차. 다른 열차가 있으면 목록에서 빼고,
+       이것뿐이면 맨 뒤에 '운행 대기(출발 시각 미정)'로만 보인다. 자동 선택하지 않는다 */
+    const pk = st !== "2" ? trainParked(seg.line, t.trainNo) : null;
+    const parked = !!(pk && pk.stn === cur);
+    const dwelling = parked || dwMs >= DWELL_LONG_MS;
+    if (parked) {
+      etaMin = null; score = 9 + Math.abs(rel) * 0.001;
+      short = "운행 대기(출발 시각 미정)"; status = `${cur}에서 운행 대기(출발 시각 미정) · ${Math.floor(pk.durMs / 60000)}분째`;
+    }
+    else if (dwelling) {
       const away = -rel; etaMin = away ? Math.max(1, Math.round(away * SEC_PER_STATION / 60)) : 0;
       score = 3 + (etaMin + 5.5) * 0.001; short = "출발 대기"; status = `${cur}에서 출발 대기 중 · ${Math.floor(dwMs / 60000)}분째`;
     }
     else if (rel === 0) { score = st === "1" ? 0 : 1; etaMin = 0; short = st === "1" ? "승강장 도착" : st === "0" ? "진입 중" : "막 출발"; status = short; }
     else if (rel > 0) { score = 2 + rel * 0.01; const w = st === "0" ? "진입 중" : st === "1" ? "정차" : "출발"; short = w; status = (rel === 1 && st !== "1" ? "방금 출발 · " : "출발함 · ") + `${cur} ${w}`; }
     else { const away = -rel; const eta = Math.max(1, Math.round((away * SEC_PER_STATION - (st === "0" ? 90 : st === "2" ? 45 : 0)) / 60)); etaMin = eta; score = 3 + eta * 0.001 + away * 0.00001; short = `약 ${eta}분`; status = `${cur}에서 오는 중 · 약 ${eta}분`; }
-    out.push({ score, no: String(t.trainNo), dest: t.statnTnm, cur, sttus: st, status, short, line: seg.line, color: seg.color, dwelling, etaMin,
+    out.push({ score, no: String(t.trainNo), dest: t.statnTnm, cur, sttus: st, status, short, line: seg.line, color: seg.color, dwelling, parked, etaMin,
                express: isExpress(t), pos: idx + off(st), away: Math.max(0, O - idx), term: t.statnTnm, updn: t.updnLine });
   }
   out.sort((a, b) => a.score - b.score);
-  return out;
+  /* 운행 대기 열차는 다른 후보가 하나라도 있으면 빼고, 그것뿐일 때만 맨 뒤에 남긴다 */
+  return out.some(r => !r.parked) ? out.filter(r => !r.parked) : out;
 }
 /* 탈 열차 선택 시작 — 카드에 근처 열차 목록을 띄우고 8초마다 갱신. 고르면 tripBoard로 추적 시작 */
 function startPick(legIdx, isTransfer) {
   if (!trip) return;
   trip.pick = { legIdx, transfer: !!isTransfer, rows: [], loaded: false, dismissed: false, strip: pickStripMeta(legIdx) };
   renderRoute(); if (NATIVE) postCard();
-  refreshPickList();
+  const seg = trip.result.segments[legIdx];
+  histEnsure(seg && seg.line).finally(refreshPickList);   /* 서버 이력을 먼저 받아 운행 대기 열차를 첫 목록부터 거른다 */
 }
 /* 탄 열차 다시 고르기(추적 중): 기존 추적은 유지한 채 열차 현재 역을 가운데로 띠를 다시 연다. 고르면 교체, 취소하면 그대로 */
 function tripRepick() {
@@ -4566,16 +4789,16 @@ async function refreshPickList() {
     if (!trip || trip.pick !== pick) return;
     const before = pick.rows.map(r => r.no + r.status).join("|"), after = rows.map(r => r.no + r.status).join("|");
     /* 새 열차가 승강장에 들어오면 가볍게 알림(목록이 닫혀 있어도) */
-    const prevAt = new Set(pick.rows.filter(r => r.score <= 1).map(r => r.no));
+    const prevAt = new Set(pick.rows.filter(r => r.score <= 1).map(r => r.no));   /* score 0/1 = 승강장(운행 대기는 9) */
     if (pick.loaded && rows.some(r => r.score <= 1 && !prevAt.has(r.no))) haptic("medium");
     pick.rows = rows; pick.loaded = true;
     if (before !== after) { renderRoute(); if (NATIVE) postCard(); }
     /* 환승 자동 선택: 도보 시간이 지났고 승강장에 도착/진입 중인 열차가 있으면 그중 가장 빠른 것을 탄다 */
     if (pick.transfer && pick.autoFrom && Date.now() >= pick.autoFrom && !trip.track) {
-      let r = rows.find(x => !x.dwelling && (x.score === 0 || (x.score === 1 && x.sttus === "0")));
-      /* 출발 대기 중인 열차는 다른 열차가 5분 안에 오지 않을 때만(승강장에 서 있는 것) 자동 선택 */
+      let r = rows.find(x => !x.dwelling && !x.parked && (x.score === 0 || (x.score === 1 && x.sttus === "0")));
+      /* 출발 대기 중인 열차는 다른 열차가 5분 안에 오지 않을 때만(승강장에 서 있는 것) 자동 선택. 운행 대기 열차는 절대 안 한다 */
       if (!r) {
-        const dw = rows.find(x => x.dwelling && x.etaMin === 0);
+        const dw = rows.find(x => x.dwelling && !x.parked && x.etaMin === 0);
         if (dw && !rows.some(x => !x.dwelling && x.etaMin != null && x.etaMin <= 5)) r = dw;
       }
       if (r) {
@@ -4596,7 +4819,7 @@ function tripBoard(no, legIdx) {
   if (!seg) return;
   const row = pick && pick.rows.find(r => r.no === String(no));
   trip.track = { no: String(no), legIdx, line: seg.line, dest: row ? row.dest : "", cur: row ? row.cur : null, sttus: row ? row.sttus : "", seenAt: Date.now(),
-                 term: row ? row.term : "", updn: row ? row.updn : "" };
+                 term: row ? row.term : "", updn: row ? row.updn : "", since: Date.now() };   /* since: 자동 교체 판정의 하한 */
   trip.pick = null; trip.trackLost = false; trip.alightNotifiedLeg = -1;
   /* 아직 출발역에 오지 않은 열차: 출발역 도착 예정(계획 우선, 없으면 남은 역 수 기준) + 정차 시간을 출발 시각으로 */
   {
@@ -4693,10 +4916,11 @@ function tripTrackPayload() {
   return { no: trip.track.no, line: seg.line, legIdx: k, stations: seg.stations.slice(), legTo: seg.to,
            approach, stops: es ? seg.stations.filter(n => es.has(n)) : null,
            isLast: k === segs.length - 1, dest: trip.track.dest || "",
+           since: trip.track.since || 0, switchedFrom: trip.track.switchedFrom || "",   /* 서버도 같은 규칙으로 탄 열차를 바꾼다 */
            laterMin: k < segs.length - 1 ? ROUTE_TRANSFER_MIN + tripMinFromLeg(k + 1) : 0,
            legs: segs.map(x => ({ line: x.line, to: x.to, min: x.min, stations: x.stations.slice() })) };
 }
-let trackPollTimer = null, trackPolling = false;
+let trackPollTimer = null, trackPolling = false, trackPollAt = 0;
 function startTrackPoll() { stopTrackPoll(); trackPollTimer = setInterval(pollTrackedTrain, TRACK_POLL_MS); }
 function stopTrackPoll() { clearInterval(trackPollTimer); trackPollTimer = null; trackPolling = false; }
 async function pollTrackedTrain() {
@@ -4706,16 +4930,22 @@ async function pollTrackedTrain() {
     if (trip.track) {
       const tr = trip.track;
       let list = null;
+      /* 한동안 폴링이 멈췄다(앱 백그라운드 = 웹 JS 정지) → 그동안 서버 체인이 본 열차 움직임을 먼저 받아 합친다 */
+      const gap = trackPollAt && Date.now() - trackPollAt > 45000;
+      trackPollAt = Date.now();
+      if (gap) await histSyncFromServer(tr.line);
       try { const d = await fetchPosition(tr.line, true); list = (d && d.realtimePositionList) || []; } catch (e) {}
       if (!trip || trip.track !== tr) return;
       if (list) {
-        observeFeedList(list);   /* 같은 역 연속 기록(출발 대기) 관측 */
+        observeFeedList(list, tr.line);   /* 같은 역 연속 기록(출발 대기) 관측 + 노선 이력 */
         const t = pickTrain(list, tr.no);
         if (t) {
           const cur = resolve(t.statnNm);
           if (cur) { tr.cur = cur; tr.sttus = String(t.trainSttus); tr.seenAt = Date.now(); if (!tr.dest) tr.dest = t.statnTnm; tr.term = t.statnTnm; tr.updn = t.updnLine; }
         }
       }
+      /* 탄 열차가 역에 서 있는 동안 다른 열차가 떠났다 → 그 열차로 바꾸고 이번 폴링은 여기까지(다음 폴링이 새 열차를 따라간다) */
+      if (tripAutoSwitch(list)) return;
       await pinTrackedArrival(tr);   /* 다음 역 도착 카운트다운으로 마커·남은 시간 실측 보정 */
       if (!trip || trip.track !== tr) return;
       const seg = trip.result.segments[tr.legIdx];
@@ -4731,6 +4961,31 @@ async function pollTrackedTrain() {
     }
     if (trip && trip.pick) await refreshPickList();   /* 아직 안 골랐거나 재선택 중: 근처 열차 목록을 최신으로 */
   } finally { trackPolling = false; }
+}
+/* 탄 열차 자동 교체(웹) — 서버 la-core computeRow 와 같은 규칙(findSwitch). 바꿨으면 true */
+function tripAutoSwitch(list) {
+  if (!trip || !trip.track || trip.arrived) return false;
+  const tr = trip.track, seg = trip.result.segments[tr.legIdx];
+  if (!seg) return false;
+  const sw = findSwitch(histOf(tr.line), { no: tr.no, stations: seg.stations.map(n => resolve(n) || n), since: tr.since || 0 });
+  if (!sw) return false;
+  tripSwitchTrain(sw, list);
+  return true;
+}
+function tripSwitchTrain(sw, list) {
+  const old = trip.track;
+  const t = pickTrain(list || [], sw.no) || pickTrain(state.trains || [], sw.no);
+  const dest = (t && t.statnTnm) || sw.term || "";
+  trip.track = { no: String(sw.no), legIdx: old.legIdx, line: old.line, dest, cur: (t && resolve(t.statnNm)) || sw.cur,
+                 sttus: t ? String(t.trainSttus) : String(sw.sttus || ""), seenAt: Date.now(), term: dest, updn: t ? t.updnLine : old.updn,
+                 since: old.since || Date.now(), switchedFrom: String(old.no), switchedAt: Date.now() };
+  trip.dwellRem = null; trip.trackLost = false;
+  trip.autoNote = `탄 열차를 ${dest}행 ${sw.no}로 바꿨어요`;
+  trip.autoNoteUntil = Date.now() + 15000;
+  haptic("light");
+  if (!NATIVE) toast(trip.autoNote);
+  try { renderTrains(); } catch (e) {}   /* 새 열차의 운행 계획을 구간 끝까지(추적 열차 기준)로 다시 만든다 */
+  renderRoute(); postTrip(); if (NATIVE) postCard();
 }
 function tripTick() {
   if (!trip) { clearInterval(tripTimer); tripTimer = null; return; }
@@ -5189,8 +5444,12 @@ let lastUserAct = Date.now(), lastLiveFetch = 0;
 
 /* 백그라운드 탭에서는 호출을 멈춰 일일 한도를 아낀다 */
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) clearInterval(state.timer);
-  else { refresh(true); restartTimer(); }
+  if (document.hidden) { clearInterval(state.timer); histSave(true); }   /* 이력은 앱이 멈추기 전에 남긴다(다음 실행이 운행 대기를 바로 안다) */
+  else {
+    refresh(true); restartTimer();
+    /* 복귀: 백그라운드 동안 서버가 본 열차 움직임을 합치고 곧바로 추적 열차를 다시 본다(서버가 바꾼 열차도 같은 규칙으로 따라잡는다) */
+    if (trip && trip.track) histSyncFromServer(trip.track.line).then(() => { if (trip && trip.track) pollTrackedTrain(); });
+  }
 });
 
 /* ── 설정 패널: 지도 종류(기본/네이버) 선택, localStorage에 저장 ── */
