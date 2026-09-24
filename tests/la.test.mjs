@@ -1028,3 +1028,91 @@ test("handler — cleanup 은 anon 환경에서도 행을 소프트 삭제한다
     assert.ok(tomb(f, "exp"), "{deleted:true} 로 덮어써야 한다");
   } finally { f.restore(); pz.restore(); }
 });
+
+/* ── 장시간 정차(출발 대기) ────────────────────────────────────────────────────
+   실측(2026-09-24): 5호선 5197(하남검단산행)이 상일동 '도착(1)'을 20초마다 새 수신시각으로 20분 넘게 보냄.
+   역당 평균 시간으로 '다음 강일'로 앞당기면 안 되고, 3분이 넘으면 '상일동에서 출발 대기'여야 한다. */
+const L5E = ["상일동", "강일", "미사", "하남풍산", "하남시청"];
+const kst = (ms) => new Date(ms + 9 * 3600 * 1000).toISOString().slice(0, 19).replace("T", " ");
+const trainAt = (no, stn, sttus, recMs, term) => Object.assign(train(no, stn, sttus, term), { recptnDt: kst(recMs) });
+const eastTrack = (over = {}) => baseTrack(Object.assign({ no: "5197", stations: L5E, legTo: "하남시청",
+  legs: [{ line: "5호선", to: "하남시청", min: 8 }] }, over));
+
+test("출발 대기 — 같은 역 '도착'이 새 기록으로 3분 넘게 이어지면 waiting·waitMin 0·그 역, 다음 역으로 앞당기지 않는다", () => {
+  const t0 = Date.UTC(2026, 8, 24, 2, 42, 0);   // 11:42 KST
+  let row = { trip_id: "t", token: "tok", attrs: { to: "하남시청" }, state: prevState({ nextStation: "강일", legTo: "하남시청" }),
+    track: eastTrack(), last_push_at: new Date(t0).toISOString() };
+  const seen = [];
+  for (let s = 0; s <= 300; s += 20) {
+    const now = t0 + s * 1000 + 15000;           // 피드 지연 15초
+    const x = computeRow(row, feedOf({ "5호선": [trainAt("5197", "상일동", "1", t0 + s * 1000, "하남검단산")] }), now);
+    assertShape(x.state, `dwell t+${s}`);
+    assert.notEqual(x.state.nextStation, "미사", "상일동에 서 있는 동안 강일 너머로 가면 안 된다");
+    assert.equal(x.state.remainMin, 8, "남은 시간이 늘거나 줄지 않는다(상일동 기준 계획값)");
+    seen.push({ s, waiting: x.state.waiting, next: x.state.nextStation, waitMin: x.state.waitMin, note: x.note });
+    row = Object.assign({}, row, { state: x.state, track: x.track });
+  }
+  const before = seen.filter((v) => v.s < 180), after = seen.filter((v) => v.s >= 180);
+  for (const v of before) { assert.equal(v.waiting, false); assert.equal(v.next, "강일"); }
+  for (const v of after) {
+    assert.equal(v.waiting, true, `t+${v.s}: 3분 넘으면 출발 대기`);
+    assert.equal(v.waitMin, 0);
+    assert.equal(v.next, "상일동");
+    assert.equal(v.note, "dwell");
+  }
+  assert.equal(row.track.dwell.stn, "상일동");
+  assert.equal(row.track.dwell.run, 16);
+
+  /* 드디어 출발(2) → 대기 해제, 다음 역 강일, dwell 초기화 */
+  const now = t0 + 320 * 1000 + 15000;
+  const x = computeRow(row, feedOf({ "5호선": [trainAt("5197", "상일동", "2", t0 + 320 * 1000, "하남검단산")] }), now);
+  assert.equal(x.state.waiting, false);
+  assert.equal(x.state.nextStation, "강일");
+  assert.equal(x.track.dwell, null);
+});
+
+test("출발 대기 — 수신시각이 그대로인 같은 기록·옛 유령 기록은 대기 시간으로 치지 않는다", () => {
+  const t0 = Date.UTC(2026, 8, 24, 2, 42, 0);
+  let d = TS.nextDwell(null, "상일동", "1", trainAt("5197", "상일동", "1", t0), t0);
+  for (let i = 1; i <= 20; i++) d = TS.nextDwell(d, "상일동", "1", trainAt("5197", "상일동", "1", t0), t0 + i * 20000);   // 같은 기록 반복
+  assert.equal(d.run, 1);
+  assert.equal(TS.dwellConfirmed(d), false, "새 기록 없이 시간만 흐른 것은 확인된 대기가 아니다");
+  d = TS.nextDwell(d, "상일동", "1", trainAt("5197", "상일동", "1", t0 + 200000), t0 + 215000);
+  assert.equal(TS.dwellConfirmed(d), true);
+  const ghost = TS.nextDwell(d, "상일동", "1", trainAt("5197", "상일동", "1", t0 - 60000), t0 + 230000);
+  assert.equal(ghost.since, t0);
+  assert.equal(ghost.last, t0 + 200000);
+  /* 다른 역·다른 상태면 새로 시작/해제 */
+  assert.equal(TS.nextDwell(d, "강일", "1", trainAt("5197", "강일", "1", t0 + 260000), t0 + 275000).run, 1);
+  assert.equal(TS.nextDwell(d, "상일동", "2", trainAt("5197", "상일동", "2", t0 + 260000), t0 + 275000), null);
+});
+
+test("출발 대기 — 출발역 앞 역(접근 구간)에서 서 있으면 'N분 후 출발'을 지어내지 않고 그 역·waitMin 0", () => {
+  const t0 = Date.UTC(2026, 8, 24, 2, 42, 0);
+  const tk = eastTrack({ stations: ["강일", "미사", "하남풍산", "하남시청"], approach: ["상일동"] });
+  let prev = prevState(), track = tk, r;
+  for (let s = 0; s <= 200; s += 20) {
+    r = applyTrack(track, trainAt("5197", "상일동", "1", t0 + s * 1000), prev, t0 + s * 1000 + 15000);
+    track = Object.assign({}, track, { dwell: r.dwell }); prev = r.state;
+    if (s < 180) { assert.equal(r.state.nextStation, "강일"); assert.ok(r.state.waitMin >= 1); }
+  }
+  assert.equal(r.phase, "approach");
+  assert.equal(r.dwelling, true);
+  assert.equal(r.state.waiting, true);
+  assert.equal(r.state.waitMin, 0);
+  assert.equal(r.state.nextStation, "상일동");
+  assertShape(r.state, "approach-dwell");
+});
+
+test("overdueEnd — 확인된 출발 대기 중이면 도착 예정이 지나도 끝내지 않는다(피드에서 사라지면 다시 적용)", () => {
+  const now = Date.now();
+  const row = { trip_id: "t", token: "tok", attrs: { to: "하남시청" },
+    state: prevState({ remainMin: 8, endEpoch: now - 10 * 60000 }), track: eastTrack(),
+    last_push_at: new Date(now - 90000).toISOString(), last_progress_at: new Date(now - 20 * 60000).toISOString() };
+  const dwell = { stn: "상일동", since: now - 10 * 60000, last: now - 20000, run: 30, seen: now };
+  const x = { tripId: "t", token: "tok", env: "prod", state: row.state, track: Object.assign({}, row.track, { dwell }), push: null, remove: false };
+  assert.equal(LA.overdueEnd(row, x, now), null, "출발 대기 중인 열차는 '목적지 도착'이 아니다");
+  /* 대기 확인이 오래전(피드에서 사라진 뒤 4분+)이면 원래 규칙대로 끝낸다 */
+  const gone = Object.assign({}, x, { track: Object.assign({}, x.track, { dwell: Object.assign({}, dwell, { seen: now - 5 * 60000 }) }) });
+  assert.ok(LA.overdueEnd(row, gone, now));
+});

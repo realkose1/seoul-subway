@@ -355,7 +355,7 @@
   .route-leg .rl-stn { font-size: 14.5px; font-weight: 700; color: var(--text); }
   .route-leg .rl-info { font-size: 12px; color: var(--muted); margin-top: 3px; }
   .route-leg .rl-info .rl-badge { display: inline-block; padding: 1px 7px; border-radius: 999px; background: var(--rl, #888); color: #fff; font-size: 10.5px; font-weight: 700; margin-right: 5px; }
-  .route-leg .rl-quick { margin-left: auto; font-size: 11px; font-weight: 700; color: #FBBF24; white-space: nowrap; }
+  .route-leg .rl-quick { margin-left: auto; font-size: 11px; font-weight: 500; color: var(--faint-text, rgba(255,255,255,0.5)); white-space: nowrap; }
   .route-xfer { font-size: 11.5px; color: var(--faint-text); padding: 1px 0 11px; }
   .route-back { background: none; border: none; color: var(--muted); font-family: var(--font); font-size: 12.5px; font-weight: 600; cursor: pointer; padding: 2px 0 8px; }
   /* 경로 대안 탭: 최단시간 / 최소환승 */
@@ -2336,6 +2336,47 @@ const PLAN_FEED_LAG_MS = 15000;       /* 배치 내 최신 기록도 이만큼�
 const PLAN_AHEAD = 4;                 /* 앞으로 몇 역까지 계획 */
 const PLAN_BLEND_MS = 2500;           /* 새 기록으로 재정렬할 때 미끄러지는 시간 */
 const PLAN_MAX_DR_MS = 120000;        /* 기록이 이보다 묵으면 다음 역까지만 전진(그 너머는 추측이 과함) */
+const PLAN_DWELL_MAX_MS = 90000;      /* 확인된 장시간 정차에서 '다음 기록 전 출발' 예측 상한 */
+const PLAN_CORRECT_MS = 600;          /* 피드가 확인한 역으로 마커를 되돌릴 때 미끄러지는 시간 */
+/* ── 피드 관측(열차별) ──
+   계획(plan)은 '예측'이고, 피드가 실제로 알려 준 역·상태만 '확인'이다. 열차별로 같은 역의 연속 기록을 센다.
+   run = 이 역에서 받은 새(수신시각이 앞선) 기록 수, dwellRecpt = 이 역 '도착(1)' 첫 기록 수신시각.
+   실측(5호선 5197 상일동): '도착'이 20초마다 새 기록으로 20분 넘게 이어짐 → 30초 정차 가정으로 출발시키면 안 된다. */
+const DWELL_LONG_MS = 3 * 60000;      /* 이만큼 같은 역 '도착'이 이어지면 '출발 대기'로 안내 */
+const FEED_CONFIRM_MS = 40000;        /* 같은 역 새 기록 2개 이상이 이만큼 이어지면 '피드가 확인한 위치' */
+const feedObs = new Map();            /* trainNo → { stn, sttus, recpt, prevRecpt, firstRecpt, run, dwellRecpt, dwellSince, seenAt } */
+function observeFeedTrain(t, recWall) {
+  const no = t && t.trainNo != null ? String(t.trainNo) : ""; if (!no) return null;
+  const cur = resolve(t.statnNm); if (!cur) return null;
+  const sttus = String(t.trainSttus), r = recptMs(t.recptnDt), nowMs = Date.now();
+  let o = feedObs.get(no);
+  if (o && r != null && o.recpt != null && r < o.recpt) return o;          /* 옛 기록(유령 행) — 무시 */
+  if (!o || o.stn !== cur) {
+    o = { stn: cur, sttus, recpt: r, prevRecpt: null, firstRecpt: r, run: 1,
+          dwellRecpt: sttus === "1" ? r : null, dwellSince: sttus === "1" ? recWall : null, seenAt: nowMs };
+    feedObs.set(no, o);
+    return o;
+  }
+  o.seenAt = nowMs;
+  if (!(r != null && o.recpt != null && r > o.recpt)) return o;             /* 같은 기록 반복 — 새 정보 없음 */
+  o.prevRecpt = o.recpt; o.recpt = r; o.run++; o.sttus = sttus;
+  if (sttus === "1") { if (o.dwellRecpt == null) { o.dwellRecpt = r; o.dwellSince = recWall; } }
+  else { o.dwellRecpt = null; o.dwellSince = null; }
+  return o;
+}
+/* 목록 단위 관측(추적 폴러·승차 후보가 받은 피드) — 기록 시각은 planRecordTime과 같은 방식으로 추정 */
+function observeFeedList(list) {
+  if (!Array.isArray(list) || !list.length) return;
+  let ref = 0; for (const t of list) { const r = recptMs(t.recptnDt); if (r && r > ref) ref = r; }
+  const now = Date.now();
+  for (const t of dedupByTrainNo(list)) observeFeedTrain(t, planRecordTime(t, ref, now));
+  if (feedObs.size > 1500) for (const [k, o] of feedObs) if (now - o.seenAt > 10 * 60000) feedObs.delete(k);
+}
+/* 피드가 같은 역을 새 기록 2개 이상·40초 이상으로 확인했는가(지터가 아니다) */
+function feedConfirmed(o) { return !!o && o.run >= 2 && o.recpt != null && o.firstRecpt != null && o.recpt - o.firstRecpt >= FEED_CONFIRM_MS; }
+/* 같은 역 '도착(1)'이 새 기록으로 이어진 시간(ms). 새 기록이 하나뿐이면 0(정상 정차와 구분 불가) */
+function feedDwellMs(o) { return o && o.sttus === "1" && o.dwellRecpt != null && o.run >= 2 && o.recpt != null ? Math.max(0, o.recpt - o.dwellRecpt) : 0; }
+function trainDwellMs(no, stn) { const o = feedObs.get(String(no)); return o && (!stn || o.stn === stn) ? feedDwellMs(o) : 0; }
 /* 급행 정차역 — 확실한 패턴만. 표에 없는 급행은 전역 정차로 취급(잘못 건너뛰는 쪽이 더 나쁘다) */
 const EXPRESS_STOPS = {
   "9호선": { any: ["김포공항", "마곡나루", "가양", "염창", "당산", "여의도", "노량진", "동작", "고속터미널", "신논현", "선정릉", "봉은사", "종합운동장", "석촌", "올림픽공원", "중앙보훈병원"] },
@@ -2417,7 +2458,9 @@ function planRecordTime(t, refMs, fetchedAt) {
   const back = (refMs && r != null) ? Math.max(0, Math.min(180000, refMs - r)) : 0;
   return fetchedAt - PLAN_FEED_LAG_MS - back;
 }
-function buildPlan(t, recMs, ahead) {
+/* obs(선택): observeFeedTrain 결과. 같은 역 '도착'이 새 기록으로 이어지는 중이면(장시간 정차) 출발 예측을
+   '가장 최근 기록 + 정차 시간'으로 다시 잡고, 다음 기록이 오기 전에 떠나는 것으로 보지 않도록 관측된 기록 간격만큼 늘린다. */
+function buildPlan(t, recMs, ahead, obs) {
   const ln = lineOfTrain(t); if (!LINES[ln]) return null;
   const cur = resolve(t.statnNm); if (!cur || !STN[cur]) return null;
   const st = String(t.trainSttus);
@@ -2434,7 +2477,15 @@ function buildPlan(t, recMs, ahead) {
   } else if (st === "2") {                  /* 출발: 기록 시각에 떠났다 */
     tDep = recMs;
   } else {                                  /* 도착(정차): 기록 시각에 도착 → 정차 → 출발 */
-    if (stopsAt(cur)) { fr.push({ t: recMs, stn: cur, kind: "arr" }); tDep = recMs + PLAN_DWELL_MS; }
+    const dw = obs && obs.stn === cur && obs.sttus === "1" && obs.dwellSince != null && obs.run >= 2 ? obs : null;
+    if (dw) {
+      /* 장시간 정차 확인 중: 도착은 첫 '도착' 기록 시각, 출발은 최신 기록 + 정차 시간(매 기록마다 다시 잡음).
+         피드 지연(PLAN_FEED_LAG_MS)과 기록 간격 때문에 다음 기록이 보이기 전에 계획이 먼저 떠나 버리면
+         마커가 한 칸씩 끌려 나가므로(래칫), 관측된 기록 간격 + 지연만큼은 기다린다 */
+      const gap = dw.prevRecpt != null && dw.recpt != null ? Math.max(0, dw.recpt - dw.prevRecpt) : 0;
+      const hold = Math.min(PLAN_DWELL_MAX_MS, Math.max(PLAN_DWELL_MS, gap + PLAN_FEED_LAG_MS + 10000));
+      fr.push({ t: Math.min(recMs, dw.dwellSince), stn: cur, kind: "arr" }); tDep = recMs + hold;
+    } else if (stopsAt(cur)) { fr.push({ t: recMs, stn: cur, kind: "arr" }); tDep = recMs + PLAN_DWELL_MS; }
     else tDep = recMs;
   }
   fr.push({ t: tDep, stn: cur, kind: "dep" });
@@ -2499,6 +2550,38 @@ function planPosAt(st, now) {
   }
   const e = stnOn(ln, fr[fr.length - 1].stn); return e ? { pos: [e[0], e[1]], heading: null, prog: seq.length - 1 } : null;
 }
+/* 새 계획으로 갈아탈 때의 후진 금지(hold) / 되돌림(blend) 판정.
+   - 후진 금지: 새 계획상 위치가 지금 마커보다 뒤(역 순서 기준)면 뒤로 미끄러지지 않고 제자리에서 새 계획이 따라잡기를 기다린다
+     (피드 지연·기록 순서 뒤섞임 같은 지터로 마커가 뒤로 튀지 않게).
+   - 단, hold가 지켜 주는 것은 '피드가 확인한 가장 먼 역(feedMax)' + 그 다음 역으로 가는 주행 구간까지다.
+     마커가 그보다 앞서 있거나, 피드가 같은 역을 새 기록 2개 이상·40초 이상 확인하는데 마커가 한 역 이상 앞서 있거나
+     (장시간 정차 중이면 조금이라도 앞서 있거나) 하면 그건 지터가 아니라 틀린 예측이다 → 0.6초에 걸쳐 피드 역으로 되돌린다.
+   반환: { hold, blend, feedMax } */
+function planHoldBlend(prev, tmp, q, obs, curStn, sttus, nowTs) {
+  const seq = tmp.seq, feedIdx = seq.indexOf(curStn);
+  /* feedMax: 피드가 알려 준 가장 먼 역. 새 기록이 그보다 뒤(지터)면 유지, 아니면 현재 기록 역 */
+  let feedMax = curStn;
+  if (prev && prev.feedMax && prev.feedMax !== curStn && feedIdx >= 0) {
+    const mi = seq.indexOf(prev.feedMax);
+    if (mi > feedIdx) feedMax = prev.feedMax;
+  }
+  const out = { hold: null, blend: null, feedMax };
+  if (!(prev && prev.prog != null && prev.seq && q)) return out;
+  const pi = Math.floor(prev.prog), pfrac = prev.prog - pi, pStn = prev.seq[Math.min(pi, prev.seq.length - 1)];
+  const ni = seq.indexOf(pStn);
+  if (ni < 0) return out;
+  const markerProg = ni + pfrac;
+  if (!(q.prog < markerProg - 0.02)) return out;                 /* 새 계획이 마커와 같거나 앞 → 평소대로 */
+  const maxIdx = seq.indexOf(feedMax);
+  const regressed = feedMax !== curStn;                            /* 피드 자체가 뒤로 튐 = 지터 */
+  const confirmed = !regressed && feedIdx >= 0 && feedConfirmed(obs);
+  const ahead = feedIdx >= 0 ? markerProg - feedIdx : 0;
+  const beyondHoldable = maxIdx >= 0 && markerProg > maxIdx + 1 + 0.02;
+  const wrong = beyondHoldable || (confirmed && (ahead >= 1 - 1e-6 || (sttus === "1" && ahead > 0.02)));
+  if (wrong && prev.cur) out.blend = { from: prev.cur.slice(), t0: nowTs, t1: nowTs + PLAN_CORRECT_MS };
+  else out.hold = { prog: markerProg };
+  return out;
+}
 /* 도착 카운트다운으로 타임라인 보정: now+etaSec에 station 도착하도록 그 사이 구간을 비례 조정 */
 function pinArrival(no, station, etaSec) {
   const st = animState.get(String(no)); if (!st || !st.plan) return;
@@ -2534,6 +2617,7 @@ function planNextArr(no) {
 /* 추적 열차의 다음 역 도착 카운트다운을 받아 타임라인·남은 시간을 실측에 맞춘다 */
 async function pinTrackedArrival(tr) {
   try {
+    if (tr.sttus === "1" && trainDwellMs(tr.no, tr.cur) > 0) return;   /* 역에서 출발 대기 확인 중 — 카운트다운이 출발을 앞당기지 않게 */
     const seg = trip && trip.result.segments[tr.legIdx];
     let stnName = null;
     if (seg && tr.cur) {   /* 피드가 알려준 현재 역 기준 다음 정차역(진입 중이면 그 역) — 계획이 앞서가도 실제 다음 역에 맞춘다 */
@@ -2564,30 +2648,29 @@ function renderTrains() {
       /* 시간 기반 운행 계획: 기록 시각 앵커 + 앞 역들 도착/출발 키프레임. 새 기록이면 현재 마커에서 2.5초 미끄러져 재정렬 */
       /* 추적 중인 열차는 이번 구간 끝(환승/도착역)까지 계획을 이어 붙여 주행 카드가 같은 시계를 쓰게 한다 */
       const tracked = !!(trip && trip.track && String(trip.track.no) === String(t.trainNo));
-      const plan = buildPlan(t, planRecordTime(t, refMs, fetchedAt), tracked ? 40 : PLAN_AHEAD);
+      const recMs = planRecordTime(t, refMs, fetchedAt);
+      const obs = observeFeedTrain(t, recMs);
+      const plan = buildPlan(t, recMs, tracked ? 40 : PLAN_AHEAD, obs);
       if (plan) {
         const ln = lineOfTrain(t), prev = animState.get(t.trainNo);
         const tmp = { plan, ln, pins: prev && prev.pins ? prev.pins : null, anchorStn: resolve(t.statnNm) };
+        /* 확인된 장시간 정차 중엔 도착 카운트다운 핀을 쓰지 않는다(핀이 출발을 앞당겨 마커를 끌고 나감) */
+        if (tmp.pins && feedDwellMs(obs) > 0) tmp.pins = null;
         if (tmp.pins) applyPins(tmp, nowTs);
         tmp.seq = planSeq(tmp.plan);
         const q = planPosAt(tmp, nowTs);
         const target = q ? q.pos : r.pos.slice();
         const cur = prev && prev.cur ? prev.cur.slice() : target.slice();
-        /* 후진 금지: 새 계획상 위치가 지금 마커보다 뒤(역 순서 기준)면 뒤로 미끄러지지 않고 제자리에서
-           새 계획이 따라잡을 때까지 기다린다. 앞이면 부드럽게 따라붙는다 */
-        let hold = null, blend = null;
-        if (prev && prev.prog != null && prev.seq && q) {
-          const pi = Math.floor(prev.prog), pfrac = prev.prog - pi, pStn = prev.seq[Math.min(pi, prev.seq.length - 1)];
-          const ni = tmp.seq.indexOf(pStn);
-          if (ni >= 0 && q.prog < ni + pfrac - 0.02) hold = { prog: ni + pfrac };
-        }
-        if (!hold && prev && distM(cur, target) > 30) blend = { from: cur.slice(), t0: nowTs, t1: nowTs + PLAN_BLEND_MS };
+        const hb = planHoldBlend(prev, tmp, q, obs, resolve(t.statnNm), String(t.trainSttus), nowTs);
+        const hold = hb.hold, feedMax = hb.feedMax;
+        let blend = hb.blend;
+        if (!hold && !blend && prev && distM(cur, target) > 30) blend = { from: cur.slice(), t0: nowTs, t1: nowTs + PLAN_BLEND_MS };
         const heading = q && q.heading != null ? q.heading : (prev ? prev.heading : r.heading);
         if (trainTier !== "hidden") {
           adapter.upsertTrain(t.trainNo, offsetLeft(cur, heading, trackOffM), t, heading);
           adapter.moveTrain(t.trainNo, offsetLeft(cur, heading, trackOffM));
         }
-        animState.set(t.trainNo, { no: t.trainNo, cur, plan: tmp.plan, seq: tmp.seq, pins: tmp.pins, blend, hold, anchorStn: resolve(t.statnNm),
+        animState.set(t.trainNo, { no: t.trainNo, cur, plan: tmp.plan, seq: tmp.seq, pins: tmp.pins, blend, hold, anchorStn: resolve(t.statnNm), feedMax,
                                    prog: hold ? hold.prog : (q ? q.prog : null), ln, heading, anchor: r.anchor, train: t, route: [], idx: 0, speed: 0 });
         continue;
       }
@@ -3048,6 +3131,7 @@ function postCard() {
           return p ? { remain: p.remain, arriveAt: p.arriveAt, line: p.line, color: p.color,
                        nextStation: p.nextStation, legTo: p.legTo, isLast: p.isLast, done: p.done, legIdx: p.legIdx,
                        waiting: !!p.waiting, waitMin: p.waitMin || 0,
+                       dwelling: !!p.dwelling, dwellStation: p.dwellStation || "",
                        tracking: !!p.tracking, trainDest: p.trainDest || "", trackStale: !!p.trackStale, trackLost: !!p.trackLost,
                        alight: !!p.alight, autoNote: p.autoNote || "",
                        pick: p.pick && !p.done ? { legIdx: p.pick.legIdx, transfer: !!p.pick.transfer, repick: !!p.pick.repick, dismissed: !!p.pick.dismissed, loaded: !!p.pick.loaded,
@@ -4017,6 +4101,7 @@ function renderRoute() {
       <div class="trip-next${p.alight ? " alight" : ""}" style="--rl:${p.color}">
         <span class="rl-badge">${p.line}</span>
         ${p.done ? `${trip.to} 도착했습니다`
+          : p.dwelling ? `<b>${p.dwellStation}</b>에서 출발 대기 중${p.isLast || p.waiting ? "" : ` · ${p.legTo} 환승`}`
           : p.waiting ? `열차 대기 중 · <b>${p.waitMin}분</b> 후 출발`
           : p.alight ? `다음 <b>${p.nextStation}</b>에서 내리세요${p.isLast ? " · 목적지" : " · 환승"}`
           : `다음 <b>${p.nextStation}</b>${p.isLast ? "" : ` · ${p.legTo} 환승`}`}
@@ -4296,8 +4381,12 @@ function tripTrackProgress() {
     const waitMin = peO != null ? peO / 60 + 0.4 : Math.max(0, (trip.boardAt - Date.now()) / 60000);
     if (peO == null && peL == null && trip.boardAt <= Date.now()) return null;   /* 정보 없음 → 시간 기준 폴백 */
     const legRemainMin = peL != null ? peL / 60 : waitMin + seg.min;
-    return { remain: Math.max(0, Math.round(legRemainMin + laterMin0)), legIdx: tr.legIdx, seg,
+    /* 출발역 앞 역에서 3분 넘게 '도착' 상태로 서 있음 → 'N분 후 출발'을 지어내지 않고 'OO에서 출발 대기 중' */
+    const dwellA = tr.cur && tr.sttus === "1" && trainDwellMs(tr.no, tr.cur) >= DWELL_LONG_MS;
+    const remainA = tripDwellClamp(dwellA ? tr : null, Math.max(0, Math.round(legRemainMin + laterMin0)));
+    return { remain: remainA, legIdx: tr.legIdx, seg,
              nextStation: seg.stations[0], waiting: true, waitMin: Math.max(1, Math.round(waitMin)), done: false,
+             dwelling: dwellA, dwellStation: dwellA ? tr.cur : "",
              alight: false, alightInMin: Math.max(0, legRemainMin - ROUTE_HOP_MIN),
              tracking: true, trainDest: tr.dest || "", stale: Date.now() - tr.seenAt > TRACK_LOST_MS };
   }
@@ -4315,19 +4404,31 @@ function tripTrackProgress() {
   /* 계획이 없을 때만: 마지막 수신 후 흐른 시간만큼 매초 줄여 표시 */
   const sinceMin = Math.max(0, (Date.now() - tr.seenAt) / 60000);
   const base = legRemainMin + laterMin;
-  const remain = Math.max(0, Math.round(pe != null ? base : base - Math.min(sinceMin, base)));
+  /* 구간 도중 역에서 3분 넘게 '도착' 상태로 서 있음(출발 대기): 다음 역으로 앞당기지 않고, 남은 시간은
+     그 역 출발 기준 계획값을 유지한다(출발 시각을 알 수 없으므로). 늘어나더라도 벽시계보다 빨리 늘지 않게 */
+  const dwelling = !atEnd && tr.sttus === "1" && trainDwellMs(tr.no, tr.cur) >= DWELL_LONG_MS;
+  const remain = tripDwellClamp(dwelling ? tr : null, Math.max(0, Math.round(pe != null ? base : base - Math.min(sinceMin, base))));
   const na = planNextArr(tr.no);
   const alightPlan = !!(na && na.stn === legToC);
   const nextStop = na && seg.stations.indexOf(na.stn) > idx ? na.stn : null;   /* 급행이면 통과역을 건너뛴 다음 정차역 */
   const isLast = tr.legIdx === segs.length - 1;
   return { remain, legIdx: tr.legIdx, seg, nextStation: atEnd ? seg.to : (nextStop || seg.stations[nextIdx]),
            waiting: false, waitMin: 0, done: isLast && atEnd,
+           dwelling, dwellStation: dwelling ? tr.cur : "",
            alight: !atEnd && nextIdx >= last,   /* 피드 기준: 내릴 역 바로 앞 역에 도착/출발했을 때(계획이 앞서가도 먼저 울리지 않음) */
            alightInMin: atEnd ? null : (() => {   /* 하차 알림 예약용: 내릴 역 바로 앞 역 도착 예정(계획), 없으면 남은 시간−1역 */
              const pre = last >= 1 ? planEtaSec(tr.no, resolve(seg.stations[last - 1])) : null;
              return Math.max(0, pre != null ? pre / 60 : legRemainMin - ROUTE_HOP_MIN);
            })(),
            tracking: true, trainDest: tr.dest || "", stale: Date.now() - tr.seenAt > TRACK_LOST_MS };
+}
+/* 출발 대기 중 남은 시간: 대기 시작 때 값에서 벽시계보다 빨리 늘지 않게 묶는다(대기가 끝나면 해제) */
+function tripDwellClamp(tr, remain) {
+  if (!trip) return remain;
+  if (!tr) { trip.dwellRem = null; return remain; }
+  const now = Date.now(), d = trip.dwellRem;
+  if (!d || d.no !== tr.no || d.stn !== tr.cur) { trip.dwellRem = { no: tr.no, stn: tr.cur, min: remain, at: now }; return remain; }
+  return Math.min(remain, Math.round(d.min + (now - d.at) / 60000));
 }
 function tripProgress() {
   if (!trip) return null;
@@ -4341,6 +4442,7 @@ function tripProgress() {
     line: seg.line, color: seg.color,
     nextStation: p.nextStation, legTo: seg.to,
     waiting: p.waiting, waitMin: p.waitMin, waitKnown: !!trip.waitKnown,
+    dwelling: !!p.dwelling && !p.done && !trip.arrived, dwellStation: p.dwellStation || "",
     isLast: legIdx === segs.length - 1, done: p.done,
     tracking: !!p.tracking, trainDest: p.trainDest || "", trackStale: !!p.stale, trackLost: !!trip.trackLost,
     alight: !!p.alight && !p.done,
@@ -4398,6 +4500,7 @@ async function findBoardCandidates(legIdx) {
   let list = [];
   try { const d = await fetchPosition(seg.line, true); list = dropStaleTrains((d && d.realtimePositionList) || []); }
   catch (e) { return []; }
+  observeFeedList(list);
   const out = [];
   const off = st => st === "0" ? -0.35 : st === "2" ? 0.35 : 0;
   for (const t of list) {
@@ -4412,11 +4515,19 @@ async function findBoardCandidates(legIdx) {
     if (idx !== R_idx) { if (stationsToX(seg.line, t, R, cur, term) !== R_idx - idx) continue; }
     else if (idx > 0 && sts[idx - 1]) { const back = stationsToX(seg.line, t, sts[idx - 1], cur, term); if (back >= 0 && back <= sts.length) continue; }
     const rel = idx - O;
-    let score, short, status;
-    if (rel === 0) { score = st === "1" ? 0 : 1; short = st === "1" ? "승강장 도착" : st === "0" ? "진입 중" : "막 출발"; status = short; }
+    let score, short, status, etaMin = null;
+    /* 출발역(또는 그 앞 역)에서 3분 넘게 '도착' 상태로 서 있는 열차 = 출발 대기(언제 떠날지 모름).
+       비슷한 시각에 오는 움직이는 열차보다 뒤에 두고(ETA +5분 취급), 승강장 도착 알림·자동 선택 대상에서 뺀다 */
+    const dwMs = st === "1" && rel <= 0 ? trainDwellMs(t.trainNo, cur) : 0;
+    const dwelling = dwMs >= DWELL_LONG_MS;
+    if (dwelling) {
+      const away = -rel; etaMin = away ? Math.max(1, Math.round(away * SEC_PER_STATION / 60)) : 0;
+      score = 3 + (etaMin + 5.5) * 0.001; short = "출발 대기"; status = `${cur}에서 출발 대기 중 · ${Math.floor(dwMs / 60000)}분째`;
+    }
+    else if (rel === 0) { score = st === "1" ? 0 : 1; etaMin = 0; short = st === "1" ? "승강장 도착" : st === "0" ? "진입 중" : "막 출발"; status = short; }
     else if (rel > 0) { score = 2 + rel * 0.01; const w = st === "0" ? "진입 중" : st === "1" ? "정차" : "출발"; short = w; status = (rel === 1 && st !== "1" ? "방금 출발 · " : "출발함 · ") + `${cur} ${w}`; }
-    else { const away = -rel; score = 3 + away * 0.01; const eta = Math.max(1, Math.round((away * SEC_PER_STATION - (st === "0" ? 90 : st === "2" ? 45 : 0)) / 60)); short = `약 ${eta}분`; status = `${cur}에서 오는 중 · 약 ${eta}분`; }
-    out.push({ score, no: String(t.trainNo), dest: t.statnTnm, cur, sttus: st, status, short, line: seg.line, color: seg.color,
+    else { const away = -rel; const eta = Math.max(1, Math.round((away * SEC_PER_STATION - (st === "0" ? 90 : st === "2" ? 45 : 0)) / 60)); etaMin = eta; score = 3 + eta * 0.001 + away * 0.00001; short = `약 ${eta}분`; status = `${cur}에서 오는 중 · 약 ${eta}분`; }
+    out.push({ score, no: String(t.trainNo), dest: t.statnTnm, cur, sttus: st, status, short, line: seg.line, color: seg.color, dwelling, etaMin,
                express: isExpress(t), pos: idx + off(st), away: Math.max(0, O - idx), term: t.statnTnm, updn: t.updnLine });
   }
   out.sort((a, b) => a.score - b.score);
@@ -4461,7 +4572,12 @@ async function refreshPickList() {
     if (before !== after) { renderRoute(); if (NATIVE) postCard(); }
     /* 환승 자동 선택: 도보 시간이 지났고 승강장에 도착/진입 중인 열차가 있으면 그중 가장 빠른 것을 탄다 */
     if (pick.transfer && pick.autoFrom && Date.now() >= pick.autoFrom && !trip.track) {
-      const r = rows.find(x => x.score === 0 || (x.score === 1 && x.sttus === "0"));
+      let r = rows.find(x => !x.dwelling && (x.score === 0 || (x.score === 1 && x.sttus === "0")));
+      /* 출발 대기 중인 열차는 다른 열차가 5분 안에 오지 않을 때만(승강장에 서 있는 것) 자동 선택 */
+      if (!r) {
+        const dw = rows.find(x => x.dwelling && x.etaMin === 0);
+        if (dw && !rows.some(x => !x.dwelling && x.etaMin != null && x.etaMin <= 5)) r = dw;
+      }
       if (r) {
         trip.autoNote = `가장 빠른 ${r.dest}행 열차로 자동 선택했어요 · 다른 열차면 '변경'`;
         trip.autoNoteUntil = Date.now() + 15000;
@@ -4593,6 +4709,7 @@ async function pollTrackedTrain() {
       try { const d = await fetchPosition(tr.line, true); list = (d && d.realtimePositionList) || []; } catch (e) {}
       if (!trip || trip.track !== tr) return;
       if (list) {
+        observeFeedList(list);   /* 같은 역 연속 기록(출발 대기) 관측 */
         const t = pickTrain(list, tr.no);
         if (t) {
           const cur = resolve(t.statnNm);
@@ -4647,9 +4764,11 @@ function postTrip() {
       from: trip ? trip.from : "", to: trip ? trip.to : "",
       remain: p ? p.remain : 0, total: p ? p.total : 0,
       arriveAt: p ? p.arriveAt : "", line: p ? p.line : "", color: p ? colorHex(p.color) : "",
-      nextStation: p ? p.nextStation : "", legTo: p ? p.legTo : "", isLast: p ? p.isLast : true,
+      /* 출발 대기(장시간 정차): 라이브 액티비티가 'OO에서 출발 대기'를 보이도록 waiting:true·waitMin:0·nextStation=그 역 */
+      nextStation: p ? (p.dwelling ? p.dwellStation : p.nextStation) : "", legTo: p ? p.legTo : "", isLast: p ? p.isLast : true,
       transfers: trip ? trip.result.transfers : 0, done: p ? p.done : false,
-      waiting: p ? !!p.waiting : false, waitMin: p ? (p.waitMin || 0) : 0,
+      waiting: p ? (!!p.waiting || !!p.dwelling) : false, waitMin: p ? (p.dwelling ? 0 : (p.waitMin || 0)) : 0,
+      dwelling: p ? !!p.dwelling : false,
       tracking: p ? !!p.tracking : false, trainDest: p ? (p.trainDest || "") : "",
       alight: p ? !!p.alight : false,
       /* 하차 예상 시각(ms)·하차역·구간 — 네이티브가 백그라운드 대비 로컬 알림을 미리 예약한다 */
