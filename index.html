@@ -391,7 +391,7 @@
   /* 탄 열차 추적 상태 / 승차 확인 */
   .trip-track { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--faint-text); padding: 0 2px 8px; }
   /* 타이틀 옆 '실시간 추적 중' 배지 */
-  .sc-live { position: relative; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; color: var(--muted);
+  .sc-live { position: relative; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; color: var(--muted); cursor: pointer;
              padding: 3px 9px 3px 7px; border-radius: 999px; background: rgba(255,255,255,.07); border: 1px solid transparent; white-space: nowrap; isolation: isolate; }
   .sc-live[hidden] { display: none; }
   /* 배지 테두리에도 카드와 같은 발광 */
@@ -3325,6 +3325,7 @@ if (NATIVE) {
       pickToggle: () => { if (trip && trip.pick) { trip.pick.dismissed = !trip.pick.dismissed; renderRoute(); postCard(); } },
       tripRepick: () => tripRepick(),        /* 추적 중 다른 열차로 변경(띠 다시 열기) */
       pickCancel: () => tripPickCancel(),    /* 변경 취소 — 기존 추적 유지 */
+      focusTrain: () => focusTrackedTrain(), /* '실시간 추적 중' 배지 탭 → 추적 열차로 지도 포커스+팔로우 재개 */
     },
     /* 미니 카드 탭 → 몰입 모드 해제(전체 카드 복귀) */
     exitImmersive: () => { document.documentElement.classList.remove("immersive"); },
@@ -4590,6 +4591,31 @@ function startTripGlide() {
   tripGlideRaf = setInterval(step, 33);
 }
 function stopTripGlide() { clearInterval(tripGlideRaf); tripGlideRaf = 0; tripGlideLast = 0; tripGlideCur = null; }
+/* '실시간 추적 중' 배지 탭 → 사용자 조작으로 인한 일시정지를 풀고 즉시 추적 열차(없으면 다음 역)로
+   지도를 이동한 뒤 글라이드 팔로우를 재개한다 */
+function focusTrackedTrain() {
+  if (!trip || !adapter.map) return;
+  tripFollowPaused = 0;   /* 터치로 걸린 일시정지 해제 */
+  let tgt = tripTargetLatLng();
+  if (!tgt) {
+    /* 아직 탄 열차가 없으면: 이번 구간 출발역/다음 역으로 */
+    const p = tripProgress();
+    if (p) {
+      const seg = trip.result.segments[p.legIdx];
+      const name = resolve(p.nextStation) || (seg && resolve(seg.stations[0]));
+      const c = seg && name ? stnOn(seg.line, name) : null;
+      if (c) tgt = [c[0], c[1]];
+    }
+  }
+  if (!tgt) return;
+  const v = adapter.getView ? adapter.getView() : null;
+  const z = v && v.zoom >= 14 ? v.zoom : 15;
+  tripSelfMove = Date.now() + 300;
+  tripGlideCur = null;   /* 다음 글라이드 스텝은 지금 옮긴 위치에서 다시 이징 시작 */
+  try { adapter.setView(tgt, z); } catch (e) {}
+  haptic("light");
+  startTripGlide();       /* 팔로우 재개(이미 돌고 있어도 안전하게 재시작) */
+}
 /* 화면 터치는 어댑터 이벤트와 무관하게 확실한 '사용자 조작' — 누르는 동안·손 뗀 뒤 4초간 따라가기 멈춤 */
 let _tripTouchBound = false;
 function bindTripTouchPause() {
@@ -5266,6 +5292,7 @@ document.getElementById("scClose").addEventListener("click", () => {
   if (trip && !NATIVE && !confirm("안내를 종료할까요?\n진행 중인 경로 안내가 종료됩니다.")) return;
   closeCardReset();
 });
+document.getElementById("scLive").addEventListener("click", () => focusTrackedTrain());
 document.getElementById("tripDoneOk").addEventListener("click", () => { haptic(); hideTripDone(); });
 document.getElementById("tripDoneScrim").addEventListener("click", e => { if (e.target === e.currentTarget) hideTripDone(); });
 document.getElementById("scRefresh").addEventListener("click", () => {
