@@ -5126,6 +5126,46 @@ function hideTripDone() {
   if (scrim) scrim.classList.remove("open");
 }
 const TRIP_AUTO_BOARD_MS = 3 * 60000;   /* 환승 도보 추정 — 이 전에 떠나는 열차는 탈 수 없다고 본다 */
+/* 서버(lib/trip-state.js pickNextTrain)가 환승역에서 다음 구간 열차의 방향을 판정할 근거.
+   구간 역 목록만으로는 종착역이 목록 밖(청구→이태원 6호선의 응암순환·새절 등)이면 방향을 몰라 영원히 대기했다.
+     dirTerms: 승차역(from)에서 그 역 T 로 가는 최단 경로가 구간 종료역(to)을 지나는 T 전부(= 이 방향 종착 후보, to 포함).
+               노선 끝(차수 1) 우선, 그다음 to 에서 가까운 순으로 최대 LEG_DIR_MAX 개
+     loopDir : 순환선 본선 구간이면 updnLine("0" 내선 / "1" 외선 — trainCoord 와 같은 규칙). 그때 offTerms = 지선 역(종착이면 제외)
+     before  : 승차역 직전 역 사슬 [[직전, 그 전], …](분기마다 하나) — 다가오는 열차도 태울 수 있게 */
+const LEG_DIR_MAX = 80;
+function legDirInfo(seg) {
+  const out = {};
+  try {
+    const ln = seg && seg.line, L_ = LINES[ln];
+    if (!L_ || !Array.isArray(seg.stations) || seg.stations.length < 2) return out;
+    const sts = seg.stations.map(n => resolve(n) || n);
+    const from = sts[0], to = resolve(seg.to) || sts[sts.length - 1];
+    if (!from || !to || from === to) return out;
+    const g = graphOf(ln);
+    const loopArr = L_.loop ? L_.segments[0].slice(0, -1) : null;
+    if (loopArr && sts.every(s => loopArr.includes(s))) {
+      const n = loopArr.length, i = loopArr.indexOf(from);
+      const dir = loopArr[(i + 1) % n] === sts[1] ? 1 : -1;
+      out.loopDir = dir === 1 ? "0" : "1";
+      out.before = [[1, 2].map(k => loopArr[((i - dir * k) % n + n) % n])];
+      out.offTerms = Object.keys(g).filter(s => !loopArr.includes(s));
+      return out;
+    }
+    const dF = distMap(ln, from), dT = distMap(ln, to);
+    if (!dF || !dT || dF[to] == null) return out;
+    const ends = [], rest = [];
+    for (const s of Object.keys(g)) {
+      if (dF[s] == null || dT[s] == null || dF[s] !== dF[to] + dT[s]) continue;   /* from→s 가 to 를 지난다 */
+      (g[s].size === 1 ? ends : rest).push(s);
+    }
+    rest.sort((a, b) => dT[a] - dT[b]);
+    out.dirTerms = ends.concat(rest).slice(0, LEG_DIR_MAX);
+    /* 직전 역: from 의 이웃 중 to 에서 한 정거장 더 먼 역(반대편), 그 역에서 한 번 더 */
+    const back = s => [...(g[s] || [])].filter(nb => dT[nb] === dT[s] + 1);
+    out.before = back(from).map(b1 => [b1, back(b1)[0]].filter(Boolean));
+  } catch (e) {}
+  return out;
+}
 /* 네이티브 백그라운드 추적용 페이로드: 탄 열차·이번 구간 역 목록·이후 구간 소요 */
 function tripTrackPayload() {
   if (!trip || !trip.track) return null;
@@ -5145,7 +5185,7 @@ function tripTrackPayload() {
            isLast: k === segs.length - 1, dest: trip.track.dest || "",
            since: trip.track.since || 0, switchedFrom: trip.track.switchedFrom || "",   /* 서버도 같은 규칙으로 탄 열차를 바꾼다 */
            laterMin: k < segs.length - 1 ? ROUTE_TRANSFER_MIN + tripMinFromLeg(k + 1) : 0,
-           legs: segs.map(x => ({ line: x.line, to: x.to, min: x.min, stations: x.stations.slice() })) };
+           legs: segs.map(x => Object.assign({ line: x.line, to: x.to, min: x.min, stations: x.stations.slice() }, legDirInfo(x))) };
 }
 let trackPollTimer = null, trackPolling = false, trackPollAt = 0;
 function startTrackPoll() { stopTrackPoll(); trackPollTimer = setInterval(pollTrackedTrain, TRACK_POLL_MS); }

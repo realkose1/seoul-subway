@@ -28,6 +28,9 @@
      GET  ?op=hist&line=5호선  인증 없음 — 노선 관측 이력(운행 대기·탄 열차 교체 판정용, lib/train-hist.js).
                         앱이 백그라운드에 있던 동안 웹이 못 본 열차 움직임을 복귀 때 채워 넣는다(공개 피드에서 나온 값뿐)
                         응답의 parked = 그 노선 운행 대기 등록부 항목({line,no,stn,since,lastSeen}, sf_cache 'ssl:la:parked')
+     GET  ?op=log&tripId=…   헤더 x-cron-secret — 그 주행의 최근 틱 판단 50개(sf_cache 'ssl:la:log:<tripId>', 24시간 보관)
+                        {t, note, cur, sttus, no, legIdx, waiting, remain, pushed, apns, ev} — 잠금화면이 멈춘 원인 추적용
+     GET  ?op=logs&limit=20  헤더 x-cron-secret — 최근에 기록된 주행들(최신순, 마지막 판단 몇 개씩)
      GET  ?op=diag      헤더 x-cron-secret — 환경 점검(값은 안 돌려준다)
                         probe=1 이면 APNs 에 실제로 한 번 쏴서 키/토픽 설정을 확인한다
 
@@ -52,6 +55,8 @@ const KICK_WAIT_MS = 3000;                /* register/update/end/kick 가 새 �
 const LOCK_TTL_MS = 75 * 1000;            /* 체인 잠금 임대 — 한 라운드(60초)보다 넉넉히 */
 const PROBE_TOKEN = "0".repeat(64);       /* 일부러 틀린 기기 토큰 — APNs 가 '키는 맞다'까지만 알려주게 한다 */
 const PROBE_TIMEOUT_MS = 8000;
+const LOG_PRUNE_EVERY_MS = 60 * 60 * 1000;   /* 인스턴스당 이 간격으로 한 번 24시간 지난 틱 기록 행을 정리한다 */
+let logPruneAt = 0;
 
 /* 노선 관측 이력 — 인스턴스가 살아 있는 동안 메모리에 이어 두고, 라운드마다 sf_cache('ssl:la:hist:<노선>')와 합쳐 저장한다.
    (체인 호출은 다른 인스턴스에 떨어질 수 있다 → 저장본이 기준, 메모리는 저장 실패·지연 대비) */
@@ -287,10 +292,11 @@ async function applyJobs(jobs, byId, now) {
   let pushed = 0, ended = 0, errors = 0;
   const dead = [], remove = [], save = [];
   if (!jobs.length) return { pushed, ended, errors, gone: [] };
+  const apns = new Map();   /* tripId → APNs 응답 코드(틱 기록용) */
   const pusher = pusherFactory();
   try {
     await Promise.all(jobs.map(async (x) => {
-      let isDead = false;
+      let isDead = false, ok = false;
       if (x.push && x.token) {
         let r;
         try {
@@ -300,7 +306,8 @@ async function applyJobs(jobs, byId, now) {
             dismissalSec: x.push.dismissalSec, staleSec: x.push.staleSec,
           });
         } catch (e) { r = { status: 0, reason: String((e && e.message) || e) }; }
-        if (r.status === 200) { pushed++; if (x.push.event === "end") ended++; }
+        apns.set(x.tripId, r.status || 0);
+        if (r.status === 200) { ok = true; pushed++; if (x.push.event === "end") ended++; }
         else if (isDeadToken(r)) { isDead = true; dead.push(x.tripId); errors++; console.warn("[la] dead token", x.tripId, r.status, r.reason); }
         else { errors++; console.warn("[la] push fail", x.tripId, x.note || "", r.status, r.reason); }
       }
@@ -312,7 +319,8 @@ async function applyJobs(jobs, byId, now) {
       save.push(Object.assign({}, orig, {
         state: x.state,
         track: x.track,
-        last_push_at: x.push ? iso(now) : orig.last_push_at || null,
+        /* 실제로 전달된 푸시만 '보냄'으로 친다 — 실패했으면 다음 틱이 바로 다시 보낸다(하트비트가 끊기지 않게) */
+        last_push_at: ok ? iso(now) : orig.last_push_at || null,
         last_feed_at: iso(now),
         last_progress_at: lp ? iso(lp) : iso(now),
       }));
@@ -323,12 +331,37 @@ async function applyJobs(jobs, byId, now) {
   await Promise.all([
     gone.length ? store.deleteTrips(gone).catch((e) => console.warn("[la] delete", e.message)) : null,
     save.length ? store.saveTrips(save, now).catch((e) => console.warn("[la] save", e.message)) : null,
+    writeLogs(jobs, apns, now),
   ].filter(Boolean));
   return { pushed, ended, errors, gone };
 }
 
+/* 틱 판단 1건 — sf_cache 'ssl:la:log:<tripId>' 링 버퍼에 쌓는다(op=log 로 읽는다) */
+function logEntry(x, status, now) {
+  const st = x.state || {}, tk = x.track || {};
+  return {
+    t: now, note: x.note || "",
+    cur: x.diag ? x.diag.cur : null, sttus: x.diag ? x.diag.sttus : null,
+    no: tk.no != null ? String(tk.no) : null, legIdx: Number(tk.legIdx) || 0,
+    waiting: !!st.waiting, remain: Number(st.remainMin) || 0,
+    pushed: status === 200, apns: status == null ? null : status, ev: x.push ? x.push.event : null,
+  };
+}
+/* best-effort — 실패해도 틱은 계속 */
+async function writeLogs(jobs, apns, now) {
+  try {
+    const by = new Map();
+    for (const x of jobs) {
+      if (!x || !x.tripId) continue;
+      if (!by.has(x.tripId)) by.set(x.tripId, []);
+      by.get(x.tripId).push(logEntry(x, apns.has(x.tripId) ? apns.get(x.tripId) : null, now));
+    }
+    await store.appendLogs(by, now);
+  } catch (e) { console.warn("[la] log", e && e.message); }
+}
+
 const jobView = (x) => ({
-  tripId: x.tripId, note: x.note, changed: x.changed, remove: x.remove,
+  tripId: x.tripId, note: x.note, changed: x.changed, remove: x.remove, diag: x.diag || null,
   push: x.push ? { event: x.push.event, priority: x.push.priority, alert: x.push.alert } : null,
   state: x.state,
   track: x.track ? { no: x.track.no, line: x.track.line, legIdx: x.track.legIdx, legEndedAt: x.track.legEndedAt || null,
@@ -403,6 +436,11 @@ async function runRound(now, { dry = false } = {}) {
   }
 
   const out = await applyJobs(sweeps.concat(results), byId, now);
+  /* 가끔(인스턴스당 1시간에 한 번) 24시간 지난 틱 기록 행을 정리한다 — 실패는 무시 */
+  if (now - logPruneAt >= LOG_PRUNE_EVERY_MS) {
+    logPruneAt = now;
+    await store.pruneLogs(now).catch((e) => console.warn("[la] log prune", e && e.message));
+  }
   const goneActive = active.filter((r) => out.gone.includes(r.trip_id)).length;
   return {
     rows: rows.length, pushed: out.pushed, ended: out.ended, errors: out.errors, swept: sweeps.length,
@@ -605,6 +643,24 @@ async function opHist(req, res) {
   return res.status(200).json({ line, observed, hist: TH.histPack(h), parked: TH.regForLine(reg, line) });
 }
 
+/* ── op=log / op=logs ────────────────────────────────────────────────────── */
+/* 시크릿 필요. 주행별 틱 판단 기록(최근 50개) — 잠금화면이 멈췄을 때 서버가 무엇을 봤고 무엇을 보냈는지 */
+async function opLog(req, res) {
+  if (req.headers["x-cron-secret"] !== cronSecret()) return res.status(401).json({ error: "unauthorized" });
+  const tripId = String((req.query && req.query.tripId) || "").trim();
+  if (!tripId) return res.status(400).json({ error: "tripId required" });
+  const l = await store.getLog(tripId);
+  if (!l) return res.status(404).json({ error: "no log", tripId });
+  return res.status(200).json({ tripId: l.tripId, updatedAt: l.updated_at, count: l.entries.length, entries: l.entries });
+}
+async function opLogs(req, res) {
+  if (req.headers["x-cron-secret"] !== cronSecret()) return res.status(401).json({ error: "unauthorized" });
+  const list = await store.listLogs(Number(req.query && req.query.limit) || 20);
+  return res.status(200).json({
+    trips: list.map((l) => ({ tripId: l.tripId, updatedAt: l.updated_at, count: l.entries.length, last: l.entries.slice(-5) })),
+  });
+}
+
 /* ── op=diag ─────────────────────────────────────────────────────────────── */
 /* 배포 환경 점검 — 값은 절대 돌려주지 않는다(존재 여부·길이·파싱 성공만). */
 async function opDiag(req, res) {
@@ -684,11 +740,13 @@ module.exports = async (req, res) => {
     if (op === "kick") return await opKick(req, res);
     if (op === "cleanup") return await opCleanup(req, res);
     if (op === "hist") return await opHist(req, res);
+    if (op === "log") return await opLog(req, res);
+    if (op === "logs") return await opLogs(req, res);
     if (req.method !== "POST") return res.status(405).json({ error: "POST required" });
     if (op === "register") return await opRegister(req, res, { isUpdate: false });
     if (op === "update") return await opRegister(req, res, { isUpdate: true });
     if (op === "end") return await opEnd(req, res);
-    return res.status(400).json({ error: "unknown op (register|update|end|tick|kick|cleanup|hist|diag)" });
+    return res.status(400).json({ error: "unknown op (register|update|end|tick|kick|cleanup|hist|log|logs|diag)" });
   } catch (e) {
     console.error("[la]", op, (e && e.stack) || e);
     if (res.headersSent) return;
@@ -707,3 +765,4 @@ module.exports._setPusherFactory = (fn) => { pusherFactory = fn || createPusher;
 module.exports._memHist = memHist;   /* 테스트 전용 */
 module.exports._resetParked = () => { memReg = TH.emptyReg(); histFeedAt.clear(); };   /* 테스트 전용 */
 module.exports._setTiming = (o) => { chainRoundMs = o && o.roundMs != null ? o.roundMs : CHAIN_ROUND_MS; };
+module.exports._resetLogPrune = (v = 0) => { logPruneAt = v; };   /* 테스트 전용 */
