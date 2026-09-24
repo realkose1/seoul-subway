@@ -3883,10 +3883,11 @@ function deriveArrivals(name, posByLine) {
       if (pe == null && pst && pst.plan && pst.plan.some(f => f.kind === "dep" && f.stn === X && f.t < Date.now() - 15000)) continue;   /* 계획상 이미 X를 떠난 열차 */
       const eta = pe != null ? pe : (away === 0 ? (st === "1" ? 0 : 25)
         : Math.max(0, away * SEC_PER_STATION - (st === "0" ? 90 : st === "2" ? 45 : 0) - aged));
-      const pk = st !== "2" ? trainParked(ln, t.trainNo) : null;   /* 운행 대기(출발 시각 미정) — 경로 대기 시간 추정에서 뺀다 */
+      const pk = st !== "2" ? trainParked(ln, t.trainNo) : null;   /* 출발 대기(시발역일 수 있음) — 경로 대기 시간 추정에서 뺀다 */
+      const isParked = !!(pk && pk.stn === cur);
       out.push({ line: ln, color: LINES[ln].color, updn: dirLabelLine(ln, t), dest: t.statnTnm,
         express: isExpress(t), btrainNo: t.trainNo, away, etaSec: Math.round(eta), curStn: t.statnNm, measured: false,
-        parked: !!(pk && pk.stn === cur) });
+        parked: isParked, dwellMin: isParked ? Math.floor(pk.durMs / 60000) : null });
     }
   }
   return out;
@@ -3943,12 +3944,13 @@ async function loadArrivals(name, force) {
   return dedupArrivals(items);
 }
 function arrivalItemRowHtml(it, elapsed) {
-  /* 운행 대기(같은 역에 8분 넘게 서 있는 열차): '지금 도착'·카운트다운이 아니라 흐린 '운행 대기' — 곧 탈 열차가 아니다 */
+  /* 운행 대기(같은 역에 8분 넘게 서 있는 열차): '지금 도착'·카운트다운이 아니라 흐린 '출발 대기' —
+     시발역일 수 있어 곧 탈 열차일 수도 있다. 실제 도착 뒤에, 흐리게 표시 */
   if (it.parked) return `<div class="sc-row parked">
       <span class="sc-dot" style="background:${it.color}"></span>
       <div class="sc-main">
-        <div class="sc-eta">운행 대기</div>
-        <div class="sc-sub">${it.line ? it.line + " · " : ""}${it.dest}행 · ${it.curStn || ""} 정차 · 출발 시각 미정</div>
+        <div class="sc-eta">출발 대기</div>
+        <div class="sc-sub">${it.line ? it.line + " · " : ""}${it.dest}행 · ${it.curStn || ""}에서 출발 대기${it.dwellMin != null ? ` · ${it.dwellMin}분째` : ""}</div>
       </div>
     </div>`;
   const sec = Math.max(0, Math.round(it.etaSec - elapsed));
@@ -4719,6 +4721,7 @@ async function findBoardCandidates(legIdx) {
   for (const t of list) {
     const cur = resolve(t.statnNm), term = resolve(t.statnTnm);
     if (!cur || !term || !t.trainNo) continue;
+    if (cur === term) continue;   /* 이미 종착역에 도착해 서 있는 열차 — 더 갈 수 없어 후보가 아니다 */
     const es = expressStops(seg.line, t);
     if (es && !es.has(resolve(seg.to))) continue;   /* 이 급행은 내릴 역(환승/도착)을 통과한다 → 타면 안 됨 */
     const idx = sts.indexOf(cur);
@@ -4732,14 +4735,14 @@ async function findBoardCandidates(legIdx) {
     /* 출발역(또는 그 앞 역)에서 3분 넘게 '도착' 상태로 서 있는 열차 = 출발 대기(언제 떠날지 모름).
        비슷한 시각에 오는 움직이는 열차보다 뒤에 두고(ETA +5분 취급), 승강장 도착 알림·자동 선택 대상에서 뺀다 */
     const dwMs = st === "1" && rel <= 0 ? trainDwellMs(t.trainNo, cur) : 0;
-    /* 운행 대기(같은 역에 8분 넘게 — 앱을 켜기 전 이력 포함): 사실상 운행하지 않는 열차. 다른 열차가 있으면 목록에서 빼고,
-       이것뿐이면 맨 뒤에 '운행 대기(출발 시각 미정)'로만 보인다. 자동 선택하지 않는다 */
+    /* 운행 대기(같은 역에 8분 넘게 — 앱을 켜기 전 이력 포함): 그 역이 시발역이면 진짜 다음 출발일 수 있어
+       목록에서 빼지 않는다 — 대신 맨 뒤로 정렬하고 '{역}에서 출발 대기 · N분째'로 표시. 자동 선택하지 않는다 */
     const pk = st !== "2" ? trainParked(seg.line, t.trainNo) : null;
     const parked = !!(pk && pk.stn === cur);
     const dwelling = parked || dwMs >= DWELL_LONG_MS;
     if (parked) {
       etaMin = null; score = 9 + Math.abs(rel) * 0.001;
-      short = "운행 대기(출발 시각 미정)"; status = `${cur}에서 운행 대기(출발 시각 미정) · ${Math.floor(pk.durMs / 60000)}분째`;
+      short = "출발 대기"; status = `${cur}에서 출발 대기 · ${Math.floor(pk.durMs / 60000)}분째`;
     }
     else if (dwelling) {
       const away = -rel; etaMin = away ? Math.max(1, Math.round(away * SEC_PER_STATION / 60)) : 0;
@@ -4752,8 +4755,9 @@ async function findBoardCandidates(legIdx) {
                express: isExpress(t), pos: idx + off(st), away: Math.max(0, O - idx), term: t.statnTnm, updn: t.updnLine });
   }
   out.sort((a, b) => a.score - b.score);
-  /* 운행 대기 열차는 다른 후보가 하나라도 있으면 빼고, 그것뿐일 때만 맨 뒤에 남긴다 */
-  return out.some(r => !r.parked) ? out.filter(r => !r.parked) : out;
+  /* 출발 대기(운행 대기) 열차도 목록에서 빼지 않는다 — 그 역이 시발역인 경우 진짜 다음 출발일 수 있다.
+     점수가 높아(9+) 움직이는·다가오는 열차 뒤로 정렬될 뿐, 자동 선택 대상에서만 제외한다(아래 refreshPickList) */
+  return out;
 }
 /* 탈 열차 선택 시작 — 카드에 근처 열차 목록을 띄우고 8초마다 갱신. 고르면 tripBoard로 추적 시작 */
 function startPick(legIdx, isTransfer) {
@@ -4761,7 +4765,7 @@ function startPick(legIdx, isTransfer) {
   trip.pick = { legIdx, transfer: !!isTransfer, rows: [], loaded: false, dismissed: false, strip: pickStripMeta(legIdx) };
   renderRoute(); if (NATIVE) postCard();
   const seg = trip.result.segments[legIdx];
-  histEnsure(seg && seg.line).finally(refreshPickList);   /* 서버 이력을 먼저 받아 운행 대기 열차를 첫 목록부터 거른다 */
+  histEnsure(seg && seg.line).finally(refreshPickList);   /* 서버 이력을 먼저 받아 첫 목록부터 출발 대기 열차를 알아본다 */
 }
 /* 탄 열차 다시 고르기(추적 중): 기존 추적은 유지한 채 열차 현재 역을 가운데로 띠를 다시 연다. 고르면 교체, 취소하면 그대로 */
 function tripRepick() {
