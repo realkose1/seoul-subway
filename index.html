@@ -332,6 +332,12 @@
   .route-go:active { background: #e6e8ea; }
   .route-search { width: 100%; padding: 11px 13px; border-radius: 11px; border: 1px solid var(--border); background: rgba(255,255,255,.05); color: var(--text); font-family: var(--font); font-size: 14px; box-sizing: border-box; }
   .route-search::placeholder { color: var(--faint-text); }
+  .route-favs { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 8px; padding-bottom: 2px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .route-favs::-webkit-scrollbar { display: none; }
+  .route-fav { color: var(--text); border-color: rgba(255,255,255,.14); background: rgba(255,255,255,.05); }
+  .route-fav:active { background: rgba(255,255,255,.12); }
+  .route-fav .star { color: #FBBF24; font-size: 12px; line-height: 1; }
+  .route-fav .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex: none; margin-left: -2px; }
   .route-hint { font-size: 11.5px; color: var(--faint-text); padding: 8px 2px 4px; text-align: center; }
   .route-opts { max-height: 34vh; overflow-y: auto; margin-bottom: 8px; }
   .route-opts:empty { display: none; }
@@ -3425,6 +3431,7 @@ function postCard() {
       window.webkit.messageHandlers.ui.postMessage({
         type: "card", mode: "route", open: true,
         routeMode, from: routeFrom, to: routeTo,
+        favs: routeMode === "select" ? routeFavs().map(f => ({ name: f.name, lines: f.lines.join(" · "), colors: f.colors })) : [],
         results: routeMode === "select" ? routeSearchResults.map(n => ({ name: n, lines: [...STATION_LINES[n]].sort((a, b) => lineSortKey(a) - lineSortKey(b)).join(" · ") })) : [],
         tabs: routeHasAlts() ? [
           { key: "fast", label: "최단시간", total: routeAlts.fast.totalMin, transfers: routeAlts.fast.transfers, on: routeTab === "fast" },
@@ -4354,11 +4361,16 @@ function renderRoute() {
     /* 결과가 입력창 "위"로 쌓이는 순서 — 카드가 하단 고정이라 입력창은 제자리에 머물고
        결과 목록만 위로 자란다(타이핑 중 입력창이 흔들리지 않음). 목록은 최신순 위 정렬을 위해
        column-reverse가 아니라, 아래(입력창)에 가까운 항목이 1순위가 되도록 렌더에서 뒤집는다. */
+    const favs = routeFavs();
+    const favsHtml = favs.length ? `<div class="route-favs" id="routeFavs">${favs.map(f =>
+      `<button class="chip route-fav" data-name="${f.name}" aria-label="즐겨찾기 ${f.name}, 도착역으로 선택"><span class="star" aria-hidden="true">&#9733;</span><span>${f.name}</span>${f.colors.map(c => `<i class="dot" style="background:${c}" aria-hidden="true"></i>`).join("")}</button>`).join("")}</div>` : "";
     body.innerHTML = `<button class="route-back" id="routeBack">← ${routeFrom}에서 출발</button>
       <div class="route-opts" id="routeOpts"></div>
+      ${favsHtml}
       <input class="route-search" id="routeSearch" type="search" inputmode="search" placeholder="도착역 이름 검색" autocomplete="off">
       <div class="route-hint">또는 지도에서 역을 탭하세요</div>`;
     document.getElementById("routeBack").addEventListener("click", () => { haptic(); exitRoute(); });
+    document.querySelectorAll("#routeFavs .route-fav").forEach(el => el.addEventListener("click", () => { haptic(); pickDest(el.dataset.name); }));
     const inp = document.getElementById("routeSearch");
     inp.addEventListener("input", () => routeSearchInput(inp.value));
     setTimeout(() => { try { inp.focus(); } catch (e) {} }, 60);
@@ -4465,6 +4477,19 @@ function renderRoute() {
     });
     return;
   }
+}
+/* 도착역 선택 화면용 즐겨찾기: 설정 순서 유지, 출발역 제외, 역명 기준 중복 병합, 최대 8개 */
+function routeFavs() {
+  const out = [], seen = new Set();
+  for (const raw of favList()) {
+    const name = STATION_LINES[raw] ? raw : (resolve(raw) && STATION_LINES[resolve(raw)] ? resolve(raw) : null);
+    if (!name || name === routeFrom || seen.has(name)) continue;
+    seen.add(name);
+    const lines = [...STATION_LINES[name]].sort((a, b) => lineSortKey(a) - lineSortKey(b));
+    out.push({ name, lines, colors: lines.slice(0, 4).map(l => (LINES[l] && LINES[l].color) || EXTRA_LINE_COLOR[l] || "#8a8d93") });
+    if (out.length >= 8) break;
+  }
+  return out;
 }
 function routeSearchInput(q) {
   q = (q || "").trim();
