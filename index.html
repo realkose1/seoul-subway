@@ -1579,13 +1579,8 @@ const naverAdapter = {
     /* 역 dot 탭 → 도착 카드 열기(마커 클릭이 지도 click을 가로채므로 직접 onMapClick 위임) */
     naver.maps.Event.addListener(m, "click", () => onMapClick([pos[0], pos[1]]));
     this.stations.push(m);
-    if (noLabel) return;
-    const lbl = new naver.maps.Marker({
-      map: this.labelsOn ? this.map : null, position: ll, clickable: false,
-      icon: { content: `<div class="stn-label-light">${name}</div>`, anchor: new naver.maps.Point(0, 0) },
-      zIndex: 2
-    });
-    this.labels.push(lbl);
+    // 네이버 지도는 역 이름을 이미 표시하므로 우리 이름표는 생략
+    return;
   },
   /* 줌 이벤트가 연속 발생(핀치)해도 프레임당 1회만 dot/라벨 표시 전환을 확인 — 상태가 안 바뀌면 syncLabels가 O(1)로 끝남 */
   requestSync() {
