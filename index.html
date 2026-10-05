@@ -3361,6 +3361,8 @@ if (NATIVE) {
         renderRoute(); postTrip(); postCard();
       } catch (e) {}
     },
+    /* 재로드·재실행 뒤 복원한 주행이 이미 끝나 있었다(서버가 라이브 액티비티를 '도착'으로 갱신) → 도착 처리 + 완료 팝업 */
+    tripArrived: () => { try { if (trip && !trip.completed) tripComplete("server"); } catch (e) {} },
     settingsPanel: {
       selectMap: prov => { const b = document.querySelector('#mapSeg button[data-prov="' + prov + '"]'); if (b) b.click(); },
       favTap: name => { const el = document.querySelector('.fav-row[data-name="' + CSS.escape(name) + '"]'); if (el) el.click(); },
@@ -3818,6 +3820,67 @@ let routeAlts = { fast: null, min: null }, routeTab = "fast";
 /* 주행(trip) 모드: "지금 출발하기"를 누른 뒤 목적지까지 실시간 안내.
    { from, to, result, startedAt, lines:Set(경로 노선), stations:Set(경로 역), legIdx } */
 let trip = null;
+/* ── 주행 안내 보존 ──
+   앱이 백그라운드에 있는 동안 iOS가 웹 콘텐츠 프로세스(또는 앱 전체)를 죽이면, 복귀 때 페이지가 새로 로드되어
+   메모리에만 있던 trip이 사라졌다(알림·라이브 액티비티를 눌러 들어오면 안내가 초기화된 지도만 보이던 버그).
+   의미 있는 변화(시작·승차·구간·열차 교체·선택)마다 localStorage 'activeTrip'에 최소 상태를 남기고,
+   부팅 때 아직 유효하면(3시간 이내 저장 + 도착 예정 + 15분 이전) 같은 경로로 안내를 다시 이어간다.
+   안내 종료(endTrip: X·안내 종료·도착 완료) 때 지운다. */
+const TRIP_LS = "activeTrip", TRIP_MAX_AGE_MS = 3 * 3600 * 1000, TRIP_END_GRACE_MS = 15 * 60000, TRIP_SAVE_EVERY_MS = 30000;
+let tripSavedKey = "", tripSavedAt = 0;
+function tripPersistKey() {
+  const tr = trip.track, pk = trip.pick && !trip.pick.repick ? trip.pick : null;
+  return [trip.baseLeg, trip.boardAt, trip.trackLost ? 1 : 0, tr ? tr.no : "", tr ? tr.legIdx : "", tr ? tr.cur : "", tr ? tr.sttus : "",
+          pk ? pk.legIdx : "", pk ? (pk.dismissed ? 1 : 0) : "", pk ? (pk.autoFrom || 0) : ""].join("|");
+}
+/* force=false면 상태가 바뀌었거나 30초가 지났을 때만 쓴다(tripTick이 매초 부른다) */
+function tripPersist(force) {
+  if (!trip || trip.completed || trip.arrived) return;
+  try {
+    const key = tripPersistKey(), now = Date.now();
+    if (!force && key === tripSavedKey && now - tripSavedAt < TRIP_SAVE_EVERY_MS) return;
+    let remain = null;
+    try { const p = tripProgress(); remain = p ? p.remain : null; } catch (e) {}
+    const pk = trip.pick && !trip.pick.repick ? trip.pick : null;
+    const o = {
+      v: 1, savedAt: now, from: trip.from, to: trip.to, mode: routeTab, result: trip.result,
+      routeFrom: routeFrom || trip.from, routeTo: routeTo || trip.to,
+      startedAt: trip.startedAt, baseLeg: trip.baseLeg || 0, boardAt: trip.boardAt, waitKnown: !!trip.waitKnown,
+      track: trip.track ? Object.assign({}, trip.track) : null, trackLost: !!trip.trackLost,
+      alightNotifiedLeg: trip.alightNotifiedLeg, pick: pk ? { legIdx: pk.legIdx, transfer: !!pk.transfer, autoFrom: pk.autoFrom || 0, dismissed: !!pk.dismissed } : null,
+      estEnd: now + (remain == null ? (trip.result.totalMin || 0) : remain) * 60000,   /* 도착 예정(ms) — 복원 유효성 판단 */
+      completed: false,
+    };
+    localStorage.setItem(TRIP_LS, JSON.stringify(o));
+    tripSavedKey = key; tripSavedAt = now;
+  } catch (e) {}
+}
+function tripPersistClear() {
+  tripSavedKey = ""; tripSavedAt = 0;
+  try { localStorage.removeItem(TRIP_LS); } catch (e) {}
+}
+/* 저장된 주행을 읽어 유효하면 반환, 낡았거나 깨졌으면 지우고 null */
+function tripLoadSaved(now) {
+  now = now || Date.now();
+  let o = null;
+  try { o = JSON.parse(localStorage.getItem(TRIP_LS) || "null"); } catch (e) { o = null; }
+  if (!o) return null;
+  const segs = o.result && o.result.segments;
+  const ok = o.v === 1 && !o.completed && o.from && o.to && Array.isArray(segs) && segs.length > 0
+    && segs.every(s => s && s.line && Array.isArray(s.stations) && s.stations.length > 1 && s.from && s.to)
+    && typeof o.savedAt === "number" && now - o.savedAt <= TRIP_MAX_AGE_MS
+    && !(typeof o.estEnd === "number" && now > o.estEnd + TRIP_END_GRACE_MS);
+  if (!ok) { tripPersistClear(); return null; }
+  return o;
+}
+/* 부팅 시 동기로 판정 — 복원할 주행이 있으면 위치 기반 '가장 가까운 역' 자동 카드 열기를 막는다
+   (자동 카드가 먼저 열려 도착 정보로 안내 카드를 덮어쓰지 않게) */
+let tripRestorePending = !!tripLoadSaved();
+if (tripRestorePending) {
+  favAutoSuppressed = true;
+  /* 네이티브에 '곧 주행을 복원한다'를 먼저 알린다 — 지도 로드가 늦어도 라이브 액티비티·하차 알림을 정리하지 않고 기다리게 */
+  if (NATIVE) { try { window.webkit.messageHandlers.ui.postMessage({ type: "tripRestoring" }); } catch (e) {} }
+}
 function lineNameOfArrival(a) { return SUBWAY_ID[Number(a.subwayId)] || ""; }
 function colorOfArrival(a) {
   const nm = lineNameOfArrival(a);
@@ -4519,21 +4582,37 @@ function pickDest(name) {
   renderRoute();
 }
 /* ── 주행(trip) 모드: 지금 출발하기 → 목적지까지 실시간 안내 ── */
-function startTrip() {
-  if (!routeResult) return;
+/* saved: 재로드·콜드 스타트 뒤 복원(tripRestoreSaved) — 경로를 다시 계산하지 않고 저장된 결과·출발 시각·추적 상태를 그대로 쓴다 */
+function startTrip(saved) {
+  const res = saved ? saved.result : routeResult;
+  if (!res) return;
   const lines = new Set(), stations = new Set();
-  for (const s of routeResult.segments) { lines.add(s.line); for (const st of s.stations) stations.add(st); }
-  /* 실제 남은 시간 = (다음 열차가 출발역을 떠날 때까지 대기) + (승차 후 이동시간).
-     한 정거장이라고 무조건 2분이 아니라, 지금 들어올 차가 없으면 그 차를 기다리는 시간부터 센다. */
-  const waitSec = routeNextWaitSec();
-  trip = {
-    from: routeFrom, to: routeTo, result: routeResult, startedAt: Date.now(),
-    boardAt: Date.now() + (waitSec == null ? 0 : waitSec * 1000),   /* 승차(=출발) 예정 시각 */
-    waitKnown: waitSec != null,
-    lines, stations, legIdx: 0,
-    baseLeg: 0, track: null, pick: null, trackLost: false, arrived: false, alightNotifiedLeg: -1,   /* 탄 열차 추적 상태 */
-    completed: false,             /* 도착 완료 처리(tripComplete)는 주행당 한 번만 */
-  };
+  for (const s of res.segments) { lines.add(s.line); for (const st of s.stations) stations.add(st); }
+  if (saved) {
+    const nSeg = res.segments.length;
+    const baseLeg = Math.min(nSeg - 1, Math.max(0, Number(saved.baseLeg) || 0));
+    const tk = saved.track && saved.track.no && res.segments[saved.track.legIdx] ? Object.assign({}, saved.track) : null;
+    trip = {
+      from: saved.from, to: saved.to, result: res, startedAt: saved.startedAt || saved.savedAt || Date.now(),
+      boardAt: Number(saved.boardAt) || Date.now(), waitKnown: !!saved.waitKnown,
+      lines, stations, legIdx: 0,
+      baseLeg, track: tk, pick: null, trackLost: !!saved.trackLost, arrived: false,
+      alightNotifiedLeg: Number.isInteger(saved.alightNotifiedLeg) ? saved.alightNotifiedLeg : -1,
+      completed: false, restoredAt: Date.now(),
+    };
+  } else {
+    /* 실제 남은 시간 = (다음 열차가 출발역을 떠날 때까지 대기) + (승차 후 이동시간).
+       한 정거장이라고 무조건 2분이 아니라, 지금 들어올 차가 없으면 그 차를 기다리는 시간부터 센다. */
+    const waitSec = routeNextWaitSec();
+    trip = {
+      from: routeFrom, to: routeTo, result: routeResult, startedAt: Date.now(),
+      boardAt: Date.now() + (waitSec == null ? 0 : waitSec * 1000),   /* 승차(=출발) 예정 시각 */
+      waitKnown: waitSec != null,
+      lines, stations, legIdx: 0,
+      baseLeg: 0, track: null, pick: null, trackLost: false, arrived: false, alightNotifiedLeg: -1,   /* 탄 열차 추적 상태 */
+      completed: false,             /* 도착 완료 처리(tripComplete)는 주행당 한 번만 */
+    };
+  }
   routeMode = "trip";
   drawTripRoute();              /* 지도엔 경로 구간만 강조(열차 필터는 tripTrainVisible) */
   renderTrains();               /* 무관한 열차 즉시 정리 */
@@ -4546,7 +4625,40 @@ function startTrip() {
   startTripGlide();             /* 탄 열차를 계속 따라가기 */
   if (!tripTimer) tripTimer = setInterval(tripTick, 1000);
   startTrackPoll();             /* 탄 열차 위치 폴링(8초) */
-  startPick(0, false);          /* 근처 열차 목록에서 탈 열차 선택 */
+  if (!saved) startPick(0, false);   /* 근처 열차 목록에서 탈 열차 선택 */
+  else if (trip.track) {
+    /* 탄 열차를 다시 관측 — 마지막 저장 이후 공백을 알려 서버 이력부터 합치게(pollTrackedTrain의 gap 판정) */
+    trackPollAt = Math.min(Date.now() - 60000, Number(saved.savedAt) || 0) || (Date.now() - 60000);
+    pollTrackedTrain();
+  } else if (saved.pick && res.segments[saved.pick.legIdx]) {
+    startPick(saved.pick.legIdx, !!saved.pick.transfer);
+    if (trip.pick) { trip.pick.autoFrom = Number(saved.pick.autoFrom) || 0; trip.pick.dismissed = !!saved.pick.dismissed; }
+  }
+  tripPersist(true);
+}
+/* 부팅 때 저장된 주행이 있으면 안내 카드를 다시 연다(지도 준비 뒤). 경로는 다시 계산하지 않는다 */
+function tripRestoreSaved() {
+  if (!tripRestorePending) return false;
+  tripRestorePending = false;
+  const o = tripLoadSaved();
+  if (!o || trip) return false;
+  try {
+    routeFrom = o.routeFrom || o.from; routeTo = o.routeTo || o.to;
+    routeTab = o.mode === "min" ? "min" : "fast";
+    routeAlts = routeTab === "min" ? { fast: null, min: o.result } : { fast: o.result, min: null };
+    routeResult = o.result;
+    scStation = o.from; scMode = "arrival"; scTimetable = null; scLineFilter = null; autoFavOpened = null;
+    stopScTimer();
+    favAutoSuppressed = true;   /* 안내 도중 '가장 가까운 역' 카드가 끼어들지 않게 */
+    document.getElementById("stationCard").classList.add("open");
+    try { syncFavBtn(); } catch (e) {}
+    startTrip(o);
+    if (NATIVE) postCard();
+    return true;
+  } catch (e) {
+    tripPersistClear();
+    return false;
+  }
 }
 /* 주행 중 내 위치 추적: 위치를 주기적으로 갱신하고 지도를 내 위치 중심으로 유지.
    사용자가 지도를 직접 조작하면(markInteracting) 잠시 따라가기를 멈춰 방해하지 않는다. */
@@ -4713,6 +4825,7 @@ function followTrackedTrain() {
 function endTrip() {
   stopFollow();
   trip = null;
+  tripPersistClear();           /* 안내가 끝났다 — 재로드·재실행 때 되살리지 않는다 */
   routeMode = routeResult ? "result" : null;
   clearInterval(tripTimer); tripTimer = null;
   stopTrackPoll();
@@ -5083,6 +5196,7 @@ function tripBoard(no, legIdx) {
   trip.baseLeg = legIdx;   /* 시간 기준 폴백의 기준 구간 (boardAt은 위에서 대기 포함으로 설정) */
   haptic("medium");
   renderRoute(); postTrip(); if (NATIVE) postCard();
+  tripPersist(true);
   pollTrackedTrain();
 }
 /* 추적 중인 열차가 구간 끝(환승역/목적지)에 도착했을 때의 전환 — 폴러와 네이티브 백그라운드 이벤트가 공유 */
@@ -5100,6 +5214,7 @@ function tripLegReached(legIdx) {
     startPick(nextLeg, true);
     /* 사용자가 고르지 않아도, 환승 도보 시간이 지난 뒤 승강장에 있는 가장 빠른 열차로 자동 선택해 추적을 잇는다 */
     if (trip.pick) trip.pick.autoFrom = Date.now() + TRIP_AUTO_BOARD_MS;
+    tripPersist(true);
   }
 }
 /* 목적지 도착 처리의 단일 경로 — 주행 1회당 정확히 한 번만 실행된다.
@@ -5108,6 +5223,7 @@ function tripLegReached(legIdx) {
 function tripComplete(reason) {
   if (!trip || trip.completed) return;   /* 재진입 방지 */
   trip.completed = true;
+  tripPersistClear();
   const summary = {
     from: trip.from, to: trip.to,
     elapsedMin: Math.max(0, Math.round((Date.now() - (trip.startedAt || Date.now())) / 60000)),
@@ -5228,14 +5344,21 @@ async function pollTrackedTrain() {
       if (gap) await histSyncFromServer(tr.line);
       try { const d = await fetchPosition(tr.line, true); list = (d && d.realtimePositionList) || []; } catch (e) {}
       if (!trip || trip.track !== tr) return;
+      let passedEnd = false;
       if (list) {
         observeFeedList(list, tr.line);   /* 같은 역 연속 기록(출발 대기) 관측 + 노선 이력 */
         const t = pickTrain(list, tr.no, tr.line);
         if (t) {
           const cur = resolve(t.statnNm);
+          const legSts = (trip.result.segments[tr.legIdx] || {}).stations || [];
+          const wasOnLeg = !!tr.cur && legSts.indexOf(tr.cur) >= 0;
           if (cur) { tr.cur = cur; tr.sttus = String(t.trainSttus); tr.seenAt = Date.now(); if (!tr.dest) tr.dest = t.statnTnm; tr.term = t.statnTnm; tr.updn = t.updnLine; }
+          /* 자리를 비운 사이(백그라운드·재로드) 이미 구간 안에 있던 열차가 구간 밖으로 나갔다 = 구간 끝을 지나쳤다.
+             (열차는 되돌아가지 않으므로) '출발역 접근 중'으로 오인하지 않고 구간 도착으로 처리한다 */
+          if (gap && wasOnLeg && cur && legSts.indexOf(cur) < 0) passedEnd = true;
         }
       }
+      if (passedEnd) { tripLegReached(tr.legIdx); return; }
       /* 탄 열차가 역에 서 있는 동안 다른 열차가 떠났다 → 그 열차로 바꾸고 이번 폴링은 여기까지(다음 폴링이 새 열차를 따라간다) */
       if (tripAutoSwitch(list)) return;
       await pinTrackedArrival(tr);   /* 다음 역 도착 카운트다운으로 마커·남은 시간 실측 보정 */
@@ -5280,6 +5403,7 @@ function tripSwitchTrain(sw, list) {
   if (!NATIVE) toast(trip.autoNote);
   try { renderTrains(); } catch (e) {}   /* 새 열차의 운행 계획을 구간 끝까지(추적 열차 기준)로 다시 만든다 */
   renderRoute(); postTrip(); if (NATIVE) postCard();
+  tripPersist(true);
 }
 function tripTick() {
   if (!trip) { clearInterval(tripTimer); tripTimer = null; return; }
@@ -5291,6 +5415,7 @@ function tripTick() {
   renderRoute();
   postTrip();
   postCard();   /* 네이티브 카드의 남은 시간도 매초 갱신 */
+  tripPersist();   /* 바뀐 게 있거나 30초마다 — 웹뷰가 언제 죽어도 마지막 상태로 복원되게 */
 }
 /* 경로 구간을 지도에 굵게 강조 */
 function drawTripRoute() {
@@ -5743,7 +5868,7 @@ let lastUserAct = Date.now(), lastLiveFetch = 0;
 
 /* 백그라운드 탭에서는 호출을 멈춰 일일 한도를 아낀다 */
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) { clearInterval(state.timer); histSave(true); }   /* 이력은 앱이 멈추기 전에 남긴다(다음 실행이 운행 대기를 바로 안다) */
+  if (document.hidden) { clearInterval(state.timer); histSave(true); tripPersist(true); }   /* 주행 상태도 — 백그라운드에서 프로세스가 죽어도 복원되게 */   /* 이력은 앱이 멈추기 전에 남긴다(다음 실행이 운행 대기를 바로 안다) */
   else {
     refresh(true); restartTimer();
     /* 복귀: 백그라운드 동안 서버가 본 열차 움직임을 합치고 곧바로 추적 열차를 다시 본다(서버가 바꾼 열차도 같은 규칙으로 따라잡는다) */
@@ -5825,6 +5950,13 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
   syncProviderSeg();
   /* 자동 역 카드는 locateUser가 위치를 잡은 뒤 openNearestStationCard로 연다(위치 없으면 안 엶) */
 })();
+/* 재로드·콜드 스타트 전에 진행 중이던 경로 안내가 있으면 이어간다 — 지도 준비 뒤(최대 20초 대기 후엔 지도 없이라도).
+   위 시작 블록과 분리: 지도 초기화 중 예외가 나도 안내 복원은 따로 진행된다 */
+if (tripRestorePending) {
+  const t0 = Date.now();
+  const go = () => { if ((adapter && adapter.map) || Date.now() - t0 > 20000) tripRestoreSaved(); else setTimeout(go, 200); };
+  setTimeout(go, 0);
+}
 
 /* 모바일: 현재 위치를 얻어 지도 중심 이동 (수도권 내일 때만) */
 state.userPos = null;
