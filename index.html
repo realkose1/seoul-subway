@@ -1539,7 +1539,7 @@ const naverAdapter = {
       backgroundColor: "#141518", anchorSize: new naver.maps.Size(10, 10),
       anchorColor: "#141518", pixelOffset: new naver.maps.Point(0, -8)
     });
-    naver.maps.Event.addListener(this.map, "zoom_changed", () => { this.syncLabels(); scheduleReIcon(); markInteracting(); });
+    naver.maps.Event.addListener(this.map, "zoom_changed", () => { this.requestSync(); scheduleReIcon(); markInteracting(); });
     naver.maps.Event.addListener(this.map, "click", e => onMapClick([e.coord.lat(), e.coord.lng()]));
     naver.maps.Event.addListener(this.map, "dragstart", () => { stopFollow(); setLocate(false); });   /* 지도를 움직이면 현재위치 토글 해제 */
     naver.maps.Event.once(this.map, "tilesloaded", postReady);   /* 첫 타일 그려짐 → 스플래시 해제 */
@@ -1586,6 +1586,11 @@ const naverAdapter = {
       zIndex: 2
     });
     this.labels.push(lbl);
+  },
+  /* 줌 이벤트가 연속 발생(핀치)해도 프레임당 1회만 dot/라벨 표시 전환을 확인 — 상태가 안 바뀌면 syncLabels가 O(1)로 끝남 */
+  requestSync() {
+    if (this._syncRaf) return;
+    this._syncRaf = requestAnimationFrame(() => { this._syncRaf = 0; this.syncLabels(); });
   },
   syncLabels(force) {
     if (!this.map) return;
@@ -2307,9 +2312,9 @@ function drawLine(lineName) {
     for (const [nm, def] of Object.entries(LINES)) {
       for (const seg of def.segments) {
         adapter.addPolyline(smoothSeg(nm, seg), def.color);
-        /* 기본·애플 지도는 베이스맵에 역 표시가 없으므로 전체 보기에도 역 dot/이름을 그린다(라벨은 줌으로 자동 노출) */
-        /* 도착역 선택 중엔 네이버에서도 우리 dot을 그린다(어느 역이든 눈으로 보고 탭하도록) */
-        if (state.mapProvider === "basic" || state.mapProvider === "apple" || routeMode === "select") for (const n of seg) {
+        /* 모든 지도(네이버 포함)에서 전체 보기에도 역 dot/이름을 그린다 — 표시 여부는 어댑터가 줌(stationDotsVisible/LABEL_ZOOM)으로 결정하고,
+           숨김 상태의 마커는 map:null로 시작해 줌이 바뀔 때만 일괄 전환한다 */
+        for (const n of seg) {
           if (seenAll.has(nm + "|" + n) || !STN[n]) continue;
           seenAll.add(nm + "|" + n);
           addDot(n, stnOn(nm, n), false, def.color);
