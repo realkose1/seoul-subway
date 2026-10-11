@@ -450,8 +450,11 @@
   .pick-strip .ps-stn i { width: 13px; height: 13px; border-radius: 50%; background: var(--bg, #16181c); border: 3px solid var(--rl); box-sizing: border-box; }
   .pick-strip .ps-stn.here i { background: var(--rl); width: 15px; height: 15px; border-color: #fff; }
   .pick-strip .ps-stn.none { display: none; }
-  .pick-strip .ps-stn b { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+  /* 역 이름: 칸(--psw = 간격 − 8px) 안에서 가운데 정렬·최대 2줄 — 긴 영어 이름이 옆 역과 겹치지 않게 */
+  .pick-strip .ps-stn b { width: var(--psw, 100px); font-size: 12px; line-height: 1.25; color: var(--muted); font-weight: 600; text-align: center; white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
   .pick-strip .ps-stn.here b { color: var(--text); font-weight: 800; font-size: 13px; }
+  html[lang="en"] .pick-strip .ps-stn b { font-size: 11px; overflow-wrap: normal; }
+  html[lang="en"] .pick-strip .ps-stn.here b { font-size: 12px; }
   .pick-strip .ps-stn small { font-size: 10px; color: var(--faint-text); margin-top: -3px; }
   .pick-strip .ps-trains { position: absolute; inset: 0 0 auto 0; height: 108px; }
   .pick-strip .ps-train { position: absolute; bottom: calc(6px + var(--lane) * 46px); transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 5px 9px 4px; border-radius: 12px; border: 1.5px solid var(--rl); background: #1c1e24; color: var(--text); font-family: var(--font); font-size: 12px; font-weight: 800; white-space: nowrap; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,.35); }
@@ -4834,7 +4837,8 @@ function hideTripPill() {
   document.getElementById("stationCard").classList.remove("live");
 }
 /* 탈 열차 선택 — 출발역 앞뒤 3역 노선 띠(좌우 스크롤) 위에 열차를 위치대로 그려 눌러 고르게 */
-const PS_STEP = 108, PS_PAD = 56;
+/* 영어는 이름이 길어 간격을 넓히고(2줄 칸), 양 끝 이름이 스크롤 가장자리에서 잘리지 않게 여백 ≥ 칸 폭의 절반 */
+const PS_STEP = EN ? 124 : 108, PS_CELL = PS_STEP - 8, PS_PAD = Math.max(56, PS_CELL / 2 + 8);
 function psX(pos) { return PS_PAD + pos * PS_STEP; }
 function pickListHtml(pick) {
   const title = pick.repick ? tx("pickChange") : pick.transfer ? tx("pickTransfer") : tx("pickBoard");
@@ -4851,7 +4855,7 @@ function pickListHtml(pick) {
   const stations = sts.map((name, i) => `<div class="ps-stn${i === m.originIdx ? " here" : ""}${name ? "" : " none"}" style="left:${psX(i)}px"><i></i><b>${sn(name || "")}</b>${i === m.originIdx ? `<small>${pick.repick ? tx("psNow") : pick.transfer ? tx("psTransfer") : tx("psOrigin")}</small>` : ""}</div>`).join("");
   const empty = !pick.rows.length ? `<div class="ps-empty">${pick.loaded ? tx("pickNone") : tx("pickChecking")}</div>` : "";
   return `<div class="pick-head"><span>${title}</span><button class="pick-toggle" id="pickToggle">${pick.repick ? tx("cancel") : tx("later")}</button></div>
-    <div class="pick-scroll" id="pickScroll"><div class="pick-strip" style="width:${width}px;--rl:${m.color || "#888"}">
+    <div class="pick-scroll" id="pickScroll"><div class="pick-strip" style="width:${width}px;--psw:${PS_CELL}px;--rl:${m.color || "#888"}">
       <div class="ps-trains">${trains}</div>
       <div class="ps-track" style="left:${psX(first)}px;width:${Math.max(0, psX(last) - psX(first))}px"><span class="ps-arrow">›</span></div>
       ${stations}
