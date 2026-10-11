@@ -1992,11 +1992,17 @@ const basicAdapter = {
   },
   upsertTrain(no, pos, t, heading) {
     const len = trainSizePx(this.map);
-    const icon = L.divIcon({ className: "", iconSize: [len, len], iconAnchor: [len / 2, len / 2], html: trainPinHtml(t, heading, len) });
+    const html = trainPinHtml(t, heading, len);
     let m = this.markers.get(no);
-    if (m) { m.setIcon(icon); }
-    else {
+    if (m) {
+      /* setIcon은 아이콘 DOM을 통째로 새로 만든다 — 모양이 같으면 건너뛴다(위치는 moveTrain이 맞춘다) */
+      if (m._pinHtml === html) return;
+      m.setIcon(L.divIcon({ className: "", iconSize: [len, len], iconAnchor: [len / 2, len / 2], html }));
+      m._pinHtml = html;
+    } else {
+      const icon = L.divIcon({ className: "", iconSize: [len, len], iconAnchor: [len / 2, len / 2], html });
       m = L.marker(pos, { icon, zIndexOffset: 1000, interactive: false });
+      m._pinHtml = html;
       this.trainLayer.addLayer(m);
       this.markers.set(no, m);
     }
@@ -2131,16 +2137,19 @@ const naverAdapter = {
     if (labs !== this.labelsOn || force) { this.labelsOn = labs; for (const l of this.labels) l.setMap(labs ? this.map : null); }
   },
   upsertTrain(no, pos, t, heading) {
-    const ll = new naver.maps.LatLng(pos[0], pos[1]);
     const len = trainSizePx(this.map);
+    const html = trainPinHtml(t, heading, len);
     let m = this.markers.get(no);
     if (m) {
-      m.setIcon({ content: trainPinHtml(t, heading, len), anchor: new naver.maps.Point(len / 2, len / 2) });
+      if (m._pinHtml === html) return;   /* 모양이 같으면 아이콘 DOM 재생성 생략(위치는 moveTrain) */
+      m.setIcon({ content: html, anchor: new naver.maps.Point(len / 2, len / 2) });
+      m._pinHtml = html;
     } else {
       m = new naver.maps.Marker({
-        map: this.map, position: ll, clickable: false,
-        icon: { content: trainPinHtml(t, heading, len), anchor: new naver.maps.Point(len / 2, len / 2) }, zIndex: 100
+        map: this.map, position: new naver.maps.LatLng(pos[0], pos[1]), clickable: false,
+        icon: { content: html, anchor: new naver.maps.Point(len / 2, len / 2) }, zIndex: 100
       });
+      m._pinHtml = html;
       this.markers.set(no, m);
     }
   },
@@ -2208,7 +2217,10 @@ const appleAdapter = {
     return w;
   },
   _ann(pos, el, opts) {
-    const a = new mapkit.Annotation(new mapkit.Coordinate(pos[0], pos[1]), () => el, Object.assign({ animates: false, enabled: false }, opts || {}));
+    /* size 0×0 명시: _wrap 래퍼는 원래 0×0이라 MapKit이 재도 0×0(배치 동일 — 실측 확인). 크기를 안 주면 MapKit이 새 어노테이션마다
+       요소를 재느라 강제 레이아웃을 돌리는데, 전체 보기(어노테이션 1,600개+, DOM 7천 개+)에선 WebKit에서 개당 30~60ms →
+       노선 그리기(역·이름표 1,197개) 한 번에 45~70초, 첫 열차 그리기 12~24초 동안 메인 스레드가 막혀 워치독 재로드 루프의 주원인이었다 */
+    const a = new mapkit.Annotation(new mapkit.Coordinate(pos[0], pos[1]), () => el, Object.assign({ animates: false, enabled: false, size: { width: 0, height: 0 } }, opts || {}));
     a._el = el; /* MapKit JS의 annotation.visible 세터는 팩토리 DOM에 반영되지 않아, 표시 토글은 el.style.display로 직접 */
     this.map.addAnnotation(a);
     return a;
@@ -2250,9 +2262,29 @@ const appleAdapter = {
      투영의 위도 압축(1/cos(lat))만큼 오차가 생겨, 서울 위도(~37.5°)에서 실제보다 더 축소되어
      보이고 터치 판정(mpp 기반) 반경도 실제보다 좁아진다(약 40px→32px). */
   _zoom() {
-    const w = (this.map && this.map.element && this.map.element.clientWidth) || window.innerWidth;
+    const w = this._size().w;
     const d = this.map.region.span.longitudeDelta || 0.0001;
     return Math.log2((w / 256) * 360 / d);
+  },
+  /* 지도 요소 크기(clientWidth/Height) 캐시 — 크기가 바뀔 때(ResizeObserver·resize)만 다시 읽는다.
+     실측(전체 보기, 열차 ~470대): getZoom()→_zoom()이 마커마다 clientWidth를 읽으면, 직전 마커 DOM 쓰기(innerHTML·좌표)
+     때문에 그때마다 문서 전체(역·이름표·열차 어노테이션 DOM 1만 개+)를 동기 레이아웃한다(강제 레이아웃 1~3ms × 수백 회).
+     → 갱신 한 번(renderTrains)이 0.6~0.9초, 노선 그리기(drawLine)가 수 초 메인 스레드를 막아 네이티브 워치독 핑이 시간 초과되고
+       재로드 루프가 났다. 크기 자체는 거의 안 바뀌므로 캐시해도 값은 같다(숨김이면 0 → 예전처럼 화면 크기로 대체) */
+  _size() {
+    const el = this.map && this.map.element;
+    if (!this._sizeOk || this._sizeEl !== el) {
+      this._sizeEl = el;
+      this._cw = (el && el.clientWidth) || 0; this._ch = (el && el.clientHeight) || 0;
+      this._sizeOk = true;
+      if (el && !this._ro && typeof ResizeObserver === "function") {
+        this._ro = new ResizeObserver(() => { const e = this._sizeEl; if (e) { this._cw = e.clientWidth || 0; this._ch = e.clientHeight || 0; } });
+        try { this._ro.observe(el); } catch (e) {}
+      }
+      if (!this._roWin) { this._roWin = true; window.addEventListener("resize", () => { this._sizeOk = false; }, { passive: true }); }
+      if (!this._ro) this._sizeOk = false;   /* ResizeObserver가 없으면 예전처럼 매번 읽는다 */
+    }
+    return { w: this._cw || window.innerWidth, h: this._ch || window.innerHeight };
   },
   init(center, zoom) {
     const el = document.getElementById("map-apple");
@@ -2313,7 +2345,10 @@ const appleAdapter = {
       stopFollow(); setLocate(false); beginInteract();            /* 사용자 조작으로 간주 */
     });
     this.map.addEventListener("region-change-end", () => {
-      if (!this._prog) endInteract();
+      /* 프로그램 이동(_prog) 중에 끝난 변경이라도 조작 상태는 풀어 준다 — 긴 작업으로 이벤트가 밀리면
+         start는 _prog가 풀린 뒤(사용자 조작으로 오인), end는 다음 setView의 _prog 중에 와서 mapInteracting이
+         true로 굳고 열차 애니메이션이 사용자가 지도를 만질 때까지 멈춰 있었다. endInteract는 200ms 뒤 해제만 하므로 무해 */
+      endInteract();
       const z = this._zoom();
       if (Math.abs(z - this._lastZoom) > 0.3) { this._lastZoom = z; this.syncLabels(); scheduleReIcon(); }
     });
@@ -2321,16 +2356,27 @@ const appleAdapter = {
        열차는 매 틱 좌표 갱신으로 살아나지만 정적인 역·라벨은 그대로 사라짐 → 준비 후 한 번 재부착 */
     setTimeout(() => this._resettle(), 1500);
     setTimeout(() => this._resettle(), 3500);
+    setTimeout(() => this._resettle(), 7000);   /* 유실분만 다시 붙이므로(평소 0개) 늦게 그려진 경우를 위해 한 번 더 확인 */
   },
   _resettle() {
     if (!this.map) return;
-    try {
-      const all = [...this.stations, ...this.labels, this.selPin, this.userMarker, ...this.markers.values()].filter(Boolean);
-      if (!all.length) return;
-      this.map.removeAnnotations(all);
-      this.map.addAnnotations(all);
-      this.syncLabels(true);
-    } catch (e) {}
+    /* 실제로 유실된(요소가 문서에 붙지 않은) 어노테이션만 다시 붙인다 — MapKit은 화면 밖·display:none 어노테이션도
+       요소를 붙여 두므로(실측) isConnected가 false면 아직 그려지지 않았거나 유실된 것. 전체 보기에선 1,600개+를 전부
+       떼었다 붙이는 데 WebKit에서 ~2~3초(제거 1.2초 + 추가 0.9초 + 재배치)가 걸려 그동안 터치·워치독 핑이 막혔다.
+       묶음별로 나눠 작업 사이에 메인 스레드를 돌려준다(묶음마다 떼기·붙이기는 같은 작업 안에서) */
+    const lost = a => a && !(a._el && a._el.isConnected);
+    const groups = [() => this.stations, () => this.labels, () => [this.selPin, this.userMarker, ...this.markers.values()]];
+    let i = 0;
+    const step = () => {
+      if (!this.map) return;
+      try {
+        const list = groups[i]().filter(lost);
+        if (list.length) { this.map.removeAnnotations(list); this.map.addAnnotations(list); }
+      } catch (e) {}
+      if (++i < groups.length) { setTimeout(step, 0); return; }
+      try { this.syncLabels(true); } catch (e) {}
+    };
+    step();
   },
   destroy() {
     if (this.map) { try { this.map.destroy(); } catch (e) {} this.map = null; }
@@ -2339,9 +2385,7 @@ const appleAdapter = {
   setView(c, z) {
     this._prog = true;
     try {
-      const el = this.map.element;
-      const w = (el && el.clientWidth) || window.innerWidth;
-      const h = (el && el.clientHeight) || window.innerHeight;
+      const { w, h } = this._size();   /* 캐시된 요소 크기 — 따라가기(주기 setView) 중 강제 레이아웃 방지 */
       const dLng = (w / 256) * 360 / Math.pow(2, z);
       /* 위도 방향은 경도 방향보다 메르카토르 투영에서 1/cos(lat) 배 압축되어 보이므로 보정 */
       const dLat = dLng * (h / w) * Math.cos(c[0] * Math.PI / 180);
@@ -2368,10 +2412,21 @@ const appleAdapter = {
       return { s: r.center.latitude - hs - dLat, n: r.center.latitude + hs + dLat, w: r.center.longitude - hw - dLng, e: r.center.longitude + hw + dLng };
     } catch (e) { return null; }
   },
+  /* 어노테이션 일괄 제거 — removeAnnotation을 하나씩 부르면 개당 ~2ms(전체 보기 역·이름표 1,200개 → 1.5초+)라
+     한 번에 넘긴다(측정: 1,197개 21ms). 실패하면 예전처럼 하나씩 */
+  _removeAnns(list) {
+    if (!list.length) return;
+    try { this.map.removeAnnotations(list); }
+    catch (e) { for (const a of list) { try { this.map.removeAnnotation(a); } catch (e2) {} } }
+  },
   clearLine() {
-    this.shapes.forEach(s => this.map.removeOverlay(s)); this.shapes = [];
-    this.stations.forEach(a => this.map.removeAnnotation(a)); this.stations = [];
-    this.labels.forEach(a => this.map.removeAnnotation(a)); this.labels = [];
+    if (this.shapes.length) {
+      try { this.map.removeOverlays(this.shapes); }
+      catch (e) { this.shapes.forEach(s => { try { this.map.removeOverlay(s); } catch (e2) {} }); }
+    }
+    this.shapes = [];
+    this._removeAnns(this.stations.concat(this.labels));
+    this.stations = []; this.labels = [];
   },
   addPolyline(pts, color) {
     const o = new mapkit.PolylineOverlay(pts.map(p => new mapkit.Coordinate(p[0], p[1])), {
@@ -2405,15 +2460,18 @@ const appleAdapter = {
   },
   upsertTrain(no, pos, t, heading) {
     const len = trainSizePx(this.map);
+    const html = trainPinHtml(t, heading, len);
     let el = this._els.get(no);
     if (el) {
-      el.firstElementChild.style.left = (-len / 2) + "px";
-      el.firstElementChild.style.top = (-len / 2) + "px";
-      el.firstElementChild.innerHTML = trainPinHtml(t, heading, len);
+      /* 모양(방향·크기·운행 대기)이 그대로면 DOM을 다시 쓰지 않는다 — 갱신마다 수백 개 innerHTML 교체는 스타일·레이아웃 재계산만 늘린다 */
+      const inner = el.firstElementChild;
+      if (el._len !== len) { inner.style.left = (-len / 2) + "px"; inner.style.top = (-len / 2) + "px"; el._len = len; }
+      if (el._html !== html) { inner.innerHTML = html; el._html = html; }
       const a = this.markers.get(no);
       if (a) a.coordinate = new mapkit.Coordinate(pos[0], pos[1]);
     } else {
-      el = this._wrap(trainPinHtml(t, heading, len), -len / 2, -len / 2);
+      el = this._wrap(html, -len / 2, -len / 2);
+      el._len = len; el._html = html;
       this._els.set(no, el);
       this.markers.set(no, this._ann(pos, el));
     }
@@ -2430,10 +2488,12 @@ const appleAdapter = {
     else this.userMarker = this._ann(pos, this._wrap('<div class="user-dot"></div>', -8, -8));
   },
   prune(seen) {
-    for (const [no, a] of this.markers) if (!seen.has(no)) { this.map.removeAnnotation(a); this.markers.delete(no); this._els.delete(no); }
+    const gone = [];
+    for (const [no, a] of this.markers) if (!seen.has(no)) { gone.push(a); this.markers.delete(no); this._els.delete(no); }
+    this._removeAnns(gone);
   },
   clearTrains() {
-    for (const a of this.markers.values()) this.map.removeAnnotation(a);
+    this._removeAnns([...this.markers.values()]);
     this.markers.clear(); this._els.clear();
   },
   focusTrain(no) {
@@ -3001,8 +3061,18 @@ function histObserveList(list, line) {
     h.at = Math.max(h.at || 0, now);
     touched.add(ln);
   }
-  for (const ln of touched) { histPrune(trainHist.get(ln), now); parkRegObserve(ln); histDirty.add(ln); }
-  histSave(false);
+  /* 노선마다 등록부를 저장(JSON 직렬화+localStorage)하지 않고 바뀐 경우 한 번만. 이력 저장(30초 주기)은 갱신 작업 밖(유휴 시간)으로 */
+  let regChanged = false;
+  for (const ln of touched) { histPrune(trainHist.get(ln), now); if (parkRegObserve(ln, true)) regChanged = true; histDirty.add(ln); }
+  if (regChanged) parkRegSave();
+  histSaveSoon();
+}
+let _histSaveQueued = false;
+function histSaveSoon() {
+  if (_histSaveQueued || Date.now() - histSavedAt < 30000) return;
+  _histSaveQueued = true;
+  const run = () => { _histSaveQueued = false; histSave(false); };
+  if (typeof requestIdleCallback === "function") requestIdleCallback(run, { timeout: 3000 }); else setTimeout(run, 0);
 }
 function histPrune(h, now) {
   if (!h || !h.trains) return h;
@@ -3138,12 +3208,15 @@ function parkRegMerge(dst, src) {
   if (!Array.isArray(src) && src) dst.at = Math.max(Number(dst.at) || 0, Number(src.at) || 0);
   return dst;
 }
-/* 노선 이력이 바뀐 뒤: 등록부 갱신 + 등록부의 정차 시작 시각을 이력에 되돌려 쓴다 */
-function parkRegObserve(line) {
-  const h = trainHist.get(line); if (!h) return;
+/* 노선 이력이 바뀐 뒤: 등록부 갱신 + 등록부의 정차 시작 시각을 이력에 되돌려 쓴다.
+   deferSave: 저장은 부른 쪽이 한 번에(여러 노선을 연달아 볼 때) — 반환값 = 등록부가 바뀌었는가 */
+function parkRegObserve(line, deferSave) {
+  const h = trainHist.get(line); if (!h) return false;
   const reg = parkRegOf(), now = Date.now();
   const pruned = parkRegPrune(reg, now);
-  if (parkRegUpdate(reg, line, h, now) || pruned) parkRegSave();
+  const changed = parkRegUpdate(reg, line, h, now) || pruned;
+  if (changed && !deferSave) parkRegSave();
+  return changed;
 }
 /* 탄 열차 자동 교체 판정 — 서버 findSwitch 와 같은 규칙(같은 피드면 같은 결론):
    추적 열차가 구간 X역(출발역~하차역 직전)에 4분 넘게 서 있고, 그 정차 시작(및 추적 시작 2분 전) 뒤
@@ -3561,11 +3634,24 @@ function renderTrains() {
   for (const no of [...animState.keys()]) if (!seen.has(no)) animState.delete(no);
   renderList();
 }
-function renderList() {
+function setTextIfChanged(id, s) { const el = document.getElementById(id); if (el && el.textContent !== s) el.textContent = s; }
+/* 데스크톱 배치 여부 — window.innerWidth는 직전 DOM 쓰기(열차 마커) 뒤에 읽으면 강제 레이아웃(실측 ~5ms)이라 미디어쿼리 객체로 본다 */
+const DESKTOP_MQ = window.matchMedia ? window.matchMedia("(min-width: 768px)") : null;
+function renderList(force) {
   const list = document.getElementById("trainList");
   const filtered = state.trains.filter(t => state.dirFilter === "all" || String(t.updnLine) === state.dirFilter);
-  document.getElementById("panelCount").textContent = filtered.length ? tx("nTrains", { n: filtered.length }) : "";
-  document.getElementById("listFab").textContent = state.trains.length ? tx("trainsFabN", { n: state.trains.length }) : tx("trainsFab");
+  setTextIfChanged("panelCount", filtered.length ? tx("nTrains", { n: filtered.length }) : "");
+  setTextIfChanged("listFab", state.trains.length ? tx("trainsFabN", { n: state.trains.length }) : tx("trainsFab"));
+  /* 패널이 닫혀 있으면 목록 DOM을 만들지 않는다(열 때 listFab 클릭에서 다시 그린다).
+     전체 보기에선 열차 ~470대 × 행 DOM·리스너를 갱신(15초)마다 새로 만들고, 네이티브 앱에선 그걸 다시 파싱해
+     ~58KB 메시지로 보내고 있었다 — 닫힌 패널엔 보이지 않는 일 */
+  const panel = document.getElementById("trainPanel");
+  const desktop = DESKTOP_MQ ? DESKTOP_MQ.matches : window.innerWidth >= 768;
+  const shown = panel && (desktop ? !panel.classList.contains("min") : panel.classList.contains("open"));   /* 데스크톱: 접힘(min) 아니면 펼침 */
+  if (!force && !shown) {
+    if (list.firstChild) list.textContent = "";
+    return;
+  }
   if (!filtered.length) {
     list.innerHTML = `<div class="empty">${tx("noTrains")}<br>${state.mode === "live" ? tx("noTrainsLive") : ""}</div>`;
     return;
@@ -3715,7 +3801,9 @@ async function fetchLive(force) {
   addUsage(upstreamCost);
   state.dataPath = used.name;
   const fresh = dropStaleTrains(data.realtimePositionList || []);
-  try { histObserveList(fresh, !sub && !state.line.includes(",") ? state.line : null); } catch (e) {}   /* 보이는 노선 전부 — 고르기 전부터 운행 대기를 알아본다 */
+  /* 보이는 노선 전부 — 고르기 전부터 운행 대기를 알아본다. 단일 노선이면 그 노선, 전체·복수 노선이면 열차별 subwayNm
+     (예전엔 전체 보기에서 "ALL"을 노선명으로 넘겨 모든 열차가 '다른 노선'으로 걸러져 이력이 쌓이지 않았다) */
+  try { histObserveList(fresh, state.line !== "ALL" && !sub && !state.line.includes(",") ? state.line : null); } catch (e) {}
   state.trains = dedupTrains(fresh);
   /* 2단계: 표시 (렌더링 오류는 별도로 보고한다) */
   try {
@@ -3931,11 +4019,14 @@ setTimeout(postReady, 2500);   /* 어떤 이유로든 타일 이벤트가 안 �
 function postTopbar() {
   if (!NATIVE || !(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.ui)) return;
   try {
+    /* 칩 색(--c/--ink)은 만들 때 인라인으로 넣은 값 — getComputedStyle은 갱신 직후(열차 마커 DOM 쓰기 뒤) 부르면
+       문서 전체 스타일을 그 자리에서 다시 계산하므로 인라인 값을 먼저 쓰고, 없을 때만 계산값으로 */
+    const cssVar = (c, k, dflt) => (c.style.getPropertyValue(k) || getComputedStyle(c).getPropertyValue(k) || dflt).trim();
     const chips = [...document.querySelectorAll("#lineChips .chip")].map(c => ({
       name: c.dataset.line,
       label: c.textContent.trim(),
-      color: (getComputedStyle(c).getPropertyValue("--c") || "#888").trim(),
-      ink: (getComputedStyle(c).getPropertyValue("--ink") || "#fff").trim(),
+      color: cssVar(c, "--c", "#888"),
+      ink: cssVar(c, "--ink", "#fff"),
       on: c.classList.contains("on"),
     }));
     window.webkit.messageHandlers.ui.postMessage({
@@ -4129,6 +4220,16 @@ function postTrainPanel() {
   } catch (e) {}
 }
 if (NATIVE) {
+  /* 생존 신호(하트비트): 5초마다 아주 작은 메시지. 네이티브 워치독은 웹에서 온 메시지를 '살아 있음'으로 보고 실패 카운터를 지운다 —
+     evaluateJavaScript 핑이 긴 작업 뒤에 밀려 시간 초과되더라도 그 사이 하트비트가 오면 바쁠 뿐 살아 있는 페이지라 재로드하지 않는다.
+     late = 이 타이머가 늦게 돈 정도(ms, 메인 스레드가 그만큼 막혀 있었다) — 네이티브 진단 로그용 */
+  {
+    let hbLast = performance.now();
+    setInterval(() => {
+      const now = performance.now(), late = Math.max(0, Math.round(now - hbLast - 5000)); hbLast = now;
+      try { window.webkit.messageHandlers.ui.postMessage({ type: "hb", late }); } catch (e) {}
+    }, 5000);
+  }
   let cardRaf = 0;
   const scheduleCard = () => { if (cardRaf) return; cardRaf = requestAnimationFrame(() => { cardRaf = 0; postCard(); }); };
   const mo = new MutationObserver(scheduleCard);
@@ -4321,12 +4422,14 @@ document.getElementById("listFab").addEventListener("click", () => {
     if (cardEl && cardEl.classList.contains("open")) document.getElementById("scClose").click();
   }
   document.getElementById("trainPanel").classList.add("open");
+  renderList(true);   /* 닫혀 있는 동안은 목록을 그리지 않으므로 열 때 최신 목록으로 */
 });
 function togglePanel() {
   const p = document.getElementById("trainPanel");
   if (window.innerWidth < 768) { p.classList.remove("open"); return; }
   p.classList.toggle("min");
   document.getElementById("panelMin").innerHTML = p.classList.contains("min") ? "&#9652;" : "&#9662;";
+  if (!p.classList.contains("min")) renderList(true);   /* 접혀 있는 동안은 목록을 그리지 않는다 */
 }
 document.getElementById("panelHead").addEventListener("click", togglePanel);
 
