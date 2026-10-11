@@ -349,6 +349,9 @@
   .route-sum .rt-total { font-size: 24px; font-weight: 800; color: var(--text); letter-spacing: -0.02em; }
   .route-sum .rt-meta { font-size: 12.5px; color: var(--muted); }
   .route-sum .rt-arr { font-size: 12.5px; color: #FBBF24; font-weight: 600; margin-left: auto; }
+  /* 영어 UI: "34 min"·"Arrive 4:36 PM"이 줄바꿈되지 않게 */
+  html[lang="en"] .route-sum .rt-total, html[lang="en"] .route-sum .rt-arr,
+  html[lang="en"] .trip-live .tl-remain, html[lang="en"] .trip-live .tl-arr, html[lang="en"] .rl-badge { white-space: nowrap; }
   .route-legs { position: relative; }
   .route-leg { display: flex; gap: 11px; padding: 7px 2px; }
   .route-leg.trip-leg { padding: 11px 2px; }   /* 주행 중 구간 목록은 더 여유 있게 */
@@ -708,77 +711,534 @@
 <div class="topbar">
   <div class="brand-card">
     <div class="brand-row">
-      <div class="brand">서울 지하철 라이브 <span class="ver">v1.4.5</span></div>
-      <div class="status"><span class="dot" id="statusDot"></span><span id="statusText">모의 데이터</span><button class="status-refresh" id="refreshBtn" aria-label="새로고침" title="새로고침"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button><button class="status-refresh" id="settingsBtn" aria-label="설정" title="설정"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button></div>
+      <div class="brand"><span data-i18n="appName">서울 지하철 라이브</span> <span class="ver">v1.4.6</span></div>
+      <div class="status"><span class="dot" id="statusDot"></span><span id="statusText" data-i18n="statusMock">모의 데이터</span><button class="status-refresh" id="refreshBtn" aria-label="새로고침" title="새로고침" data-i18n-aria="refresh" data-i18n-title="refresh"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button><button class="status-refresh" id="settingsBtn" aria-label="설정" title="설정" data-i18n-aria="settings" data-i18n-title="settings"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button></div>
     </div>
     <div class="chips" id="lineChips"></div>
   </div>
 </div>
 
-<button class="icon-btn locate-btn" id="locateBtn" aria-label="현재 위치로 이동" title="현재 위치로 이동"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="7.5"/><line x1="12" y1="1.5" x2="12" y2="22.5"/><line x1="1.5" y1="12" x2="22.5" y2="12"/></svg></button>
+<button class="icon-btn locate-btn" id="locateBtn" aria-label="현재 위치로 이동" title="현재 위치로 이동" data-i18n-aria="locateMe" data-i18n-title="locateMe"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="7.5"/><line x1="12" y1="1.5" x2="12" y2="22.5"/><line x1="1.5" y1="12" x2="22.5" y2="12"/></svg></button>
 
 <div class="settings-scrim" id="settingsScrim"></div>
-<div class="settings" id="settings" role="dialog" aria-modal="true" aria-label="설정">
+<div class="settings" id="settings" role="dialog" aria-modal="true" aria-label="설정" data-i18n-aria="settings">
   <div class="sheet-grip"></div>
-  <h3>설정</h3>
+  <h3 data-i18n="settings">설정</h3>
   <div class="field">
-    <label>즐겨찾는 역 <span class="fav-count" id="favCount"></span></label>
+    <label><span data-i18n="favStations">즐겨찾는 역</span> <span class="fav-count" id="favCount"></span></label>
     <div class="fav-list" id="favList"></div>
   </div>
   <div class="field">
-    <label>지도</label>
+    <label data-i18n="mapLabel">지도</label>
     <div class="seg" id="mapSeg">
-      <button data-prov="naver">네이버</button>
-      <button data-prov="apple">애플</button>
+      <button data-prov="naver" data-i18n="naver">네이버</button>
+      <button data-prov="apple" data-i18n="apple">애플</button>
     </div>
-    <div class="hint">네이버 지도는 더 자세한 지형·건물을 보여줍니다. 애플 지도는 앱과 같은 다크 테마로 표시됩니다. 선택은 자동 저장됩니다.</div>
+    <div class="hint" data-i18n="mapHint">네이버 지도는 더 자세한 지형·건물을 보여줍니다. 애플 지도는 앱과 같은 다크 테마로 표시됩니다. 선택은 자동 저장됩니다.</div>
+  </div>
+  <div class="field">
+    <label data-i18n="language">언어</label>
+    <div class="seg" id="langSeg">
+      <button data-lang="auto" data-i18n="langAuto">자동</button>
+      <button data-lang="ko">한국어</button>
+      <button data-lang="en">English</button>
+    </div>
+    <div class="hint" data-i18n="langHint">자동은 기기 언어를 따릅니다. 바꾸면 화면을 다시 불러옵니다.</div>
   </div>
 </div>
 
 <div class="panel min" id="trainPanel">
   <div class="panel-head" id="panelHead">
-    <h2 id="panelTitle">운행 중인 열차</h2>
+    <h2 id="panelTitle" data-i18n="trainsRunning">운행 중인 열차</h2>
     <span class="count" id="panelCount"></span>
-    <button class="panel-min" id="panelMin" aria-label="펼치기">&#9652;</button>
+    <button class="panel-min" id="panelMin" aria-label="펼치기" data-i18n-aria="expand">&#9652;</button>
   </div>
   <div class="panel-tabs" id="dirTabs">
-    <button data-dir="all" class="on">전체</button>
-    <button data-dir="0" id="tabUp">상행</button>
-    <button data-dir="1" id="tabDown">하행</button>
+    <button data-dir="all" class="on" data-i18n="all">전체</button>
+    <button data-dir="0" id="tabUp" data-i18n="dirUp">상행</button>
+    <button data-dir="1" id="tabDown" data-i18n="dirDown">하행</button>
   </div>
   <div class="panel-body" id="trainList">
-    <div class="empty">데이터를 불러오는 중...</div>
+    <div class="empty" data-i18n="loadingData">데이터를 불러오는 중...</div>
   </div>
 </div>
 
 <div class="station-card" id="stationCard">
   <div class="sc-head">
-    <h3 id="scTitle">역 도착 정보</h3>
-    <span class="sc-live" id="scLive" hidden><span class="sl-dot"></span>실시간 추적 중</span>
-    <button class="sc-btn" id="scFav" aria-label="즐겨찾기">&#9734;</button>
-    <button class="sc-btn" id="scRefresh" aria-label="새로고침" title="새로고침"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
-    <button class="sc-btn" id="scClose" aria-label="닫기"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    <h3 id="scTitle" data-i18n="stationArrivals">역 도착 정보</h3>
+    <span class="sc-live" id="scLive" hidden><span class="sl-dot"></span><span data-i18n="liveTracking">실시간 추적 중</span></span>
+    <button class="sc-btn" id="scFav" aria-label="즐겨찾기" data-i18n-aria="favorite">&#9734;</button>
+    <button class="sc-btn" id="scRefresh" aria-label="새로고침" title="새로고침" data-i18n-aria="refresh" data-i18n-title="refresh"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
+    <button class="sc-btn" id="scClose" aria-label="닫기" data-i18n-aria="close"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
   </div>
   <div class="sc-body" id="scBody"></div>
 </div>
 
-<button class="list-fab" id="listFab">운행 열차</button>
+<button class="list-fab" id="listFab" data-i18n="trainsFab">운행 열차</button>
 
 <div class="toast" id="toast"></div>
 
 <!-- 목적지 도착 완료 팝업 (네이티브 앱이 자체 알럿을 지원하면 대신 그쪽을 쓴다) -->
 <div class="td-scrim" id="tripDoneScrim">
   <div class="tripdone" id="tripDone" role="dialog" aria-modal="true" aria-labelledby="tripDoneTitle">
-    <div class="td-title" id="tripDoneTitle">목적지 도착</div>
+    <div class="td-title" id="tripDoneTitle" data-i18n="arrivedDest">목적지 도착</div>
     <div class="td-main" id="tripDoneMain"></div>
     <div class="td-sub" id="tripDoneSub"></div>
-    <button class="route-go td-ok" id="tripDoneOk">확인</button>
+    <button class="route-go td-ok" id="tripDoneOk" data-i18n="ok">확인</button>
   </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="config.js"></script>
 <script>
+/* ════════════════ 언어(i18n) ════════════════
+   LANG: ?lang= 쿼리 → localStorage 'lang' → 기기/브라우저 언어(ko로 시작하면 ko, 아니면 en).
+   네이티브 앱은 appURL에 &lang=ko|en 을 붙여 네이티브 문자열과 같은 언어를 쓰게 한다.
+   내부 데이터(역·노선 키, API 값)는 한국어 그대로 두고 '표시'할 때만 번역한다. */
+const LANG = (() => {
+  try {
+    const q = new URLSearchParams(location.search).get("lang");
+    if (q === "ko" || q === "en") return q;
+    const s = localStorage.getItem("lang");
+    if (s === "ko" || s === "en") return s;
+  } catch (e) {}
+  return /^ko/i.test((navigator.languages && navigator.languages[0]) || navigator.language || "") ? "ko" : "en";
+})();
+const EN = LANG === "en";
+document.documentElement.lang = LANG;
+/* 표시 문자열 사전 — 키는 영문, ko 값은 기존 한국어 문구 그대로 */
+const T = {
+  ko: {"appName":"서울 지하철 라이브",
+    "statusMock":"모의 데이터",
+    "refresh":"새로고침",
+    "locateMe":"현재 위치로 이동",
+    "settings":"설정",
+    "favStations":"즐겨찾는 역",
+    "mapLabel":"지도",
+    "naver":"네이버",
+    "apple":"애플",
+    "mapHint":"네이버 지도는 더 자세한 지형·건물을 보여줍니다. 애플 지도는 앱과 같은 다크 테마로 표시됩니다. 선택은 자동 저장됩니다.",
+    "trainsRunning":"운행 중인 열차",
+    "expand":"펼치기",
+    "all":"전체",
+    "dirUp":"상행",
+    "dirDown":"하행",
+    "loadingData":"데이터를 불러오는 중...",
+    "stationArrivals":"역 도착 정보",
+    "liveTracking":"실시간 추적 중",
+    "favorite":"즐겨찾기",
+    "close":"닫기",
+    "trainsFab":"운행 열차",
+    "arrivedDest":"목적지 도착",
+    "ok":"확인",
+    "language":"언어",
+    "langAuto":"자동",
+    "langHint":"자동은 기기 언어를 따릅니다. 바꾸면 화면을 다시 불러옵니다.",
+    "express":"급행",
+    "lastTrain":"막차",
+    "bound":"{d}행",
+    "trainNo":"열차 {n}",
+    "errScript":"스크립트 로드 실패",
+    "naverNoId":"네이버 지도 클라이언트 ID를 먼저 입력해 주세요.",
+    "naverAuthFallback":"네이버 지도 인증 실패. 기본 지도로 복귀합니다. NCP 콘솔의 Web 서비스 URL에 현재 사이트 주소를 등록해 주세요.",
+    "naverScriptFail":"네이버 지도 스크립트를 불러오지 못했습니다.",
+    "naverAuthFail":"네이버 지도 인증에 실패했습니다. 콘솔의 Web 서비스 URL 등록을 확인해 주세요.",
+    "appleScriptFail":"애플 지도 스크립트를 불러오지 못했습니다.",
+    "appleLoadFail":"애플 지도를 불러오지 못했습니다.",
+    "appleTokenFail":"애플 지도 토큰을 가져오지 못했습니다.",
+    "appleAuthFallback":"애플 지도 인증에 실패했습니다. 예비 지도로 복귀합니다.",
+    "zoomForTrains":"지도를 확대하면 열차가 표시됩니다",
+    "nTrains":"{n}대",
+    "trainsFabN":"운행 열차 {n}대",
+    "noTrains":"표시할 열차가 없습니다.",
+    "noTrainsLive":"운행 시간이 아니거나 데이터 수신에 실패했을 수 있습니다.",
+    "errParse":"응답 해석 실패 (HTTP {s})",
+    "errApi":"API 오류 ({c})",
+    "errDirectAll":"전 노선 직접 호출 실패",
+    "needKey":"인증키를 입력하거나 프록시가 있는 배포 환경에서 실행해 주세요.",
+    "loading":"불러오는 중...",
+    "errConn":"연결 끊김 (서버 응답 지연 또는 차단)",
+    "srcProxy":"프록시",
+    "srcDirect":"직접",
+    "statusFail":"수신 실패",
+    "liveFail":"실시간 데이터를 가져오지 못했습니다.",
+    "statusRenderErr":"표시 오류",
+    "renderErr":"데이터는 받았으나 화면 표시 중 오류: {m}",
+    "statusLive":"실시간",
+    "statusMockAuto":"모의 데이터 · 자동 운행",
+    "geoDenied":"위치 권한이 거부되었습니다.",
+    "bridgeErr":"네이티브 브리지 오류",
+    "fastest":"최단시간",
+    "fewestTransfers":"최소환승",
+    "trainsAllLines":"전체 노선 운행 열차",
+    "trainsOfLines":"{l} 운행 열차",
+    "mapSwitchErr":"지도 전환 중 오류({m}). 예비 지도로 복구합니다.",
+    "justLeft":"방금 출발",
+    "noInfo":"정보 없음",
+    "arrivingNow":"지금 도착",
+    "arrivingSoon":"곧 도착",
+    "arrIn":"{t} 도착",
+    "approx":"약 {t}",
+    "inMS":"{m}분 {s}초 후",
+    "inM":"{m}분 후",
+    "inS":"{s}초 후",
+    "aboutInMin":"약 {m}분 후",
+    "errPosition":"위치 조회 불가",
+    "dwellWait":"출발 대기",
+    "dwellAt":"{s}에서 출발 대기",
+    "dwellFor":"{n}분째",
+    "viewTimetable":"시간표 보기",
+    "routeFromHere":"여기서 출발",
+    "am":"오전",
+    "pm":"오후",
+    "min":"{n}분",
+    "transfersN":"환승 {n}회",
+    "pickChange":"탄 열차 변경",
+    "pickTransfer":"환승 열차를 선택하세요",
+    "pickBoard":"탈 열차를 선택하세요",
+    "pickOpen":"열차 선택",
+    "psNow":"현재",
+    "psTransfer":"환승역",
+    "psOrigin":"출발",
+    "pickNone":"이 방향 열차가 근처에 없어요 · 들어오면 표시됩니다",
+    "pickChecking":"근처 열차 확인 중…",
+    "cancel":"취소",
+    "later":"나중에",
+    "pickHint":"열차를 눌러 선택 · 좌우로 밀어 앞뒤 역 보기",
+    "pickHintScroll":"좌우로 밀어 앞뒤 역 보기",
+    "chooseDest":"도착역 선택",
+    "favAsDestAria":"즐겨찾기 {s}, 도착역으로 선택",
+    "fromStation":"{s}에서 출발",
+    "searchDest":"도착역 이름 검색",
+    "orTapMap":"또는 지도에서 역을 탭하세요",
+    "rechooseDest":"도착역 다시 선택",
+    "noRoute":"경로를 찾지 못했습니다.",
+    "tryOther":"다른 역을 선택해 주세요.",
+    "legInfo":"{to}까지 {n}개 역 · 약 {m}분",
+    "legInfoShort":"{n}개 역 · 약 {m}분",
+    "arrive":"도착",
+    "nextTrainIn":"다음 열차 {t}",
+    "nextTrainSoon":"다음 열차 곧",
+    "arriveAt":"{t} 도착",
+    "startTrip":"지금 출발하기 →",
+    "quickXfer":"빠른 환승 {d}",
+    "left":"남음",
+    "arrivedAt":"{s} 도착했습니다",
+    "dwellAtB":"<b>{s}</b>에서 출발 대기 중",
+    "xferAt":"{s} 환승",
+    "waitingTrain":"열차 대기 중 · <b>{m}분</b> 후 출발",
+    "alightNext":"다음 <b>{s}</b>에서 내리세요",
+    "destination":"목적지",
+    "transfer":"환승",
+    "nextB":"다음 <b>{s}</b>",
+    "trackingTrainTo":"{d}행 추적",
+    "trackingTrain":"열차 추적",
+    "waitingPos":"위치 갱신 대기",
+    "change":"변경",
+    "trackLost":"열차 신호가 끊겨 시간 기준으로 안내 중",
+    "endTrip":"안내 종료",
+    "noResults":"검색 결과 없음",
+    "dwellingAt":"{s}에서 출발 대기 중",
+    "atPlatform":"승강장 도착",
+    "approaching":"진입 중",
+    "justDeparted":"막 출발",
+    "stopped":"정차",
+    "departed":"출발",
+    "leftAlready":"출발함",
+    "stnState":"{s} {w}",
+    "aboutMin":"약 {m}분",
+    "comingFrom":"{s}에서 오는 중",
+    "autoPicked":"가장 빠른 {d}행 열차로 자동 선택했어요 · 다른 열차면 '변경'",
+    "autoSwitched":"탄 열차를 {d}행 {n}로 바꿨어요",
+    "arrivedAtFull":"{s}에 도착했습니다",
+    "tookMin":"{n}분 소요",
+    "arrFail":"도착 정보를 가져오지 못했습니다.",
+    "endTripConfirm":"안내를 종료할까요?\n진행 중인 경로 안내가 종료됩니다.",
+    "soonShort":"곧",
+    "aboutInHM":"약 {h}시간 {m}분 후",
+    "checkingNext":"다음 열차 확인 중…",
+    "noTtInfo":"시간표 정보 없음",
+    "noLiveFirst":"실시간 정보 없음 · 첫차",
+    "noLiveNext":"실시간 정보 없음 · 시간표 기준 다음 열차",
+    "ttTitle":"{s} 시간표",
+    "ttLoading":"시간표 불러오는 중...",
+    "ttErr":"시간표 오류",
+    "arrivalsBack":"도착 정보",
+    "ttFail":"시간표를 가져오지 못했습니다.",
+    "noTtDir":"이 방향 시간표가 없습니다.",
+    "nextTag":"다음",
+    "firstLast":"첫차 {f} · 막차 {l}",
+    "noTtAll":"시간표 정보가 없습니다.",
+    "favEmptyHtml":"지도에서 역을 누르고 <span style=\"color:var(--text)\">&#9734;</span> 를 켜면 여기에 모입니다.",
+    "moveUp":"위로",
+    "moveDown":"아래로",
+    "remove":"삭제",
+    "favAdded":"{s}역을 즐겨찾기에 추가했습니다. 접속하면 자동으로 열립니다.",
+    "favRemoved":"{s}역 즐겨찾기를 해제했습니다.",
+    "unfollow":"따라가기 해제",
+    "followTrain":"이 열차 따라가기",
+    "following":"열차를 따라갑니다. 지도를 드래그하면 해제됩니다.",
+    "whichInfo":"어느 정보를 볼까요?",
+    "pickStationSub":"역 · 실시간 도착 정보 보기",
+    "trainWord":"열차",
+    "usage":"{n} / 1,000회",
+    "mapFallbackStart":"{a} 지도를 불러오지 못해 {b} 지도로 시작합니다.",
+    "mapBackupStart":"지도를 불러오지 못해 예비 지도로 시작합니다.",
+    "noGeo":"이 기기에서 위치를 사용할 수 없습니다.",
+    "locating":"현재 위치 확인 중…",
+    "checkGeoPerm":"위치 권한을 확인해 주세요."},
+  en: {"appName":"Seoul Subway Live",
+    "statusMock":"Demo data",
+    "refresh":"Refresh",
+    "locateMe":"Go to my location",
+    "settings":"Settings",
+    "favStations":"Favorite stations",
+    "mapLabel":"Map",
+    "naver":"Naver",
+    "apple":"Apple",
+    "mapHint":"Naver Map shows more terrain and building detail. Apple Maps uses the same dark theme as the app. Your choice is saved automatically.",
+    "trainsRunning":"Trains in service",
+    "expand":"Expand",
+    "all":"All",
+    "dirUp":"Upbound",
+    "dirDown":"Downbound",
+    "loadingData":"Loading data...",
+    "stationArrivals":"Station arrivals",
+    "liveTracking":"Live tracking",
+    "favorite":"Favorite",
+    "close":"Close",
+    "trainsFab":"Trains",
+    "arrivedDest":"Arrived",
+    "ok":"OK",
+    "language":"Language",
+    "langAuto":"Auto",
+    "langHint":"Auto follows your device language. Changing it reloads the app.",
+    "express":"Express",
+    "lastTrain":"Last train",
+    "bound":"to {d}",
+    "trainNo":"Train {n}",
+    "errScript":"Failed to load script",
+    "naverNoId":"Enter a Naver Map client ID first.",
+    "naverAuthFallback":"Naver Map authentication failed. Switching back to the basic map. Register this site's URL under Web service URLs in the NCP console.",
+    "naverScriptFail":"Couldn't load Naver Map.",
+    "naverAuthFail":"Naver Map authentication failed. Check the Web service URL registered in the console.",
+    "appleScriptFail":"Couldn't load Apple Maps.",
+    "appleLoadFail":"Couldn't load Apple Maps.",
+    "appleTokenFail":"Couldn't get an Apple Maps token.",
+    "appleAuthFallback":"Apple Maps authentication failed. Switching to the backup map.",
+    "zoomForTrains":"Zoom in to see trains",
+    "nTrains":"{n}",
+    "trainsFabN":"Trains · {n}",
+    "noTrains":"No trains to show.",
+    "noTrainsLive":"Trains may not be running now, or data couldn't be loaded.",
+    "errParse":"Couldn't read the response (HTTP {s})",
+    "errApi":"API error ({c})",
+    "errDirectAll":"Direct request failed for all lines",
+    "needKey":"Enter an API key, or run from a deployment with the proxy.",
+    "loading":"Loading...",
+    "errConn":"Connection lost (server slow or blocked)",
+    "srcProxy":"Proxy",
+    "srcDirect":"Direct",
+    "statusFail":"Offline",
+    "liveFail":"Couldn't get live data.",
+    "statusRenderErr":"Display error",
+    "renderErr":"Data received, but couldn't display it: {m}",
+    "statusLive":"Live",
+    "statusMockAuto":"Demo data · simulated",
+    "geoDenied":"Location permission was denied.",
+    "bridgeErr":"Native bridge error",
+    "fastest":"Fastest",
+    "fewestTransfers":"Fewest transfers",
+    "trainsAllLines":"Trains on all lines",
+    "trainsOfLines":"Trains on {l}",
+    "mapSwitchErr":"Map switch failed ({m}). Using the backup map.",
+    "justLeft":"Just left",
+    "noInfo":"No info",
+    "arrivingNow":"Arriving",
+    "arrivingSoon":"Arriving soon",
+    "arrIn":"Arriving {t}",
+    "approx":"~{t}",
+    "inMS":"in {m} min {s} s",
+    "inM":"in {m} min",
+    "inS":"in {s} s",
+    "aboutInMin":"in ~{m} min",
+    "errPosition":"Couldn't get train positions",
+    "dwellWait":"Waiting to depart",
+    "dwellAt":"waiting at {s}",
+    "dwellFor":"{n} min",
+    "viewTimetable":"Timetable",
+    "routeFromHere":"Route from here",
+    "am":"AM",
+    "pm":"PM",
+    "min":"{n} min",
+    "transfersN":"{n|No transfers|# transfer|# transfers}",
+    "pickChange":"Change train",
+    "pickTransfer":"Choose your connecting train",
+    "pickBoard":"Choose your train",
+    "pickOpen":"Choose train",
+    "psNow":"Now",
+    "psTransfer":"Transfer",
+    "psOrigin":"Start",
+    "pickNone":"No trains nearby in this direction · they'll appear as they come",
+    "pickChecking":"Checking nearby trains…",
+    "cancel":"Cancel",
+    "later":"Later",
+    "pickHint":"Tap a train to choose · swipe to see nearby stations",
+    "pickHintScroll":"Swipe to see nearby stations",
+    "chooseDest":"Choose destination",
+    "favAsDestAria":"Favorite {s}, set as destination",
+    "fromStation":"From {s}",
+    "searchDest":"Search destination station",
+    "orTapMap":"Or tap a station on the map",
+    "rechooseDest":"Choose another destination",
+    "noRoute":"No route found.",
+    "tryOther":"Please choose another station.",
+    "legInfo":"{n|# stop|# stops} to {to} · ~{m} min",
+    "legInfoShort":"{n|# stop|# stops} · ~{m} min",
+    "arrive":"Arrive",
+    "nextTrainIn":"next train in {t}",
+    "nextTrainSoon":"next train soon",
+    "arriveAt":"Arrive {t}",
+    "startTrip":"Start trip →",
+    "quickXfer":"Fast transfer {d}",
+    "left":"left",
+    "arrivedAt":"You've arrived at {s}",
+    "dwellAtB":"Waiting to depart at <b>{s}</b>",
+    "xferAt":"transfer at {s}",
+    "waitingTrain":"Waiting for train · departs in <b>{m} min</b>",
+    "alightNext":"Get off at the next stop, <b>{s}</b>",
+    "destination":"destination",
+    "transfer":"transfer",
+    "nextB":"Next <b>{s}</b>",
+    "trackingTrainTo":"Tracking train to {d}",
+    "trackingTrain":"Tracking train",
+    "waitingPos":"waiting for position",
+    "change":"Change",
+    "trackLost":"Lost the train's signal · guiding by schedule",
+    "endTrip":"End trip",
+    "noResults":"No results",
+    "dwellingAt":"Waiting to depart at {s}",
+    "atPlatform":"At platform",
+    "approaching":"Approaching",
+    "justDeparted":"Just departed",
+    "stopped":"Stopped",
+    "departed":"Departed",
+    "leftAlready":"Already left",
+    "stnState":"{s} {w}",
+    "aboutMin":"~{m} min",
+    "comingFrom":"Coming from {s}",
+    "autoPicked":"Picked the next train to {d} for you · tap 'Change' if you're on another",
+    "autoSwitched":"Switched to train {n} to {d}",
+    "arrivedAtFull":"You've arrived at {s}",
+    "tookMin":"took {n} min",
+    "arrFail":"Couldn't load arrivals.",
+    "endTripConfirm":"End trip guidance?\nThe current route guidance will stop.",
+    "soonShort":"soon",
+    "aboutInHM":"in ~{h} h {m} min",
+    "checkingNext":"Checking next train…",
+    "noTtInfo":"No timetable info",
+    "noLiveFirst":"No live info · first train",
+    "noLiveNext":"No live info · next scheduled trains",
+    "ttTitle":"{s} timetable",
+    "ttLoading":"Loading timetable...",
+    "ttErr":"Timetable error",
+    "arrivalsBack":"Arrivals",
+    "ttFail":"Couldn't load the timetable.",
+    "noTtDir":"No timetable for this direction.",
+    "nextTag":"Next",
+    "firstLast":"First {f} · Last {l}",
+    "noTtAll":"No timetable available.",
+    "favEmptyHtml":"Tap a station on the map and turn on <span style=\"color:var(--text)\">&#9734;</span> to save it here.",
+    "moveUp":"Move up",
+    "moveDown":"Move down",
+    "remove":"Remove",
+    "favAdded":"Added {s} to favorites. It opens automatically when you launch the app.",
+    "favRemoved":"Removed {s} from favorites.",
+    "unfollow":"Stop following",
+    "followTrain":"Follow this train",
+    "following":"Following the train. Drag the map to stop.",
+    "whichInfo":"What would you like to see?",
+    "pickStationSub":"Station · live arrivals",
+    "trainWord":"Train",
+    "usage":"{n} / 1,000 calls",
+    "mapFallbackStart":"Couldn't load {a} Maps, starting with {b} Maps.",
+    "mapBackupStart":"Couldn't load the map, starting with the backup map.",
+    "noGeo":"Location isn't available on this device.",
+    "locating":"Finding your location…",
+    "checkGeoPerm":"Please check location permission."}
+};
+/* tx(키, {변수}) — {var} 치환. 한국어는 조사 없는 문장으로(변수 뒤 조사 문제 회피) */
+function tx(key, vars) {
+  let s = (T[LANG] && T[LANG][key] != null) ? T[LANG][key] : (T.ko[key] != null ? T.ko[key] : key);
+  /* 복수형: {n|단수|복수} 또는 {n|0일 때|단수|복수} — # 은 값으로 치환 */
+  if (vars) s = s.replace(/\{(\w+)\|([^}]*)\}/g, (m, k, alts) => { const a = alts.split("|"), v = Number(vars[k]); const f = a.length >= 3 ? (v === 0 ? a[0] : v === 1 ? a[1] : a[2]) : (v === 1 ? a[0] : a[1] || a[0]); return f.replace(/#/g, vars[k]); })
+                .replace(/\{(\w+)\}/g, (m, k) => vars[k] != null ? vars[k] : m);
+  return s;
+}
+/* "N분 M초 후" / "in N min M s" */
+function fmtIn(m, s) { return m ? (s ? tx("inMS", { m, s }) : tx("inM", { m })) : tx("inS", { s }); }
+/* 노선 표시명 (키는 한국어 그대로) */
+const LINE_EN = {
+  "1호선": "Line 1", "2호선": "Line 2", "3호선": "Line 3", "4호선": "Line 4", "5호선": "Line 5",
+  "6호선": "Line 6", "7호선": "Line 7", "8호선": "Line 8", "9호선": "Line 9",
+  "수인분당선": "Suin-Bundang", "신분당선": "Shinbundang", "경의중앙선": "Gyeongui-Jungang", "공항철도": "AREX",
+  "경춘선": "Gyeongchun", "경강선": "Gyeonggang", "서해선": "Seohae", "우이신설선": "Ui-Sinseol", "신림선": "Sillim"
+};
+function lnN(line) {
+  if (!EN || !line) return line || "";
+  const s = String(line);
+  if (LINE_EN[s]) return LINE_EN[s];
+  const m = s.match(/^0*(\d+)호선$/);
+  return m ? "Line " + m[1] : (/[가-힣]/.test(s) ? (LINE_EN[s.replace(/선$/, "") + "선"] || romanizeKo(s)) : s);
+}
+/* 방향 표시명 */
+const DIR_EN = { "상행": "Upbound", "하행": "Downbound", "내선": "Inner loop", "외선": "Outer loop", "상행 · 내선": "Upbound · Inner loop", "하행 · 외선": "Downbound · Outer loop" };
+function dirT(d) { return EN ? (DIR_EN[d] || d) : d; }
+/* 역 표시명: STN_EN(OSM name:en) → 행선지 보조표 → 로마자 표기 */
+function sn(name) {
+  if (!EN || !name) return name || "";
+  const s = String(name).trim();
+  if (!/[가-힣]/.test(s)) return s;
+  if (STN_EN[s]) return STN_EN[s];
+  if (DEST_EN[s]) return DEST_EN[s];
+  const r = typeof resolve === "function" ? resolve(s) : null;
+  if (r && STN_EN[r]) return STN_EN[r];
+  const b = s.replace(/역$/, "");
+  if (STN_EN[b]) return STN_EN[b];
+  const m = s.match(/^(.+?)\((.+)\)$/);
+  if (m) return sn(m[1]) + " (" + sn(m[2]) + ")";
+  return romanizeKo(s);
+}
+/* 행선지(statnTnm/bstatnNm) 표시명: "응암순환(상선)"→"Eungam Loop", "성수종착"→"Seongsu (terminating)" */
+function destT(raw) {
+  if (!EN || !raw) return raw || "";
+  let s = String(raw).trim().replace(/\((상선|하선|내선|외선|급행|일반)\)$/, "").trim();
+  if (DEST_EN[s]) return DEST_EN[s];
+  if (/순환$/.test(s)) { const b = s.replace(/순환$/, ""); return b === "내선" ? "Inner loop" : b === "외선" ? "Outer loop" : sn(b) + " Loop"; }
+  if (/종착$/.test(s)) return sn(s.replace(/종착$/, "")) + " (terminating)";
+  if (/지선$/.test(s)) return sn(s.replace(/지선$/, "")) + " (branch)";
+  return sn(s.replace(/행$/, ""));
+}
+/* 오류 메시지: 서버가 준 한국어 문구는 영어 UI에서 숨긴다 */
+function errMsg(e) { const m = (e && e.message) || ""; return EN && /[가-힣]/.test(m) ? "" : m; }
+/* "N분" */
+function fmtMin(n) { return tx("min", { n }); }
+/* 시각 "오후 3:12" / "3:12 PM" */
+function fmtClock(d) {
+  let h = d.getHours(), m = d.getMinutes();
+  const ap = h < 12 ? tx("am") : tx("pm"); h = h % 12 || 12;
+  const hm = `${h}:${String(m).padStart(2, "0")}`;
+  return EN ? `${hm} ${ap}` : `${ap} ${hm}`;
+}
+/* 정적 마크업 번역: data-i18n(텍스트)·data-i18n-aria·data-i18n-title (한국어는 마크업 그대로) */
+function applyStaticI18n(root) {
+  if (!EN) return;
+  (root || document).querySelectorAll("[data-i18n]").forEach(el => { el.textContent = tx(el.dataset.i18n); });
+  (root || document).querySelectorAll("[data-i18n-aria]").forEach(el => el.setAttribute("aria-label", tx(el.dataset.i18nAria)));
+  (root || document).querySelectorAll("[data-i18n-title]").forEach(el => el.setAttribute("title", tx(el.dataset.i18nTitle)));
+}
+if (EN) document.title = tx("appName");
+applyStaticI18n();
 /* ════════════════════════════════════════════════════
    설정: 인증키를 여기에 넣어두면 매번 입력할 필요가 없습니다.
    발급: https://data.seoul.go.kr (실시간 지하철 인증키 신청)
@@ -928,6 +1388,77 @@ const STN = {
 "삼전":[37.5046,127.0883],"석촌고분": [37.50256, 127.09703],"송파나루":[37.51125,127.1128],
 "한성백제":[37.5161,127.1158],"둔촌오륜": [37.51968, 127.13799],"중앙보훈병원":[37.5288,127.1482]
 };
+/* 역 영문 표시명 (OpenStreetMap name:en 기준, 없으면 로마자 표기) — 키는 STN과 같다. lib/stations-en.json·네이티브 stations_en.json과 같은 원천 */
+const STN_EN = {"연천":"Yeoncheon","전곡":"Jeongok","청산":"Cheongsan","소요산":"Soyosan","동두천":"Dongducheon","보산":"Bosan","동두천중앙":"Dongducheon Jungang","지행":"Jihaeng","덕정":"Deokjeong","덕계":"Deokgye","양주":"Yangju","녹양":"Nogyang","가능":"Ganeung","의정부":"Uijeongbu","회룡":"Hoeryong","망월사":"Mangwolsa","도봉산":"Dobongsan","도봉":"Dobong","방학":"Banghak","창동":"Changdong","녹천":"Nokcheon","월계":"Wolgye","광운대":"Kwangwoon Univ.","석계":"Seokgye","신이문":"Sinimun","외대앞":"Hankuk Univ. of Foreign Studies","회기":"Hoegi","청량리":"Cheongnyangni","제기동":"Jegi-dong","신설동":"Sinseol-dong","동묘앞":"Dongmyo","동대문":"Dongdaemun","종로5가":"Jongno 5-ga","종로3가":"Jongno 3-ga","종각":"Jonggak","시청":"City Hall","서울":"Seoul Station","남영":"Namyeong","용산":"Yongsan","노량진":"Noryangjin","대방":"Daebang","신길":"Singil","영등포":"Yeongdeungpo","신도림":"Sindorim","구로":"Guro","구일":"Guil","개봉":"Gaebong","오류동":"Oryu-dong","온수":"Onsu","역곡":"Yeokgok","소사":"Sosa","부천":"Bucheon","중동":"Jung-dong","송내":"Songnae","부개":"Bugae","부평":"Bupyeong","백운":"Baegun","동암":"Dongam","간석":"Ganseok","주안":"Juan","도화":"Dohwa","제물포":"Jemulpo","도원":"Dowon","동인천":"Dongincheon","인천":"Incheon","가산디지털단지":"Gasan Digital Complex","독산":"Doksan","금천구청":"Geumcheon-gu Office","광명":"Gwangmyeong","석수":"Seoksu","관악":"Gwanak","안양":"Anyang","명학":"Myeonghak","금정":"Geumjeong","군포":"Gunpo","당정":"Dangjeong","의왕":"Uiwang","성균관대":"Sungkyunkwan Univ.","화서":"Hwaseo","수원":"Suwon","세류":"Seryu","병점":"Byeongjeom","서동탄":"Seodongtan","세마":"Sema","오산대":"Osan College","오산":"Osan","진위":"Jinwi","송탄":"Songtan","서정리":"Seojeong-ri","지제":"Jije","평택":"Pyeongtaek","성환":"Seonghwan","직산":"Jiksan","두정":"Dujeong","천안":"Cheonan","봉명":"Bongmyeong","쌍용(나사렛대)":"Ssangyong","아산":"Asan","탕정":"Tangjeong","배방":"Baebang","온양온천":"Onyangoncheon","신창":"Sinchang","을지로입구":"Euljiro 1-ga","을지로3가":"Euljiro 3-ga","을지로4가":"Euljiro 4-ga","동대문역사문화공원":"Dongdaemun History & Culture Park","신당":"Sindang","상왕십리":"Sangwangsimni","왕십리":"Wangsimni","한양대":"Hanyang Univ.","뚝섬":"Ttukseom","성수":"Seongsu","건대입구":"Konkuk Univ.","구의":"Guui","강변":"Gangbyeon","잠실나루":"Jamsillaru","잠실":"Jamsil","잠실새내":"Jamsilsaenae","종합운동장":"Sports Complex","삼성":"Samseong","선릉":"Seolleung","역삼":"Yeoksam","강남":"Gangnam","교대":"Seoul Nat'l Univ. of Education","서초":"Seocho","방배":"Bangbae","사당":"Sadang","낙성대":"Nakseongdae","서울대입구":"Seoul Nat'l Univ.","봉천":"Bongcheon","신림":"Sillim","신대방":"Sindaebang","구로디지털단지":"Guro Digital Complex","대림":"Daerim","문래":"Mullae","영등포구청":"Yeongdeungpo-gu Office","당산":"Dangsan","합정":"Hapjeong","홍대입구":"Hongik Univ.","신촌":"Sinchon","이대":"Ewha Womans Univ.","아현":"Ahyeon","충정로":"Chungjeongno","용답":"Yongdap","신답":"Sindap","용두":"Yongdu","도림천":"Dorimcheon","양천구청":"Yangcheon-gu Office","신정네거리":"Sinjeongnegeori","까치산":"Kkachisan","대화":"Daehwa","주엽":"Juyeop","정발산":"Jeongbalsan","마두":"Madu","백석":"Baekseok","대곡":"Daegok","화정":"Hwajeong","원당":"Wondang","원흥":"Wonheung","삼송":"Samsong","지축":"Jichuk","구파발":"Gupabal","연신내":"Yeonsinnae","불광":"Bulgwang","녹번":"Nokbeon","홍제":"Hongje","무악재":"Muakjae","독립문":"Dongnimmun","경복궁":"Gyeongbokgung","안국":"Anguk","충무로":"Chungmuro","동대입구":"Dongguk Univ.","약수":"Yaksu","금호":"Geumho","옥수":"Oksu","압구정":"Apgujeong","신사":"Sinsa","잠원":"Jamwon","고속터미널":"Express Bus Terminal","남부터미널":"Nambu Bus Terminal","양재":"Yangjae","매봉":"Maebong","도곡":"Dogok","대치":"Daechi","학여울":"Hangnyeoul","대청":"Daecheong","일원":"Ilwon","수서":"Suseo","가락시장":"Garak Market","경찰병원":"National Police Hospital","오금":"Ogeum","진접":"Jinjeop","오남":"Onam","별내별가람":"Byeollaebyeolgaram","당고개":"Danggogae","상계":"Sanggye","노원":"Nowon","쌍문":"Ssangmun","수유":"Suyu","미아":"Mia","미아사거리":"Miasageori","길음":"Gireum","성신여대입구":"Sungshin Women's Univ.","한성대입구":"Hansung Univ.","혜화":"Hyehwa","명동":"Myeongdong","회현":"Hoehyeon","숙대입구":"Sookmyung Women's Univ.","삼각지":"Samgakji","신용산":"Sinyongsan","이촌":"Ichon","동작":"Dongjak","총신대입구(이수)":"Chongshin Univ. (Isu)","남태령":"Namtaeryeong","선바위":"Seonbawi","경마공원":"Seoul Racecourse Park","대공원":"Seoul Grand Park","과천":"Gwacheon","정부과천청사":"Government Complex Gwacheon","인덕원":"Indeogwon","평촌":"Pyeongchon","범계":"Beomgye","산본":"Sanbon","수리산":"Surisan","대야미":"Daeyami","반월":"Banwol","상록수":"Sangnoksu","한대앞":"Hanyang Univ. at Ansan","중앙":"Jungang","고잔":"Gojan","초지":"Choji","안산":"Ansan","신길온천":"Singiloncheon","정왕":"Jeongwang","오이도":"Oido","방화":"Banghwa","개화산":"Gaehwasan","김포공항":"Gimpo Int'l Airport","송정":"Songjeong","마곡":"Magok","발산":"Balsan","우장산":"Ujangsan","화곡":"Hwagok","신정":"Sinjeong","목동":"Mok-dong","오목교":"Omokgyo","양평":"Yangpyeong","영등포시장":"Yeongdeungpo Market","여의도":"Yeouido","여의나루":"Yeouinaru","마포":"Mapo","공덕":"Gongdeok","애오개":"Aeogae","서대문":"Seodaemun","광화문":"Gwanghwamun","청구":"Cheonggu","신금호":"Singeumho","행당":"Haengdang","마장":"Majang","답십리":"Dapsipri","장한평":"Janghanpyeong","군자":"Gunja","아차산":"Achasan","광나루":"Gwangnaru","천호":"Cheonho","강동":"Gangdong","길동":"Gil-dong","굽은다리":"Gubeundari","명일":"Myeongil","고덕":"Godeok","상일동":"Sangil-dong","강일":"Gangil","미사":"Misa","하남풍산":"Hanam Pungsan","하남시청":"Hanam City Hall","하남검단산":"Hanam Geomdansan","둔촌동":"Dunchon-dong","올림픽공원":"Olympic Park","방이":"Bangi","개롱":"Gaerong","거여":"Geoyeo","마천":"Macheon","응암":"Eungam","역촌":"Yeokchon","독바위":"Dokbawi","구산":"Gusan","새절":"Saejeol","증산":"Jeungsan","디지털미디어시티":"Digital Media City","월드컵경기장":"World Cup Stadium","마포구청":"Mapo-gu Office","망원":"Mangwon","상수":"Sangsu","광흥창":"Gwangheungchang","대흥":"Daeheung","효창공원앞":"Hyochang Park","녹사평":"Noksapyeong","이태원":"Itaewon","한강진":"Hangangjin","버티고개":"Beotigogae","창신":"Changsin","보문":"Bomun","안암":"Anam","고려대":"Korea Univ.","월곡":"Wolgok","상월곡":"Sangwolgok","돌곶이":"Dolgoji","태릉입구":"Taereung","화랑대":"Hwarangdae","봉화산":"Bonghwasan","신내":"Sinnae","장암":"Jangam","수락산":"Suraksan","마들":"Madeul","중계":"Junggye","하계":"Hagye","공릉":"Gongneung","먹골":"Meokgol","중화":"Junghwa","상봉":"Sangbong","면목":"Myeonmok","사가정":"Sagajeong","용마산":"Yongmasan","중곡":"Junggok","어린이대공원":"Children's Grand Park","뚝섬유원지":"Ttukseom Resort","청담":"Cheongdam","강남구청":"Gangnam-gu Office","학동":"Hak-dong","논현":"Nonhyeon","반포":"Banpo","내방":"Naebang","남성":"Namseong","숭실대입구":"Soongsil Univ.","상도":"Sangdo","장승배기":"Jangseungbaegi","신대방삼거리":"Sindaebangsamgeori","보라매":"Boramae","신풍":"Sinpung","남구로":"Namguro","철산":"Cheolsan","광명사거리":"Gwangmyeongsageori","천왕":"Cheonwang","까치울":"Kkachiul","부천종합운동장":"Bucheon Stadium","춘의":"Chunui","신중동":"Sinjung-dong","부천시청":"Bucheon City Hall","상동":"Sang-dong","삼산체육관":"Samsan Gymnasium","굴포천":"Gulpocheon","부평구청":"Bupyeong-gu Office","산곡":"Sangok","석남":"Seongnam","별내":"Byeollae","다산":"Dasan","동구릉":"Donggureung","구리":"Guri","장자호수공원":"Jangja Lake Park","암사역사공원":"Amsa History Park","암사":"Amsa","강동구청":"Gangdong-gu Office","몽촌토성":"Mongchontoseong","석촌":"Seokchon","송파":"Songpa","문정":"Munjeong","장지":"Jangji","복정":"Bokjeong","남위례":"Namwirye","산성":"Sanseong","남한산성입구":"Namhansanseong","단대오거리":"Dandaeogeori","신흥":"Sinheung","수진":"Sujin","모란":"Moran","개화":"Gaehwa","공항시장":"Airport Market","신방화":"Sinbanghwa","마곡나루":"Magongnaru","양천향교":"Yangcheon Hyanggyo","가양":"Gayang","증미":"Jeungmi","등촌":"Deungchon","염창":"Yeomchang","신목동":"Sinmokdong","선유도":"Seonyudo","국회의사당":"National Assembly","샛강":"Saetgang","노들":"Nodeul","흑석":"Heukseok","구반포":"Gubanpo","신반포":"Sinbanpo","사평":"Sapyeong","신논현":"Sinnonhyeon","언주":"Eonju","선정릉":"Seonjeongneung","삼성중앙":"Samseong Jungang","봉은사":"Bongeunsa","삼전":"Samjeon","석촌고분":"Seokchon Gobun","송파나루":"Songpanaru","한성백제":"Hanseong Baekje","둔촌오륜":"Dunchon Oryun","중앙보훈병원":"VHS Medical Center","서울숲":"Seoul Forest","압구정로데오":"Apgujeong Rodeo","한티":"Hanti","구룡":"Guryong","개포동":"Gaepo-dong","대모산입구":"Daemosan","가천대":"Gachon Univ.","태평":"Taepyeong","야탑":"Yatap","이매":"Imae","서현":"Seohyeon","수내":"Sunae","정자":"Jeongja","미금":"Migeum","오리":"Ori","죽전":"Jukjeon","보정":"Bojeong","구성":"Guseong","신갈":"Singal","기흥":"Giheung","상갈":"Sanggal","청명":"Cheongmyeong","영통":"Yeongtong","망포":"Mangpo","매탄권선":"Maetan Gwonseon","수원시청":"Suwon City Hall","매교":"Maegyo","고색":"Gosaek","오목천":"Omokcheon","어천":"Eocheon","야목":"Yamok","사리":"Sari","달월":"Darwol","월곶":"Wolgot","소래포구":"Soraepogu","인천논현":"Incheon Nonhyeon","호구포":"Hogupo","남동인더스파크":"Namdong Induspark","원인재":"Woninjae","연수":"Yeonsu","송도":"Songdo","인하대":"Inha Univ.","숭의":"Sungui","신포":"Sinpo","양재시민의숲":"Yangjae Citizen's Forest","청계산입구":"Cheonggyesan","판교":"Pangyo","동천":"Dongcheon","수지구청":"Suji-gu Office","성복":"Seongbok","상현":"Sanghyeon","광교중앙":"Gwanggyo Jungang","광교":"Gwanggyo","성남":"Seongnam","삼동":"Samdong","경기광주":"Gyeonggi Gwangju","초월":"Chowol","곤지암":"Gonjiam","신둔도예촌":"Sindundoyechon","이천":"Icheon","부발":"Bubal","세종대왕릉":"Sejongdaewangneung","여주":"Yeoju","4·19민주묘지":"4.19 Democratic Cemetery","가오리":"Gaori","가좌":"Gajwa","강매":"Gangmae","곡산":"Goksan","국수":"Guksu","금릉":"Geumneung","금촌":"Geumchon","능곡":"Neunggok","덕소":"Deokso","도농":"Donong","도심":"Dosim","망우":"Mangu","문산":"Munsan","백마":"Baengma","북한산보국문":"Bukhansan Bogungmun","북한산우이":"Bukhansan Ui","삼양":"Samyang","삼양사거리":"Samyang Sageori","서강대":"Sogang Univ.","서빙고":"Seobinggo","솔밭공원":"Solbat Park","솔샘":"Solsaem","수색":"Susaek","신원":"Sinwon","신촌(경의중앙선)":"Sinchon","아신":"Asin","야당":"Yadang","양수":"Yangsu","양원":"Yangwon","양정":"Yangjeong","양평(경의중앙선)":"Yangpyeong","오빈":"Obin","용문":"Yongmun","운길산":"Ungilsan","운정":"Unjeong","원덕":"Wondeok","월롱":"Wollong","응봉":"Eungbong","일산":"Ilsan","정릉":"Jeongneung","중랑":"Jungnang","지평":"Jipyeong","탄현":"Tanhyeon","파주":"Paju","팔당":"Paldang","풍산":"Pungsan","한남":"Hannam","행신":"Haengsin","화계":"Hwagye","화전":"Hwajeon","가평":"Gapyeong","갈매":"Galmae","강촌":"Gangchon","검암":"Geomam","계양":"Gyeyang","공항화물청사":"Airport Cargo Terminal","굴봉산":"Gulbongsan","금곡":"Geumgok","김유정":"Gimyujeong","남춘천":"Namchuncheon","대성리":"Daeseong-ri","마석":"Maseok","백양리":"Baegyang-ri","사릉":"Sareung","상천":"Sangcheon","영종":"Yeongjong","운서":"Unseo","인천공항1터미널":"Incheon Int'l Airport Terminal 1","인천공항2터미널":"Incheon Int'l Airport Terminal 2","천마산":"Cheonmasan","청라국제도시":"Cheongna Int'l City","청평":"Cheongpyeong","춘천":"Chuncheon","퇴계원":"Toegyewon","평내호평":"Pyeongnae Hopyeong","관악산":"Gwanaksan","달미":"Dalmi","당곡":"Danggok","보라매공원":"Boramae Park","보라매병원":"Boramae Medical Center","서울대벤처타운":"Seoul Nat'l Univ. Venture Town","서울지방병무청":"Seoul Regional Office of Military Manpower","서원":"Seowon","선부":"Seonbu","소새울":"Sosaeul","시흥능곡":"Siheung Neunggok","시흥대야":"Siheung Daeya","시흥시청":"Siheung City Hall","신천":"Sincheon","신현":"Sinhyeon","원시":"Wonsi","원종":"Wonjong"};
+/* 행선지(statnTnm/bstatnNm) 중 STN 키가 아닌 이름의 영문 표기 */
+const DEST_EN = {"서울역":"Seoul Station","도라산":"Dorasan","임진강":"Imjingang","순천향대":"Soonchunhyang Univ.","신창(순천향대)":"Sinchang (Soonchunhyang Univ.)","왕십리(성동구청)":"Wangsimni (Seongdong-gu Office)","청량리(서울시립대입구)":"Cheongnyangni (Univ. of Seoul)","총신대입구":"Chongshin Univ. (Isu)","이수":"Isu","쌍용":"Ssangyong (Nazarene Univ.)","남한산성":"Namhansanseong","VHS중앙보훈병원":"VHS Medical Center","개화(9호선)":"Gaehwa","서울대입구(관악산)":"Seoul Nat'l Univ.","동대문역사문화공원(DDP)":"Dongdaemun History & Culture Park","신촌(지하)":"Sinchon","광명(KTX)":"Gwangmyeong","천안(두정)":"Cheonan","온수(성공회대입구)":"Onsu","양평(경의중앙)":"Yangpyeong","대곡(고양시)":"Daegok","서동탄(회차)":"Seodongtan","지축(삼송)":"Jichuk","구파발(은평뉴타운)":"Gupabal","오금(송파)":"Ogeum"};
+/* 국어의 로마자 표기법(간이) — STN_EN에 없는 이름의 폴백 */
+function romanizeKo(s) {
+  var I = ['g','kk','n','d','tt','r','m','b','pp','s','ss','','j','jj','ch','k','t','p','h'];
+  var V = ['a','ae','ya','yae','eo','e','yeo','ye','o','wa','wae','oe','yo','u','wo','we','wi','yu','eu','ui','i'];
+  var FN = {1:'k',4:'n',7:'t',8:'l',16:'m',17:'p',21:'ng'};
+  // decomposed final index -> [stay, move] jamo as initial index (-1 none); stay/neutral in final index
+  // final index: 1 ㄱ,2 ㄲ,3 ㄳ,4 ㄴ,5 ㄵ,6 ㄶ,7 ㄷ,8 ㄹ,9 ㄺ,10 ㄻ,11 ㄼ,12 ㄽ,13 ㄾ,14 ㄿ,15 ㅀ,16 ㅁ,17 ㅂ,18 ㅄ,19 ㅅ,20 ㅆ,21 ㅇ,22 ㅈ,23 ㅊ,24 ㅋ,25 ㅌ,26 ㅍ,27 ㅎ
+  var FSPLIT = {3:[1,9],5:[4,12],6:[4,18],9:[8,0],10:[8,6],11:[8,7],12:[8,9],13:[8,16],14:[8,17],15:[8,18],18:[17,9]};
+  // final index -> initial index when moved by liaison
+  var F2I = {1:0,2:1,4:2,7:3,8:5,16:6,17:7,19:9,20:10,22:12,23:14,24:15,25:16,26:17,27:18};
+  // neutral final class
+  var NEU = {1:1,2:1,24:1,4:4,7:7,19:7,20:7,22:7,23:7,25:7,27:7,8:8,16:16,17:17,26:17,21:21};
+  var out = [], syl = [], i, c, k, t;
+  for (i = 0; i < s.length; i++) {
+    c = s.charCodeAt(i);
+    if (c >= 0xAC00 && c <= 0xD7A3) {
+      t = c - 0xAC00;
+      syl.push({i: Math.floor(t / 588), v: Math.floor((t % 588) / 28), f: t % 28});
+    } else syl.push({ch: s.charAt(i)});
+  }
+  for (k = 0; k < syl.length; k++) {
+    var a = syl[k], b = syl[k + 1], fin = a.f, ini = a.i, pre = a.pre;
+    if (a.ch !== undefined) { out.push(a.ch); continue; }
+    var str = (a.lini !== undefined ? a.lini : I[ini]) + V[a.v], fs = '';
+    if (fin) {
+      if (b && b.ch === undefined) {
+        if (b.i === 11) { // liaison before vowel-initial syllable
+          if (fin === 21) fs = 'ng';
+          else if (fin === 27) fs = '';
+          else if (FSPLIT[fin]) {
+            var sp = FSPLIT[fin];
+            fs = sp[0] === 8 ? 'l' : FN[NEU[sp[0]]] || '';
+            b.lini = I[F2I[sp[1] === 0 ? fin : sp[1]] !== undefined ? F2I[sp[1]] : 9];
+            if (fin === 9) b.lini = 'g';
+            if (fin === 3) { fs = 'k'; b.lini = 's'; }
+            if (fin === 5) { fs = 'n'; b.lini = 'j'; }
+          } else { b.lini = I[F2I[fin]]; fs = ''; }
+        } else {
+          var nf = FSPLIT[fin] ? FSPLIT[fin][0] : fin; // cluster -> first part (ㄺ,ㄻ.. keep simplified below)
+          if (fin === 9) nf = 1; if (fin === 10) nf = 16; if (fin === 14) nf = 17; if (fin === 3) nf = 1; if (fin === 18) nf = 17;
+          nf = NEU[nf] || nf;
+          var bi = b.i;
+          if (nf === 1 || nf === 17 || nf === 7) {
+            if (bi === 2 || bi === 6) nf = nf === 1 ? 21 : nf === 17 ? 16 : 4;
+            else if (bi === 5) { nf = nf === 1 ? 21 : nf === 17 ? 16 : 4; b.lini = 'n'; }
+          } else if (nf === 21 || nf === 16) {
+            if (bi === 5) b.lini = 'n';
+          } else if (nf === 4) {
+            if (bi === 5) { nf = 8; b.lini = 'l'; }
+          } else if (nf === 8) {
+            if (bi === 2) b.lini = 'l';
+            else if (bi === 5) b.lini = 'l';
+          }
+          fs = FN[nf];
+        }
+      } else {
+        var nf2 = FSPLIT[fin] ? FSPLIT[fin][0] : fin;
+        if (fin === 9) nf2 = 1; if (fin === 10) nf2 = 16; if (fin === 14) nf2 = 17; if (fin === 3) nf2 = 1; if (fin === 18) nf2 = 17;
+        fs = FN[NEU[nf2] || nf2] || '';
+      }
+    }
+    out.push(str + fs);
+  }
+  // join and capitalise each run start
+  var r = out.join('');
+  return r.replace(/(^|[^A-Za-z])([a-z])/g, function (m, p, q) { return p + q.toUpperCase(); });
+}
 
 /* API 역명 표기 차이 보정 */
 const ALIAS = {
@@ -992,7 +1523,8 @@ const state = {
   trains: [],
   timer: null
 };
-const STATUS_LABEL = { "0": "진입 중", "1": "도착", "2": "출발", "3": "전역 출발" };
+const STATUS_LABEL = EN ? { "0": "Approaching", "1": "Arrived", "2": "Departed", "3": "Left previous stop" }
+                         : { "0": "진입 중", "1": "도착", "2": "출발", "3": "전역 출발" };
 const LABEL_ZOOM = 13;
 const BASIC_LABEL_ZOOM = 12; /* 기본 지도는 자체 역 라벨이 없어 한 단계 일찍 역명 노출 */
 /* 역 dot 표시 줌 임계값: ALL 뷰는 dot이 590개라 줌아웃 시 숨겨 부하↓(특히 애플 DOM 마커),
@@ -1252,15 +1784,16 @@ function bearingDeg(a, b) {
   const dLng = (b[1] - a[1]) * Math.cos(((a[0] + b[0]) / 2) * Math.PI / 180);
   return Math.atan2(dLng, dLat) * 180 / Math.PI;
 }
+/* 표시용 방향(번역됨) — 비교 키가 필요하면 dirLabelLine 을 쓴다 */
 function dirLabel(t) {
   const ln = lineOfTrain(t);
   const L_ = LINES[ln];
   if (L_.loop) {
     const term = resolve(t.statnTnm);
     const loopArr = L_.segments[0].slice(0, -1);
-    if (!term || loopArr.includes(term)) return t.updnLine === "0" ? "내선" : "외선";
+    if (!term || loopArr.includes(term)) return dirT(t.updnLine === "0" ? "내선" : "외선");
   }
-  return t.updnLine === "0" ? "상행" : "하행";
+  return dirT(t.updnLine === "0" ? "상행" : "하행");
 }
 const distCache = {};
 function distMap(lineName, terminus) {
@@ -1387,15 +1920,15 @@ function trainPinHtml(t, heading, len) {
   </div>`;
 }
 function popupHtml(t) {
-  return `<div class="pp-line">${lineOfTrain(t)}${isExpress(t) ? " · 급행" : ""}${t.lstcarAt === "1" ? " · 막차" : ""}</div>
-    <div class="pp-title">${t.statnNm} ${STATUS_LABEL[String(t.trainSttus)] || ""}</div>
-    <div class="pp-meta">${dirLabel(t)} · ${t.statnTnm}행 · 열차 ${t.trainNo}</div>`;
+  return `<div class="pp-line">${lnN(lineOfTrain(t))}${isExpress(t) ? " · " + tx("express") : ""}${t.lstcarAt === "1" ? " · " + tx("lastTrain") : ""}</div>
+    <div class="pp-title">${sn(t.statnNm)} ${STATUS_LABEL[String(t.trainSttus)] || ""}</div>
+    <div class="pp-meta">${dirLabel(t)} · ${tx("bound", { d: destT(t.statnTnm) })} · ${tx("trainNo", { n: t.trainNo })}</div>`;
 }
 function loadScript(src) {
   return new Promise((res, rej) => {
     const s = document.createElement("script");
     s.src = src; s.async = true;
-    s.onload = res; s.onerror = () => rej(new Error("스크립트 로드 실패"));
+    s.onload = res; s.onerror = () => rej(new Error(tx("errScript")));
     document.head.appendChild(s);
   });
 }
@@ -1442,7 +1975,7 @@ const basicAdapter = {
     m.on("click", () => onMapClick(pos));
     if (!noLabel) this.labelLayer.addLayer(
       L.marker(pos, { opacity: 0, interactive: false, icon: L.divIcon({ className: "", iconSize: [0, 0] }) })
-        .bindTooltip(name, { permanent: true, direction: "right", offset: [isTerminal ? 9 : 7, 0], className: "stn-label" })
+        .bindTooltip(sn(name), { permanent: true, direction: "right", offset: [isTerminal ? 9 : 7, 0], className: "stn-label" })
     );
     this.syncLabels();
   },
@@ -1502,26 +2035,26 @@ const naverAdapter = {
   resize() { if (this.map) naver.maps.Event.trigger(this.map, "resize"); },
   async ensure() {
     if (window.naver && window.naver.maps && !window.__naverAuthFailed) return true;
-    if (!state.naverId) { toast("네이버 지도 클라이언트 ID를 먼저 입력해 주세요."); return false; }
+    if (!state.naverId) { toast(tx("naverNoId")); return false; }
     /* 인증 실패가 뒤늦게 와도 빈 지도에 갇히지 않도록 자동 복귀 */
     window.navermap_authFailure = () => {
       window.__naverAuthFailed = true;
       if (state.mapProvider === "naver") {
-        toast("네이버 지도 인증 실패. 기본 지도로 복귀합니다. NCP 콘솔의 Web 서비스 URL에 현재 사이트 주소를 등록해 주세요.");
+        toast(tx("naverAuthFallback"));
         setProvider("basic");
       }
     };
     /* 신규 Maps 상품(2025~)은 ncpKeyId로 인증한다 */
     window.__naverAuthFailed = false;
     try {
-      await loadScript(`https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=${encodeURIComponent(state.naverId)}`);
+      await loadScript(`https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=${encodeURIComponent(state.naverId)}${EN ? "&language=en" : ""}`);
     } catch (e) {
-      toast("네이버 지도 스크립트를 불러오지 못했습니다.");
+      toast(tx("naverScriptFail"));
       return false;
     }
     await new Promise(r => setTimeout(r, 1500)); /* 인증 콜백 대기 */
     if (window.naver && window.naver.maps && !window.__naverAuthFailed) return true;
-    toast("네이버 지도 인증에 실패했습니다. 콘솔의 Web 서비스 URL 등록을 확인해 주세요.");
+    toast(tx("naverAuthFail"));
     return false;
   },
   init(center, zoom) {
@@ -1681,25 +2214,26 @@ const appleAdapter = {
     if (this._ready) return true;
     if (!window.mapkit) {
       try { await loadScript("https://cdn.apple-mapkit.com/mk/5.x.x/mapkit.js"); }
-      catch (e) { toast("애플 지도 스크립트를 불러오지 못했습니다."); return false; }
+      catch (e) { toast(tx("appleScriptFail")); return false; }
     }
     /* 토큰 선검증: MapKit JS는 지도를 만들 때에야 인증을 시작하므로, 여기선 키 존재만 확인 */
     try {
       const j = await (await fetch("/api/mapkit-token")).json();
-      if (!j || !j.token) { toast("애플 지도를 불러오지 못했습니다."); return false; }
+      if (!j || !j.token) { toast(tx("appleLoadFail")); return false; }
       this._token = j.token;
-    } catch (e) { toast("애플 지도 토큰을 가져오지 못했습니다."); return false; }
+    } catch (e) { toast(tx("appleTokenFail")); return false; }
     if (!this._initCalled) {
       this._initCalled = true;
       /* 토큰이 유효하지 않으면(맵 생성 후 비동기 발생) 기본 지도로 자동 복귀 */
       mapkit.addEventListener("error", e => {
         if (state.mapProvider === "apple" && !this._errHandled) {
           this._errHandled = true;
-          toast("애플 지도 인증에 실패했습니다. 예비 지도로 복귀합니다.");
+          toast(tx("appleAuthFallback"));
           setProvider("basic");
         }
       });
       mapkit.init({
+        ...(EN ? { language: "en" } : {}),   /* 영어 UI면 지도 라벨도 영어로 */
         authorizationCallback: done => {
           if (this._token) { const t = this._token; this._token = null; done(t); }
           else fetch("/api/mapkit-token").then(r => r.json()).then(j => { if (j && j.token) done(j.token); }).catch(() => {});
@@ -1855,7 +2389,7 @@ const appleAdapter = {
     dot._el.style.display = this.dotsOn ? "" : "none";
     this.stations.push(dot);
     if (noLabel) return;
-    const lbl = this._ann(pos, this._wrap(`<div class="stn-label-dark">${name}</div>`, 0, 0));
+    const lbl = this._ann(pos, this._wrap(`<div class="stn-label-dark">${sn(name)}</div>`, 0, 0));
     lbl._el.style.display = this.labelsOn ? "" : "none";
     this.labels.push(lbl);
   },
@@ -2189,7 +2723,7 @@ setInterval(() => {
       const was = trainTier; trainTier = tier;
       if (tier === "hidden") {
         adapter.clearTrains();
-        if (!_trainHideNotified) { _trainHideNotified = true; toast("지도를 확대하면 열차가 표시됩니다"); }
+        if (!_trainHideNotified) { _trainHideNotified = true; toast(tx("zoomForTrains")); }
       } else if (was === "hidden" || tier === "anim") reIconTrains(); /* 숨김 복귀·애니 재개 시 현재 위치로 스냅 */
     }
   } catch (e) {}
@@ -3027,17 +3561,17 @@ function renderTrains() {
 function renderList() {
   const list = document.getElementById("trainList");
   const filtered = state.trains.filter(t => state.dirFilter === "all" || String(t.updnLine) === state.dirFilter);
-  document.getElementById("panelCount").textContent = filtered.length ? filtered.length + "대" : "";
-  document.getElementById("listFab").textContent = state.trains.length ? `운행 열차 ${state.trains.length}대` : "운행 열차";
+  document.getElementById("panelCount").textContent = filtered.length ? tx("nTrains", { n: filtered.length }) : "";
+  document.getElementById("listFab").textContent = state.trains.length ? tx("trainsFabN", { n: state.trains.length }) : tx("trainsFab");
   if (!filtered.length) {
-    list.innerHTML = `<div class="empty">표시할 열차가 없습니다.<br>${state.mode === "live" ? "운행 시간이 아니거나 데이터 수신에 실패했을 수 있습니다." : ""}</div>`;
+    list.innerHTML = `<div class="empty">${tx("noTrains")}<br>${state.mode === "live" ? tx("noTrainsLive") : ""}</div>`;
     return;
   }
   list.innerHTML = filtered.map(t => `<div class="train-item" data-key="${tkeyOf(t)}">
       <div class="t-marker${isExpress(t) ? " express" : ""}" style="background:${colorOfTrain(t)}">${isExpress(t) ? "急" : "🚇"}</div>
       <div class="t-info">
-        <div class="t-top"><span class="t-station">${t.statnNm}</span><span class="t-status">${STATUS_LABEL[String(t.trainSttus)] || ""}</span></div>
-        <div class="t-sub">${state.line === "ALL" ? lineOfTrain(t) + " · " : ""}<b style="color:var(--text)">${dirLabel(t)}</b> · ${t.statnTnm}행 · ${t.trainNo}${isExpress(t) ? ' <span class="badge express">급행</span>' : ""}${t.lstcarAt === "1" ? ' <span class="badge">막차</span>' : ""}</div>
+        <div class="t-top"><span class="t-station">${sn(t.statnNm)}</span><span class="t-status">${STATUS_LABEL[String(t.trainSttus)] || ""}</span></div>
+        <div class="t-sub">${state.line === "ALL" ? lnN(lineOfTrain(t)) + " · " : ""}<b style="color:var(--text)">${dirLabel(t)}</b> · ${tx("bound", { d: destT(t.statnTnm) })} · ${t.trainNo}${isExpress(t) ? ' <span class="badge express">' + tx("express") + '</span>' : ""}${t.lstcarAt === "1" ? ' <span class="badge">' + tx("lastTrain") + '</span>' : ""}</div>
       </div>
     </div>`).join("");
   list.querySelectorAll(".train-item").forEach(el =>
@@ -3055,9 +3589,9 @@ async function tryFetch(url, opts) {
   const res = await fetch(url, opts || {});
   let data;
   try { data = await res.json(); }
-  catch { throw new Error(`응답 해석 실패 (HTTP ${res.status})`); }
+  catch { throw new Error(tx("errParse", { s: res.status })); }
   if (data.code && String(data.code).startsWith("ERROR")) throw new Error(data.message || data.code);
-  if (data.status && data.status >= 400) throw new Error(data.message || `API 오류 (${data.code || data.status})`);
+  if (data.status && data.status >= 400) throw new Error(data.message || tx("errApi", { c: data.code || data.status }));
   if (data.errorMessage && data.errorMessage.code && data.errorMessage.code !== "INFO-000")
     throw new Error(data.errorMessage.message || data.errorMessage.code);
   if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
@@ -3070,7 +3604,7 @@ async function directFetchAll(lines, opts) {
   ));
   const merged = [];
   for (const r of results) if (r.status === "fulfilled" && Array.isArray(r.value.realtimePositionList)) merged.push(...r.value.realtimePositionList);
-  if (!merged.length) throw new Error("전 노선 직접 호출 실패");
+  if (!merged.length) throw new Error(tx("errDirectAll"));
   return { realtimePositionList: merged };
 }
 
@@ -3151,10 +3685,10 @@ async function fetchLive(force) {
     if (state.line === "ALL" || state.line.includes(",")) sources.push({ name: "직접", runAll: true, lines: sub || (state.line === "ALL" ? Object.keys(LINES) : state.line.split(",").filter(l => LINES[l])) });
     else sources.push({ name: "직접", url: `https://swopenapi.seoul.go.kr/api/subway/${encodeURIComponent(state.apiKey)}/json/realtimePosition/0/200/${encodeURIComponent(state.line)}` });
   }
-  if (!sources.length) { toast("인증키를 입력하거나 프록시가 있는 배포 환경에서 실행해 주세요."); return; }
+  if (!sources.length) { toast(tx("needKey")); return; }
   if (state.dataPath) sources.sort((a, b) => (a.name === state.dataPath ? -1 : 0) - (b.name === state.dataPath ? -1 : 0));
 
-  setStatus("불러오는 중...", false);
+  setStatus(tx("loading"), false);
   /* 1단계: 수신 (수신 오류만 여기서 잡는다) */
   const errors = [];
   let data = null, used = null;
@@ -3165,13 +3699,13 @@ async function fetchLive(force) {
       used = src;
       break;
     } catch (e) {
-      const msg = e instanceof TypeError ? "연결 끊김 (서버 응답 지연 또는 차단)" : e.message;
-      errors.push(`${src.name}: ${msg}`);
+      const msg = e instanceof TypeError ? tx("errConn") : e.message;
+      errors.push(`${src.name === "프록시" ? tx("srcProxy") : tx("srcDirect")}: ${msg}`);
     }
   }
   if (!data) {
-    setStatus("수신 실패", false);
-    toast("실시간 데이터를 가져오지 못했습니다. " + errors.join(" · "));
+    setStatus(tx("statusFail"), false);
+    toast(tx("liveFail") + " " + errors.join(" · "));
     return;
   }
   state.calls++;
@@ -3185,11 +3719,11 @@ async function fetchLive(force) {
     renderTrains();
   } catch (e) {
     console.error("렌더링 오류:", e);
-    setStatus("표시 오류", false);
-    toast(`데이터는 받았으나 화면 표시 중 오류: ${e.message}`);
+    setStatus(tx("statusRenderErr"), false);
+    toast(tx("renderErr", { m: e.message }));
     return;
   }
-  setStatus("실시간", true);
+  setStatus(tx("statusLive"), true);
 }
 
 /* ════════════════ 모의 데이터 ════════════════ */
@@ -3250,7 +3784,7 @@ function mockStep() {
   }
   state.trains = mockTrains.map(t => ({ ...t }));
   renderTrains();
-  setStatus("모의 데이터 · 자동 운행", false);
+  setStatus(tx("statusMockAuto"), false);
 }
 
 /* ════════════════ 갱신 루프 ════════════════ */
@@ -3293,7 +3827,7 @@ if (NATIVE) {
   let nativeGeoSeen = false;   /* 네이티브가 한 번이라도 응답 → geoRequest 지원 확정, 폴백 불필요 */
   let bridgeGeoDead = false;   /* 한 번 무응답 타임아웃 → 구(1.0) 네이티브로 판단, 다음부턴 즉시 폴백 */
   window.__nativeGeoResolve = (id, lat, lng) => { nativeGeoSeen = true; const cb = geoDone(id); if (cb) cb.success({ coords: { latitude: lat, longitude: lng } }); };
-  window.__nativeGeoReject = (id, message) => { nativeGeoSeen = true; const cb = geoDone(id); if (cb && cb.error) cb.error({ code: 1, message: message || "위치 권한이 거부되었습니다." }); };
+  window.__nativeGeoReject = (id, message) => { nativeGeoSeen = true; const cb = geoDone(id); if (cb && cb.error) cb.error({ code: 1, message: message || tx("geoDenied") }); };
   /* navigator.geolocation 자체를 심(shim) 객체로 교체 — WKWebView는 geolocation 메서드에 대한
      단순 대입을 조용히 무시할 수 있어, defineProperty로 프로퍼티(게터)를 통째로 바꿔야
      MapKit JS 등 모든 JS 호출이 확실히 네이티브 브리지를 타게 된다 */
@@ -3309,7 +3843,7 @@ if (NATIVE) {
       }, nativeGeoSeen ? 15000 : 2500);
       geoCallbacks.set(id, { success, error, timer });
       try { window.webkit.messageHandlers.ui.postMessage({ type: "geoRequest", id }); }
-      catch (e) { if (geoDone(id) && error) error({ code: 2, message: "네이티브 브리지 오류" }); }
+      catch (e) { if (geoDone(id) && error) error({ code: 2, message: tx("bridgeErr") }); }
     },
     watchPosition(success, error) { this.getCurrentPosition(success, error); return ++geoReqId; },   /* 연속 추적은 이 앱에 불필요 — 1회성으로 대응 */
     clearWatch() {},
@@ -3369,6 +3903,7 @@ if (NATIVE) {
       favDel: name => { const el = document.querySelector('.fav-del[data-name="' + CSS.escape(name) + '"]'); if (el) el.click(); },
       favMove: (i, dir) => { const el = document.querySelector('.fav-mv[data-i="' + i + '"][data-dir="' + dir + '"]'); if (el) el.click(); },
       close: () => { const p = document.getElementById("settings"); if (p && p.classList.contains("open")) document.getElementById("settingsBtn").click(); },
+      selectLang: v => setLangPref(v, true),   /* 네이티브가 appLang 저장 후 직접 재로드한다(웹은 저장만) */
     },
     trainPanel: {
       open: () => document.getElementById("listFab").click(),
@@ -3432,33 +3967,34 @@ function postCard() {
       const rr = routeResult;
       window.webkit.messageHandlers.ui.postMessage({
         type: "card", mode: "route", open: true,
-        routeMode, from: routeFrom, to: routeTo,
-        favs: routeMode === "select" ? routeFavs().map(f => ({ name: f.name, lines: f.lines.join(" · "), colors: f.colors })) : [],
-        results: routeMode === "select" ? routeSearchResults.map(n => ({ name: n, lines: [...STATION_LINES[n]].sort((a, b) => lineSortKey(a) - lineSortKey(b)).join(" · ") })) : [],
+        /* 표시 문자열은 여기서 현지화(네이티브는 그대로 표시). name 은 routePick 으로 돌려받는 식별자라 한국어 원본, label 이 표시명 */
+        routeMode, from: sn(routeFrom), to: sn(routeTo),
+        favs: routeMode === "select" ? routeFavs().map(f => ({ name: f.name, label: sn(f.name), lines: f.lines.map(lnN).join(" · "), colors: f.colors })) : [],
+        results: routeMode === "select" ? routeSearchResults.map(n => ({ name: n, label: sn(n), lines: [...STATION_LINES[n]].sort((a, b) => lineSortKey(a) - lineSortKey(b)).map(lnN).join(" · ") })) : [],
         tabs: routeHasAlts() ? [
-          { key: "fast", label: "최단시간", total: routeAlts.fast.totalMin, transfers: routeAlts.fast.transfers, on: routeTab === "fast" },
-          { key: "min", label: "최소환승", total: routeAlts.min.totalMin, transfers: routeAlts.min.transfers, on: routeTab === "min" },
+          { key: "fast", label: tx("fastest"), total: routeAlts.fast.totalMin, transfers: routeAlts.fast.transfers, on: routeTab === "fast" },
+          { key: "min", label: tx("fewestTransfers"), total: routeAlts.min.totalMin, transfers: routeAlts.min.transfers, on: routeTab === "min" },
         ] : [],
         route: rr ? {
           total: rr.totalMin, transfers: rr.transfers,
           wait: wait == null ? -1 : wait,
           arrive: clockAfter(rr.totalMin + (wait || 0)),
-          segments: rr.segments.map(s => ({ line: s.line, color: s.color, from: s.from, to: s.to, stops: s.stops, min: s.min, quick: s.quick || "" })),
+          segments: rr.segments.map(s => ({ line: lnN(s.line), color: s.color, from: sn(s.from), to: sn(s.to), stops: s.stops, min: s.min, quick: s.quick || "" })),
         } : null,
         /* 주행 중이면 실시간 진행 정보도 함께(네이티브 카드가 같은 메시지로 렌더) */
         tripLive: (() => {
           if (routeMode !== "trip") return null;
           const p = tripProgress();
-          return p ? { remain: p.remain, arriveAt: p.arriveAt, line: p.line, color: p.color,
-                       nextStation: p.nextStation, legTo: p.legTo, isLast: p.isLast, done: p.done, legIdx: p.legIdx,
+          return p ? { remain: p.remain, arriveAt: p.arriveAt, line: lnN(p.line), color: p.color,
+                       nextStation: sn(p.nextStation), legTo: sn(p.legTo), isLast: p.isLast, done: p.done, legIdx: p.legIdx,
                        waiting: !!p.waiting, waitMin: p.waitMin || 0,
-                       dwelling: !!p.dwelling, dwellStation: p.dwellStation || "",
-                       tracking: !!p.tracking, trainDest: p.trainDest || "", trackStale: !!p.trackStale, trackLost: !!p.trackLost,
+                       dwelling: !!p.dwelling, dwellStation: sn(p.dwellStation || ""),
+                       tracking: !!p.tracking, trainDest: destT(p.trainDest || ""), trackStale: !!p.trackStale, trackLost: !!p.trackLost,
                        alight: !!p.alight, autoNote: p.autoNote || "",
                        pick: p.pick && !p.done ? { legIdx: p.pick.legIdx, transfer: !!p.pick.transfer, repick: !!p.pick.repick, dismissed: !!p.pick.dismissed, loaded: !!p.pick.loaded,
-                         strip: p.pick.strip ? { prev: p.pick.strip.prev || "", origin: p.pick.strip.origin || "", next: p.pick.strip.next || "", line: p.pick.strip.line, color: p.pick.strip.color,
-                                                 stations: (p.pick.strip.stations || []).map(x => x || ""), originIdx: p.pick.strip.originIdx } : null,
-                         rows: p.pick.rows.map(r => ({ no: r.no, dest: r.dest, line: r.line, color: r.color, status: r.status, short: r.short || "", express: !!r.express, pos: r.pos })) } : null } : null;
+                         strip: p.pick.strip ? { prev: sn(p.pick.strip.prev || ""), origin: sn(p.pick.strip.origin || ""), next: sn(p.pick.strip.next || ""), line: lnN(p.pick.strip.line), color: p.pick.strip.color,
+                                                 stations: (p.pick.strip.stations || []).map(x => sn(x || "")), originIdx: p.pick.strip.originIdx } : null,
+                         rows: p.pick.rows.map(r => ({ no: r.no, dest: destT(r.dest), line: lnN(r.line), color: r.color, status: r.status, short: r.short || "", express: !!r.express, pos: r.pos })) } : null } : null;
         })(),
       });
       return;
@@ -3554,6 +4090,8 @@ function postSettings() {
       favCount: (document.getElementById("favCount")?.textContent || "").trim(),
       favEmpty: (document.querySelector("#favList .fav-empty")?.textContent || "").trim() || null,
       mapProviders, favorites,
+      /* 언어 선택(자동/한국어/English) — 네이티브 시트가 그대로 그리고, 탭하면 settingsPanel.selectLang + 웹뷰 재로드 */
+      langOptions: [...document.querySelectorAll("#langSeg button")].map(b => ({ value: b.dataset.lang, label: b.textContent.trim(), on: b.classList.contains("on") })),
     });
   } catch (e) {}
 }
@@ -3581,7 +4119,7 @@ function postTrainPanel() {
       open: panelEl.classList.contains("open"),
       title: document.getElementById("panelTitle").textContent,
       count: (document.getElementById("panelCount")?.textContent || "").trim(),
-      fabLabel: (document.getElementById("listFab")?.textContent || "운행 열차").trim(),
+      fabLabel: (document.getElementById("listFab")?.textContent || tx("trainsFab")).trim(),
       dirTabs, items,
       emptyMsg: (document.querySelector("#trainList .empty")?.textContent || "").trim() || null,
     });
@@ -3677,10 +4215,10 @@ function selectLine(name) {
   document.querySelectorAll("#lineChips .chip").forEach(c =>
     c.classList.toggle("on", c.dataset.line === "ALL" ? name === "ALL" : sel.includes(c.dataset.line)));
   postTopbar();
-  document.getElementById("panelTitle").textContent = name === "ALL" ? "전체 노선 운행 열차" : sel.join("·") + " 운행 열차";
+  document.getElementById("panelTitle").textContent = name === "ALL" ? tx("trainsAllLines") : tx("trainsOfLines", { l: sel.map(lnN).join("·") });
   const isLoop = sel.length === 1 && LINES[sel[0]] && !!LINES[sel[0]].loop;
-  document.getElementById("tabUp").textContent = isLoop ? "내선" : "상행";
-  document.getElementById("tabDown").textContent = isLoop ? "외선" : "하행";
+  document.getElementById("tabUp").textContent = dirT(isLoop ? "내선" : "상행");
+  document.getElementById("tabDown").textContent = dirT(isLoop ? "외선" : "하행");
   if (state.mode === "mock") mockInit();
   refresh(true);
   restartTimer();
@@ -3719,7 +4257,7 @@ async function setProvider(p) {
   } catch (e) {
     console.error("지도 전환 실패:", e);
     if (p !== "basic") {
-      toast(`지도 전환 중 오류(${e.message}). 예비 지도로 복구합니다.`);
+      toast(tx("mapSwitchErr", { m: e.message }));
       showLayer("map-basic");
       state.mapProvider = "basic";
       adapter = ADAPTERS.basic;
@@ -3748,7 +4286,7 @@ const chipsEl = document.getElementById("lineChips");
   b.className = "chip"; b.dataset.line = "ALL";
   b.style.setProperty("--c", "#ECEDEE");                 /* 전체 칩 활성은 near-white로 밝게(지도 테마 --line은 ALL_VIEW.color 유지) */
   b.style.setProperty("--ink", inkOn("#ECEDEE"));
-  b.innerHTML = `<span class="swatch"></span>전체`;
+  b.innerHTML = `<span class="swatch"></span>${tx("all")}`;
   b.addEventListener("click", () => chipClick("ALL"));
   chipsEl.appendChild(b);
 }
@@ -3757,7 +4295,7 @@ for (const [name, def] of Object.entries(LINES)) {
   b.className = "chip"; b.dataset.line = name;
   b.style.setProperty("--c", def.color);
   b.style.setProperty("--ink", inkOn(def.color));
-  b.innerHTML = `<span class="swatch"></span>${name}`;
+  b.innerHTML = `<span class="swatch"></span>${lnN(name)}`;
   b.addEventListener("click", () => chipClick(name));
   chipsEl.appendChild(b);
 }
@@ -3905,13 +4443,13 @@ function etaSec(a) {
 function etaText(a, elapsed = 0) {
   const real = Number(a.barvlDt) || 0;
   let sec = etaSec(a);
-  if (sec === 99999) return "방금 출발";
-  if (sec === 99998) return a.arvlMsg2 || "정보 없음";
+  if (sec === 99999) return tx("justLeft");
+  if (sec === 99998) return (!EN && a.arvlMsg2) || tx("noInfo");
   sec = Math.max(0, Math.round(sec - elapsed));
-  if (sec <= 10) return "지금 도착";
+  if (sec <= 10) return tx("arrivingNow");
   const m = Math.floor(sec / 60), s = sec % 60;
-  const t = m > 0 ? `${m}분${s ? " " + s + "초" : ""} 후 도착` : `${s}초 후 도착`;
-  return real > 0 ? t : "약 " + t;
+  const t = tx("arrIn", { t: fmtIn(m, s) });
+  return real > 0 ? t : tx("approx", { t });
 }
 /* 위치 피드 한 노선 조회 (도착 유령 대조용) */
 async function fetchPosition(line, force) {
@@ -3921,7 +4459,7 @@ async function fetchPosition(line, force) {
     try { return await tryFetch(`/api/position?line=${encodeURIComponent(line)}${fresh}`, opts); } catch (e) {}
   }
   if (state.apiKey) return await tryFetch(`https://swopenapi.seoul.go.kr/api/subway/${encodeURIComponent(state.apiKey)}/json/realtimePosition/0/200/${encodeURIComponent(line)}`, opts);
-  throw new Error("위치 조회 불가");
+  throw new Error(tx("errPosition"));
 }
 
 /* 유령 도착 제거: 실시간 도착 API는 이미 지나간 열차의 '도착' 이벤트를 안 지워, 차가 없어도
@@ -4137,31 +4675,31 @@ function arrivalItemRowHtml(it, elapsed) {
   if (it.parked) return `<div class="sc-row parked">
       <span class="sc-dot" style="background:${it.color}"></span>
       <div class="sc-main">
-        <div class="sc-eta">출발 대기</div>
-        <div class="sc-sub">${it.line ? it.line + " · " : ""}${it.dest}행 · ${it.curStn || ""}에서 출발 대기${it.dwellMin != null ? ` · ${it.dwellMin}분째` : ""}</div>
+        <div class="sc-eta">${tx("dwellWait")}</div>
+        <div class="sc-sub">${it.line ? lnN(it.line) + " · " : ""}${tx("bound", { d: destT(it.dest) })} · ${tx("dwellAt", { s: sn(it.curStn || "") })}${it.dwellMin != null ? " · " + tx("dwellFor", { n: it.dwellMin }) : ""}</div>
       </div>
     </div>`;
   const sec = Math.max(0, Math.round(it.etaSec - elapsed));
   let eta;
-  if (sec <= 15) eta = "지금 도착";
-  else if (sec <= 50) eta = "곧 도착";
-  else if (it.measured) { const m = Math.floor(sec / 60), s = sec % 60; eta = m ? `${m}분${s ? " " + s + "초" : ""} 후` : `${s}초 후`; }
-  else eta = `약 ${Math.round(sec / 60)}분 후`;
-  const where = (!it.measured && it.curStn && it.away > 0) ? ` · ${it.curStn}` : "";
+  if (sec <= 15) eta = tx("arrivingNow");
+  else if (sec <= 50) eta = tx("arrivingSoon");
+  else if (it.measured) { const m = Math.floor(sec / 60), s = sec % 60; eta = fmtIn(m, s); }
+  else eta = tx("aboutInMin", { m: Math.round(sec / 60) });
+  const where = (!it.measured && it.curStn && it.away > 0) ? ` · ${sn(it.curStn)}` : "";
   return `<div class="sc-row">
       <span class="sc-dot" style="background:${it.color}"></span>
       <div class="sc-main">
         <div class="sc-eta">${eta}</div>
-        <div class="sc-sub">${it.line ? it.line + " · " : ""}${it.dest}행${it.express ? " · 급행" : ""}${where}</div>
+        <div class="sc-sub">${it.line ? lnN(it.line) + " · " : ""}${tx("bound", { d: destT(it.dest) })}${it.express ? " · " + tx("express") : ""}${where}</div>
       </div>
     </div>`;
 }
 function arrivalColHtml(items, fallback, elapsed, inout) {
   const rows = items.slice(0, 5).map(it => arrivalItemRowHtml(it, elapsed)).join("");
   return `<div class="sc-col">
-    <div class="sc-colhead">${fallback}</div>
+    <div class="sc-colhead">${dirT(fallback)}</div>
     ${rows || timetableFallbackHtml(inout)}
-    <button class="sc-tt-btn" data-inout="${inout}">시간표 보기</button>
+    <button class="sc-tt-btn" data-inout="${inout}">${tx("viewTimetable")}</button>
   </div>`;
 }
 function lineSortKey(ln) { const m = String(ln).match(/^(\d+)호선/); return m ? Number(m[1]) : 100 + (ln.charCodeAt(0) || 0); }
@@ -4179,8 +4717,8 @@ function renderArrival(items, elapsed = 0) {
   if (lines.length >= 2) {
     const cur = (scLineFilter && lines.includes(scLineFilter)) ? scLineFilter : "전체";
     tabs = `<div class="sc-linetabs">
-      <button data-line="전체" class="${cur === "전체" ? "on" : ""}">전체</button>
-      ${lines.map(ln => `<button data-line="${ln}" class="${cur === ln ? "on" : ""}" style="--lc:${colorByLine[ln]}"><span class="lt-dot"></span>${ln}</button>`).join("")}
+      <button data-line="전체" class="${cur === "전체" ? "on" : ""}">${tx("all")}</button>
+      ${lines.map(ln => `<button data-line="${ln}" class="${cur === ln ? "on" : ""}" style="--lc:${colorByLine[ln]}"><span class="lt-dot"></span>${lnN(ln)}</button>`).join("")}
     </div>`;
     if (cur !== "전체") all = all.filter(it => it.line === cur);
   } else if (scLineFilter) scLineFilter = null;
@@ -4188,7 +4726,7 @@ function renderArrival(items, elapsed = 0) {
   const up = valid.filter(a => a.updn === "상행" || a.updn === "내선");
   const down = valid.filter(a => a.updn === "하행" || a.updn === "외선");
   body.innerHTML = tabs + `<div class="sc-cols">${arrivalColHtml(up, "상행", elapsed, "1")}${arrivalColHtml(down, "하행", elapsed, "2")}</div>`
-    + `<button class="route-go" id="routeGo"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>여기서 출발</button>`;
+    + `<button class="route-go" id="routeGo"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>${tx("routeFromHere")}</button>`;
   body.querySelectorAll(".sc-linetabs button").forEach(b => b.addEventListener("click", () => { scLineFilter = b.dataset.line; renderArrival(scList, (Date.now() - scFetchedAt) / 1000); }));
   body.querySelectorAll(".sc-tt-btn").forEach(b => b.addEventListener("click", () => openTimetable(scStation, b.dataset.inout)));
   const rg = document.getElementById("routeGo"); if (rg) rg.addEventListener("click", () => { haptic(); startRoute(); });
@@ -4259,10 +4797,7 @@ function routeNextWaitMin() {
   return sec == null ? null : Math.round(sec / 60);
 }
 function clockAfter(min) {
-  const d = new Date(Date.now() + min * 60000);
-  let h = d.getHours(), m = d.getMinutes();
-  const ap = h < 12 ? "오전" : "오후"; h = h % 12 || 12;
-  return `${ap} ${h}:${String(m).padStart(2, "0")}`;
+  return fmtClock(new Date(Date.now() + min * 60000));
 }
 /* 경로 탭(최단시간/최소환승) — 두 대안이 동일하면 표시하지 않는다 */
 function sameRoute(a, b) {
@@ -4275,8 +4810,8 @@ function routeTabsHtml() {
   if (!routeHasAlts()) return "";
   const t = (k, label, r) => `<button class="route-tab${routeTab === k ? " on" : ""}" data-tab="${k}">
       <span class="rt-label">${label}</span>
-      <span class="rt-val"><b>${r.totalMin}분</b> · 환승 ${r.transfers}회</span></button>`;
-  return `<div class="route-tabs">${t("fast", "최단시간", routeAlts.fast)}${t("min", "최소환승", routeAlts.min)}</div>`;
+      <span class="rt-val"><b>${fmtMin(r.totalMin)}</b> · ${tx("transfersN", { n: r.transfers })}</span></button>`;
+  return `<div class="route-tabs">${t("fast", tx("fastest"), routeAlts.fast)}${t("min", tx("fewestTransfers"), routeAlts.min)}</div>`;
 }
 function setRouteTab(tab) {
   if (!routeAlts[tab] || routeTab === tab) return;
@@ -4302,8 +4837,8 @@ function hideTripPill() {
 const PS_STEP = 108, PS_PAD = 56;
 function psX(pos) { return PS_PAD + pos * PS_STEP; }
 function pickListHtml(pick) {
-  const title = pick.repick ? "탄 열차 변경" : pick.transfer ? "환승 열차를 선택하세요" : "탈 열차를 선택하세요";
-  if (pick.dismissed) return `<div class="pick-head collapsed"><span>${title}</span><button class="pick-toggle" id="pickToggle">열차 선택</button></div>`;
+  const title = pick.repick ? tx("pickChange") : pick.transfer ? tx("pickTransfer") : tx("pickBoard");
+  if (pick.dismissed) return `<div class="pick-head collapsed"><span>${title}</span><button class="pick-toggle" id="pickToggle">${tx("pickOpen")}</button></div>`;
   const m = pick.strip || { stations: [], originIdx: 3 };
   const sts = m.stations || [];
   const width = PS_PAD * 2 + Math.max(0, sts.length - 1) * PS_STEP;
@@ -4312,17 +4847,17 @@ function pickListHtml(pick) {
   /* 같은 자리에 겹치는 열차는 위로 쌓는다 */
   const lanes = {}; const rows = pick.rows.map(r => { const key = Math.round(r.pos * 4); const lane = lanes[key] || 0; lanes[key] = lane + 1; return { ...r, lane }; });
   const trains = rows.map(r => `<button class="ps-train" data-no="${r.no}" data-leg="${pick.legIdx}" style="left:${psX(r.pos)}px;--lane:${r.lane}" title="${r.status}">
-      <span class="ps-row"><span class="ps-ico">🚆</span><span class="ps-dest">${r.dest}행${r.express ? " 급행" : ""}</span></span><small class="ps-st">${r.short || r.status}</small></button>`).join("");
-  const stations = sts.map((name, i) => `<div class="ps-stn${i === m.originIdx ? " here" : ""}${name ? "" : " none"}" style="left:${psX(i)}px"><i></i><b>${name || ""}</b>${i === m.originIdx ? `<small>${pick.repick ? "현재" : pick.transfer ? "환승역" : "출발"}</small>` : ""}</div>`).join("");
-  const empty = !pick.rows.length ? `<div class="ps-empty">${pick.loaded ? "이 방향 열차가 근처에 없어요 · 들어오면 표시됩니다" : "근처 열차 확인 중…"}</div>` : "";
-  return `<div class="pick-head"><span>${title}</span><button class="pick-toggle" id="pickToggle">${pick.repick ? "취소" : "나중에"}</button></div>
+      <span class="ps-row"><span class="ps-ico">🚆</span><span class="ps-dest">${tx("bound", { d: destT(r.dest) })}${r.express ? " " + tx("express") : ""}</span></span><small class="ps-st">${r.short || r.status}</small></button>`).join("");
+  const stations = sts.map((name, i) => `<div class="ps-stn${i === m.originIdx ? " here" : ""}${name ? "" : " none"}" style="left:${psX(i)}px"><i></i><b>${sn(name || "")}</b>${i === m.originIdx ? `<small>${pick.repick ? tx("psNow") : pick.transfer ? tx("psTransfer") : tx("psOrigin")}</small>` : ""}</div>`).join("");
+  const empty = !pick.rows.length ? `<div class="ps-empty">${pick.loaded ? tx("pickNone") : tx("pickChecking")}</div>` : "";
+  return `<div class="pick-head"><span>${title}</span><button class="pick-toggle" id="pickToggle">${pick.repick ? tx("cancel") : tx("later")}</button></div>
     <div class="pick-scroll" id="pickScroll"><div class="pick-strip" style="width:${width}px;--rl:${m.color || "#888"}">
       <div class="ps-trains">${trains}</div>
       <div class="ps-track" style="left:${psX(first)}px;width:${Math.max(0, psX(last) - psX(first))}px"><span class="ps-arrow">›</span></div>
       ${stations}
       ${empty}
     </div></div>
-    <div class="ps-hint">${pick.rows.length ? "열차를 눌러 선택 · 좌우로 밀어 앞뒤 역 보기" : "좌우로 밀어 앞뒤 역 보기"}</div>`;
+    <div class="ps-hint">${pick.rows.length ? tx("pickHint") : tx("pickHintScroll")}</div>`;
 }
 /* 스크롤 위치: 처음엔 출발역이 가운데, 이후엔 사용자가 둔 위치 유지(8초 갱신마다 튀지 않게) */
 function pickScrollRestore(pick) {
@@ -4420,18 +4955,18 @@ function renderRoute() {
   const body = document.getElementById("scBody");
   const titleEl = document.getElementById("scTitle");
   if (routeMode === "select") {
-    titleEl.textContent = "도착역 선택";
+    titleEl.textContent = tx("chooseDest");
     /* 결과가 입력창 "위"로 쌓이는 순서 — 카드가 하단 고정이라 입력창은 제자리에 머물고
        결과 목록만 위로 자란다(타이핑 중 입력창이 흔들리지 않음). 목록은 최신순 위 정렬을 위해
        column-reverse가 아니라, 아래(입력창)에 가까운 항목이 1순위가 되도록 렌더에서 뒤집는다. */
     const favs = routeFavs();
     const favsHtml = favs.length ? `<div class="route-favs" id="routeFavs">${favs.map(f =>
-      `<button class="chip route-fav" data-name="${f.name}" aria-label="즐겨찾기 ${f.name}, 도착역으로 선택"><span class="star" aria-hidden="true">&#9733;</span><span>${f.name}</span>${f.colors.map(c => `<i class="dot" style="background:${c}" aria-hidden="true"></i>`).join("")}</button>`).join("")}</div>` : "";
-    body.innerHTML = `<button class="route-back" id="routeBack">← ${routeFrom}에서 출발</button>
+      `<button class="chip route-fav" data-name="${f.name}" aria-label="${tx("favAsDestAria", { s: sn(f.name) })}"><span class="star" aria-hidden="true">&#9733;</span><span>${sn(f.name)}</span>${f.colors.map(c => `<i class="dot" style="background:${c}" aria-hidden="true"></i>`).join("")}</button>`).join("")}</div>` : "";
+    body.innerHTML = `<button class="route-back" id="routeBack">← ${tx("fromStation", { s: sn(routeFrom) })}</button>
       <div class="route-opts" id="routeOpts"></div>
       ${favsHtml}
-      <input class="route-search" id="routeSearch" type="search" inputmode="search" placeholder="도착역 이름 검색" autocomplete="off">
-      <div class="route-hint">또는 지도에서 역을 탭하세요</div>`;
+      <input class="route-search" id="routeSearch" type="search" inputmode="search" placeholder="${tx("searchDest")}" autocomplete="off">
+      <div class="route-hint">${tx("orTapMap")}</div>`;
     document.getElementById("routeBack").addEventListener("click", () => { haptic(); exitRoute(); });
     document.querySelectorAll("#routeFavs .route-fav").forEach(el => el.addEventListener("click", () => { haptic(); pickDest(el.dataset.name); }));
     const inp = document.getElementById("routeSearch");
@@ -4440,10 +4975,10 @@ function renderRoute() {
     return;
   }
   if (routeMode === "result") {
-    titleEl.textContent = `${routeFrom} → ${routeTo}`;
+    titleEl.textContent = `${sn(routeFrom)} → ${sn(routeTo)}`;
     if (!routeResult) {
-      body.innerHTML = `<button class="route-back" id="routeBack">← 도착역 다시 선택</button>
-        <div class="sc-empty">경로를 찾지 못했습니다.<br>다른 역을 선택해 주세요.</div>`;
+      body.innerHTML = `<button class="route-back" id="routeBack">← ${tx("rechooseDest")}</button>
+        <div class="sc-empty">${tx("noRoute")}<br>${tx("tryOther")}</div>`;
       document.getElementById("routeBack").addEventListener("click", () => { haptic(); gotoSelect(); });
       return;
     }
@@ -4456,22 +4991,22 @@ function renderRoute() {
       return `<div class="route-leg" style="--rl:${s.color}">
           <div class="rl-rail"><div class="rl-dot"></div><div class="rl-dash"></div></div>
           <div class="rl-body">
-            <div class="rl-stn">${s.from}</div>
-            <div class="rl-info"><span class="rl-badge">${s.line}</span>${s.to}까지 ${s.stops}개 역 · 약 ${s.min}분<span class="rl-quick" data-qx="${i}"></span></div>
+            <div class="rl-stn">${sn(s.from)}</div>
+            <div class="rl-info"><span class="rl-badge">${lnN(s.line)}</span>${tx("legInfo", { to: sn(s.to), n: s.stops, m: s.min })}<span class="rl-quick" data-qx="${i}"></span></div>
           </div>
         </div>` + (isLast ? `<div class="route-leg last" style="--rl:${s.color}">
           <div class="rl-rail"><div class="rl-dot"></div></div>
-          <div class="rl-body"><div class="rl-stn">${s.to}</div><div class="rl-info">도착</div></div>
+          <div class="rl-body"><div class="rl-stn">${sn(s.to)}</div><div class="rl-info">${tx("arrive")}</div></div>
         </div>` : "");
     }).join("");
     body.innerHTML = routeTabsHtml()
       + `<div class="route-sum">
-        <span class="rt-total">${routeResult.totalMin}분</span>
-        <span class="rt-meta">환승 ${routeResult.transfers}회${wait != null ? " · 다음 열차 " + (wait <= 0 ? "곧" : wait + "분") : ""}</span>
-        <span class="rt-arr">${clockAfter(arrMin)} 도착</span>
+        <span class="rt-total">${fmtMin(routeResult.totalMin)}</span>
+        <span class="rt-meta">${tx("transfersN", { n: routeResult.transfers })}${wait != null ? " · " + (wait <= 0 ? tx("nextTrainSoon") : tx("nextTrainIn", { t: fmtMin(wait) })) : ""}</span>
+        <span class="rt-arr">${tx("arriveAt", { t: clockAfter(arrMin) })}</span>
       </div>
       <div class="route-legs">${legs}</div>
-      <button class="route-go" id="tripGo">지금 출발하기 →</button>`;
+      <button class="route-go" id="tripGo">${tx("startTrip")}</button>`;
     body.querySelectorAll(".route-tab").forEach(b => b.addEventListener("click", () => { haptic(); setRouteTab(b.dataset.tab); }));
     document.getElementById("tripGo").addEventListener("click", () => { haptic("medium"); startTrip(); });
     routeResult.segments.forEach((s, i) => {
@@ -4481,7 +5016,7 @@ function renderRoute() {
         s.quick = door || "";
         if (!door) return;
         const el = body.querySelector(`.rl-quick[data-qx="${i}"]`);
-        if (el) el.textContent = `빠른 환승 ${door}`;
+        if (el) el.textContent = tx("quickXfer", { d: door });
         if (NATIVE) postCard();
       });
     });
@@ -4489,36 +5024,36 @@ function renderRoute() {
   }
   if (routeMode === "trip" && trip) {
     const p = tripProgress();
-    titleEl.textContent = `${trip.from} → ${trip.to}`;
+    titleEl.textContent = `${sn(trip.from)} → ${sn(trip.to)}`;
     const legs = trip.result.segments.map((s, i) => {
       const cur = i === p.legIdx;
       return `<div class="route-leg trip-leg${cur ? " on" : ""}" style="--rl:${s.color}">
         <div class="rl-rail"><div class="rl-dot"></div>${i < trip.result.segments.length - 1 ? '<div class="rl-line"></div>' : ""}</div>
         <div class="rl-body">
-          <div class="rl-stn">${s.from} → ${s.to}</div>
-          <div class="rl-info"><span class="rl-badge">${s.line}</span><span>${s.stops}개 역 · 약 ${s.min}분</span><span class="rl-quick" data-qx="${i}"></span></div>
+          <div class="rl-stn">${sn(s.from)} → ${sn(s.to)}</div>
+          <div class="rl-info"><span class="rl-badge">${lnN(s.line)}</span><span>${tx("legInfoShort", { n: s.stops, m: s.min })}</span><span class="rl-quick" data-qx="${i}"></span></div>
         </div></div>`;
     }).join("");
     body.innerHTML = `<div class="trip-live">
         <span class="tl-dot"></span>
-        <span class="tl-remain">${p.done ? "도착" : p.remain + "분"}</span>
-        <span class="tl-label">${p.done ? "목적지 도착" : "남음"}</span>
-        <span class="tl-arr">${p.arriveAt} 도착</span>
+        <span class="tl-remain">${p.done ? tx("arrive") : fmtMin(p.remain)}</span>
+        <span class="tl-label">${p.done ? tx("arrivedDest") : tx("left")}</span>
+        <span class="tl-arr">${tx("arriveAt", { t: p.arriveAt })}</span>
       </div>
       <div class="trip-next${p.alight ? " alight" : ""}" style="--rl:${p.color}">
-        <span class="rl-badge">${p.line}</span>
-        ${p.done ? `${trip.to} 도착했습니다`
-          : p.dwelling ? `<b>${p.dwellStation}</b>에서 출발 대기 중${p.isLast || p.waiting ? "" : ` · ${p.legTo} 환승`}`
-          : p.waiting ? `열차 대기 중 · <b>${p.waitMin}분</b> 후 출발`
-          : p.alight ? `다음 <b>${p.nextStation}</b>에서 내리세요${p.isLast ? " · 목적지" : " · 환승"}`
-          : `다음 <b>${p.nextStation}</b>${p.isLast ? "" : ` · ${p.legTo} 환승`}`}
+        <span class="rl-badge">${lnN(p.line)}</span>
+        ${p.done ? tx("arrivedAt", { s: sn(trip.to) })
+          : p.dwelling ? tx("dwellAtB", { s: sn(p.dwellStation) }) + (p.isLast || p.waiting ? "" : " · " + tx("xferAt", { s: sn(p.legTo) }))
+          : p.waiting ? tx("waitingTrain", { m: p.waitMin })
+          : p.alight ? tx("alightNext", { s: sn(p.nextStation) }) + (p.isLast ? " · " + tx("destination") : " · " + tx("transfer"))
+          : tx("nextB", { s: sn(p.nextStation) }) + (p.isLast ? "" : " · " + tx("xferAt", { s: sn(p.legTo) }))}
       </div>
-      ${p.tracking && !p.done && !(p.pick && p.pick.repick) ? `<div class="trip-track"><span>${p.trainDest ? p.trainDest + "행" : "열차"} 추적${p.trackStale ? " · 위치 갱신 대기" : ""}</span><button class="tt-change" id="tripRepick">변경</button></div>` : ""}
+      ${p.tracking && !p.done && !(p.pick && p.pick.repick) ? `<div class="trip-track"><span>${p.trainDest ? tx("trackingTrainTo", { d: destT(p.trainDest) }) : tx("trackingTrain")}${p.trackStale ? " · " + tx("waitingPos") : ""}</span><button class="tt-change" id="tripRepick">${tx("change")}</button></div>` : ""}
       ${p.autoNote ? `<div class="trip-track auto">${p.autoNote}</div>` : ""}
       ${p.pick && !p.done ? pickListHtml(p.pick) : ""}
-      ${!p.tracking && !p.pick && p.trackLost ? `<div class="trip-track lost">열차 신호가 끊겨 시간 기준으로 안내 중</div>` : ""}
+      ${!p.tracking && !p.pick && p.trackLost ? `<div class="trip-track lost">${tx("trackLost")}</div>` : ""}
       <div class="route-legs">${legs}</div>
-      <button class="route-stop" id="tripStop">안내 종료</button>`;
+      <button class="route-stop" id="tripStop">${tx("endTrip")}</button>`;
     document.getElementById("tripStop").addEventListener("click", () => { haptic(); closeCardReset(); });
     body.querySelectorAll(".ps-train").forEach(el => el.addEventListener("click", () => { haptic(); tripBoard(el.dataset.no, Number(el.dataset.leg)); }));
     if (p.pick && !p.pick.dismissed) pickScrollRestore(p.pick);
@@ -4534,7 +5069,7 @@ function renderRoute() {
         s.quick = door || "";
         if (!door) return;
         const el = body.querySelector(`.rl-quick[data-qx="${i}"]`);
-        if (el) el.textContent = `빠른 환승 ${door}`;
+        if (el) el.textContent = tx("quickXfer", { d: door });
         if (NATIVE) postCard();
       });
     });
@@ -4554,16 +5089,32 @@ function routeFavs() {
   }
   return out;
 }
+/* 역 검색: 한국어는 기존과 같이 부분 일치. 영어 UI면 영문명(대소문자 무시)도 — 앞부분 일치 우선, 그다음 포함 */
+function searchStations(q) {
+  const all = Object.keys(STATION_LINES);
+  if (!EN) return all.filter(n => n.includes(q));
+  const ql = q.toLowerCase().replace(/\s+/g, " ");
+  const pre = [], mid = [];
+  for (const n of all) {
+    const e = sn(n).toLowerCase();
+    if (e.startsWith(ql) || n.startsWith(q)) pre.push(n);
+    else if (e.includes(ql) || e.replace(/[\s.'-]/g, "").includes(ql.replace(/[\s.'-]/g, "")) || n.includes(q)) mid.push(n);
+  }
+  /* 앞부분 일치는 정확히 같은 이름 → 짧은 이름 순(“gang” → Gangnam·Gangil 이 Gangnam-gu Office 보다 먼저) */
+  const len = n => (sn(n).toLowerCase() === ql ? -1 : sn(n).length);
+  pre.sort((a, b) => len(a) - len(b));
+  return pre.concat(mid);
+}
 function routeSearchInput(q) {
   q = (q || "").trim();
-  routeSearchResults = q ? Object.keys(STATION_LINES).filter(n => n.includes(q) && n !== routeFrom).slice(0, 40) : [];
+  routeSearchResults = q ? searchStations(q).filter(n => n !== routeFrom).slice(0, 40) : [];
   const list = document.getElementById("routeOpts");
   if (list) {
     /* 입력창이 목록 아래에 있으므로, 가장 관련도 높은 항목이 입력창과 가깝도록 역순 렌더 */
     const ordered = routeSearchResults.slice().reverse();
     list.innerHTML = !q ? "" : (ordered.length
-      ? ordered.map(n => `<div class="route-opt" data-name="${n}"><b>${n}</b><span>${[...STATION_LINES[n]].sort((a, b) => lineSortKey(a) - lineSortKey(b)).join(" · ")}</span></div>`).join("")
-      : `<div class="sc-empty small">검색 결과 없음</div>`);
+      ? ordered.map(n => `<div class="route-opt" data-name="${n}"><b>${sn(n)}</b><span>${[...STATION_LINES[n]].sort((a, b) => lineSortKey(a) - lineSortKey(b)).map(lnN).join(" · ")}</span></div>`).join("")
+      : `<div class="sc-empty small">${tx("noResults")}</div>`);
     list.querySelectorAll(".route-opt").forEach(el => el.addEventListener("click", () => { haptic(); pickDest(el.dataset.name); }));
     list.scrollTop = list.scrollHeight;   /* 1순위(맨 아래)가 보이도록 */
   }
@@ -5063,16 +5614,16 @@ async function findBoardCandidates(legIdx) {
     if (parked) {
       etaMin = null; score = 9 + Math.abs(rel) * 0.001;
       dwellMin = Math.floor(pk.durMs / 60000);
-      short = "출발 대기"; status = `${cur}에서 출발 대기 · ${dwellMin}분째`;
+      short = tx("dwellWait"); status = tx("dwellAt", { s: sn(cur) }) + " · " + tx("dwellFor", { n: dwellMin });
     }
     else if (dwelling) {
       const away = -rel; etaMin = away ? Math.max(1, Math.round(away * SEC_PER_STATION / 60)) : 0;
       dwellMin = Math.floor(dwMs / 60000);
-      score = 3 + (etaMin + 5.5) * 0.001; short = "출발 대기"; status = `${cur}에서 출발 대기 중 · ${dwellMin}분째`;
+      score = 3 + (etaMin + 5.5) * 0.001; short = tx("dwellWait"); status = tx("dwellingAt", { s: sn(cur) }) + " · " + tx("dwellFor", { n: dwellMin });
     }
-    else if (rel === 0) { score = st === "1" ? 0 : 1; etaMin = 0; short = st === "1" ? "승강장 도착" : st === "0" ? "진입 중" : "막 출발"; status = short; }
-    else if (rel > 0) { score = 2 + rel * 0.01; const w = st === "0" ? "진입 중" : st === "1" ? "정차" : "출발"; short = w; status = (rel === 1 && st !== "1" ? "방금 출발 · " : "출발함 · ") + `${cur} ${w}`; }
-    else { const away = -rel; const eta = Math.max(1, Math.round((away * SEC_PER_STATION - (st === "0" ? 90 : st === "2" ? 45 : 0)) / 60)); etaMin = eta; score = 3 + eta * 0.001 + away * 0.00001; short = `약 ${eta}분`; status = `${cur}에서 오는 중 · 약 ${eta}분`; }
+    else if (rel === 0) { score = st === "1" ? 0 : 1; etaMin = 0; short = st === "1" ? tx("atPlatform") : st === "0" ? tx("approaching") : tx("justDeparted"); status = short; }
+    else if (rel > 0) { score = 2 + rel * 0.01; const w = st === "0" ? tx("approaching") : st === "1" ? tx("stopped") : tx("departed"); short = w; status = (rel === 1 && st !== "1" ? tx("justLeft") + " · " : tx("leftAlready") + " · ") + tx("stnState", { s: sn(cur), w }); }
+    else { const away = -rel; const eta = Math.max(1, Math.round((away * SEC_PER_STATION - (st === "0" ? 90 : st === "2" ? 45 : 0)) / 60)); etaMin = eta; score = 3 + eta * 0.001 + away * 0.00001; short = tx("aboutMin", { m: eta }); status = tx("comingFrom", { s: sn(cur) }) + " · " + tx("aboutMin", { m: eta }); }
     out.push({ score, no: String(t.trainNo), dest: t.statnTnm, cur, sttus: st, status, short, line: seg.line, color: seg.color, dwelling, parked, etaMin, dwellMin,
                express: isExpress(t), pos: idx + off(st), away: Math.max(0, O - idx), term: t.statnTnm, updn: t.updnLine });
   }
@@ -5090,7 +5641,7 @@ function pickDisambiguate(rows) {
   const label = r => `${r.dest}|${r.express ? 1 : 0}|${r.short}`;
   const dupOf = () => { const c = {}; for (const r of rows) c[label(r)] = (c[label(r)] || 0) + 1; return r => c[label(r)] > 1; };
   let dup = dupOf();
-  for (const r of rows) if (dup(r) && (r.parked || r.dwelling) && r.dwellMin != null && !/분째$/.test(r.short)) r.short = `${r.short} · ${r.dwellMin}분째`;
+  for (const r of rows) if (dup(r) && (r.parked || r.dwelling) && r.dwellMin != null && !r._dwTag) { r.short = `${r.short} · ${tx("dwellFor", { n: r.dwellMin })}`; r._dwTag = 1; }
   dup = dupOf();
   const tag = rows.filter(dup);
   for (const r of tag) r.short = `${r.short} · #${r.no}`;
@@ -5143,7 +5694,7 @@ async function refreshPickList() {
         if (dw && !rows.some(x => !x.dwelling && x.etaMin != null && x.etaMin <= 5)) r = dw;
       }
       if (r) {
-        trip.autoNote = `가장 빠른 ${r.dest}행 열차로 자동 선택했어요 · 다른 열차면 '변경'`;
+        trip.autoNote = tx("autoPicked", { d: destT(r.dest) });
         trip.autoNoteUntil = Date.now() + 15000;
         tripBoard(r.no, pick.legIdx);
         if (!NATIVE) toast(trip.autoNote);
@@ -5230,7 +5781,7 @@ function tripComplete(reason) {
     transfers: (trip.result && trip.result.transfers) || 0,
     plannedMin: (trip.result && trip.result.totalMin) || 0,
     legs: ((trip.result && trip.result.segments) || []).map(g => ({ line: g.line, color: g.color, from: g.from, to: g.to })),
-    arrivedAt: new Date().toLocaleTimeString("ko-KR", { hour: "numeric", minute: "2-digit" }),   /* "오후 9:32" */
+    arrivedAt: fmtClock(new Date()),   /* "오후 9:32" / "9:32 PM" */
   };
   const oldKey = trip.track ? trainKey(trip.track.line, trip.track.no) : null;
   trip.arrived = true; trip.track = null;
@@ -5246,17 +5797,17 @@ function showTripDone(s) {
   if (NATIVE && window.__nativeCaps && window.__nativeCaps.tripDone) {
     try {
       window.webkit.messageHandlers.ui.postMessage({
-        type: "tripDone", from: s.from, to: s.to, elapsedMin: s.elapsedMin, transfers: s.transfers,
-        plannedMin: s.plannedMin, legs: s.legs, arrivedAt: s.arrivedAt,
+        type: "tripDone", from: sn(s.from), to: sn(s.to), elapsedMin: s.elapsedMin, transfers: s.transfers,
+        plannedMin: s.plannedMin, legs: s.legs.map(g => ({ ...g, line: lnN(g.line), from: sn(g.from), to: sn(g.to) })), arrivedAt: s.arrivedAt, lang: LANG,
       });
     } catch (e) {}
     return;
   }
   const scrim = document.getElementById("tripDoneScrim");
   if (!scrim) return;
-  document.getElementById("tripDoneMain").textContent = `${s.to}에 도착했습니다`;
+  document.getElementById("tripDoneMain").textContent = tx("arrivedAtFull", { s: sn(s.to) });
   document.getElementById("tripDoneSub").textContent =
-    `${s.from} → ${s.to} · ${s.elapsedMin}분 소요` + (s.transfers ? ` · 환승 ${s.transfers}회` : "");
+    `${sn(s.from)} → ${sn(s.to)} · ${tx("tookMin", { n: s.elapsedMin })}` + (s.transfers ? ` · ${tx("transfersN", { n: s.transfers })}` : "");
   scrim.classList.add("open");
   clearTimeout(tripDoneTimer);
   tripDoneTimer = setTimeout(hideTripDone, 20000);   /* 자리를 비운 사이 도착했어도 팝업이 영영 남지 않도록 */
@@ -5397,7 +5948,7 @@ function tripSwitchTrain(sw, list) {
                  since: old.since || Date.now(), switchedFrom: String(old.no), switchedAt: Date.now() };
   clearStaleTrackFollow(oldKey, trainKey(trip.track.line, trip.track.no));   /* 자동 교체된 옛 열차를 더는 좇지 않게(따라가기 중이었으면 새 열차로 이어감) */
   trip.dwellRem = null; trip.trackLost = false;
-  trip.autoNote = `탄 열차를 ${dest}행 ${sw.no}로 바꿨어요`;
+  trip.autoNote = tx("autoSwitched", { d: destT(dest), n: sw.no });
   trip.autoNoteUntil = Date.now() + 15000;
   haptic("light");
   if (!NATIVE) toast(trip.autoNote);
@@ -5434,26 +5985,27 @@ function postTrip() {
   try {
     const p = tripProgress();
     window.webkit.messageHandlers.ui.postMessage({
-      type: "trip", active: !!trip,
-      from: trip ? trip.from : "", to: trip ? trip.to : "",
+      /* 표시 문자열(역·노선명)은 현지화해서 보낸다 — track 은 서버 추적용 원본(한국어) 그대로 */
+      type: "trip", active: !!trip, lang: LANG,
+      from: trip ? sn(trip.from) : "", to: trip ? sn(trip.to) : "",
       remain: p ? p.remain : 0, total: p ? p.total : 0,
-      arriveAt: p ? p.arriveAt : "", line: p ? p.line : "", color: p ? colorHex(p.color) : "",
+      arriveAt: p ? p.arriveAt : "", line: p ? lnN(p.line) : "", color: p ? colorHex(p.color) : "",
       /* 출발 대기(장시간 정차): 라이브 액티비티가 'OO에서 출발 대기'를 보이도록 waiting:true·waitMin:0·nextStation=그 역 */
-      nextStation: p ? (p.dwelling ? p.dwellStation : p.nextStation) : "", legTo: p ? p.legTo : "", isLast: p ? p.isLast : true,
+      nextStation: p ? sn(p.dwelling ? p.dwellStation : p.nextStation) : "", legTo: p ? sn(p.legTo) : "", isLast: p ? p.isLast : true,
       transfers: trip ? trip.result.transfers : 0, done: p ? p.done : false,
       waiting: p ? (!!p.waiting || !!p.dwelling) : false, waitMin: p ? (p.dwelling ? 0 : (p.waitMin || 0)) : 0,
       dwelling: p ? !!p.dwelling : false,
-      tracking: p ? !!p.tracking : false, trainDest: p ? (p.trainDest || "") : "",
+      tracking: p ? !!p.tracking : false, trainDest: p ? destT(p.trainDest || "") : "",
       alight: p ? !!p.alight : false,
       /* 하차 예상 시각(ms)·하차역·구간 — 네이티브가 백그라운드 대비 로컬 알림을 미리 예약한다 */
       alightAt: p && p.alightInMin != null && !p.done ? Date.now() + p.alightInMin * 60000 : 0,
-      alightStation: p ? p.legTo : "", legIdx: p ? p.legIdx : 0,
+      alightStation: p ? sn(p.legTo) : "", legIdx: p ? p.legIdx : 0,
       /* 앱이 백그라운드로 가면 네이티브가 이 정보로 열차를 직접 따라간다 */
       track: tripTrackPayload(),
       /* 도착 예정 시각(ms) — 라이브 액티비티가 앱 없이도 스스로 카운트다운/자동 소멸하는 기준 */
       endEpoch: p ? (Date.now() + p.remain * 60000) : 0,
       /* 도착역이 속한(경로 마지막 구간) 노선 — 라이브 액티비티의 도착역 배지용 */
-      toLine: trip ? trip.result.segments[trip.result.segments.length - 1].line : "",
+      toLine: trip ? lnN(trip.result.segments[trip.result.segments.length - 1].line) : "",
       toColor: trip ? colorHex(trip.result.segments[trip.result.segments.length - 1].color) : "",
       /* 출발역이 속한(경로 첫 구간) 노선 — 라이브 액티비티의 출발역 배지가 환승 중에도 고정되도록 */
       fromColor: trip ? colorHex(trip.result.segments[0].color) : "",
@@ -5509,8 +6061,8 @@ async function openStationCard(name, opts) {
   scTimetable = null;
   scLineFilter = null;
   stopScTimer();
-  document.getElementById("scTitle").textContent = name;
-  document.getElementById("scBody").innerHTML = `<div class="sc-empty">불러오는 중...</div>`;
+  document.getElementById("scTitle").textContent = sn(name);
+  document.getElementById("scBody").innerHTML = `<div class="sc-empty">${tx("loading")}</div>`;
   document.getElementById("stationCard").classList.add("open");
   syncFavBtn();
   try {
@@ -5522,7 +6074,7 @@ async function openStationCard(name, opts) {
     scTimer = setInterval(scTick, 1000);
     loadTimetableFallback(name); /* 실시간 없는 방향에 보여줄 시간표 다음 열차를 배경에서 로드 */
   }
-  catch (e) { document.getElementById("scBody").innerHTML = `<div class="sc-empty">도착 정보를 가져오지 못했습니다.<br>${e.message}</div>`; }
+  catch (e) { document.getElementById("scBody").innerHTML = `<div class="sc-empty">${tx("arrFail")}<br>${errMsg(e)}</div>`; }
 }
 /* 카드 닫기 + 경로/주행 상태 완전 초기화 — X 버튼과 '안내 종료'가 같은 결과가 되도록 공유 */
 function closeCardReset() {
@@ -5546,7 +6098,7 @@ function closeCardReset() {
 }
 document.getElementById("scClose").addEventListener("click", () => {
   /* 주행 중엔 실수로 안내가 끊기지 않도록 확인 (네이티브는 SwiftUI 알럿으로 별도 처리) */
-  if (trip && !NATIVE && !confirm("안내를 종료할까요?\n진행 중인 경로 안내가 종료됩니다.")) return;
+  if (trip && !NATIVE && !confirm(tx("endTripConfirm"))) return;
   closeCardReset();
 });
 document.getElementById("scLive").addEventListener("click", () => focusTrackedTrain());
@@ -5564,32 +6116,32 @@ document.getElementById("scRefresh").addEventListener("click", () => {
 });
 
 /* ════════════════ 역 시간표 ════════════════ */
-const WEEK_LABEL = { "1": "평일", "2": "토요일", "3": "일·공휴일" };
+const WEEK_LABEL = EN ? { "1": "Weekdays", "2": "Saturday", "3": "Sun & holidays" } : { "1": "평일", "2": "토요일", "3": "일·공휴일" };
 function weekTagToday() { const d = new Date().getDay(); return d === 0 ? "3" : d === 6 ? "2" : "1"; }
 function nowHHMM() { const d = new Date(); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); }
 /* 시간표는 새벽 운행을 24:xx~25:xx로 표기 — 자정 넘김까지 비교 가능한 '운행분'으로 변환 */
 function svcMin(hhmm) { const p = String(hhmm).split(":"); const h = (+p[0] || 0), m = (+p[1] || 0); return (h < 4 ? h + 24 : h) * 60 + m; }
 function ttRelative(left, now) {
   const diff = svcMin(left) - svcMin(now);
-  if (diff <= 0) return "곧";
-  if (diff < 60) return `약 ${diff}분 후`;
-  return `약 ${Math.floor(diff / 60)}시간 ${diff % 60}분 후`;
+  if (diff <= 0) return tx("soonShort");
+  if (diff < 60) return tx("aboutInMin", { m: diff });
+  return tx("aboutInHM", { h: Math.floor(diff / 60), m: diff % 60 });
 }
 /* 실시간 도착이 없을 때 시간표 기준 '다음 열차'를 보여준다 */
 function timetableFallbackHtml(inout) {
-  if (!scTimetable) return `<div class="sc-empty small">다음 열차 확인 중…</div>`;
+  if (!scTimetable) return `<div class="sc-empty small">${tx("checkingNext")}</div>`;
   const lines = scTimetable[inout];
-  if (!lines || !lines.length) return `<div class="sc-empty small">시간표 정보 없음</div>`;
+  if (!lines || !lines.length) return `<div class="sc-empty small">${tx("noTtInfo")}</div>`;
   const now = nowHHMM(), all = [];
   for (const ln of lines) for (const t of (ln.trains || [])) all.push({ left: t.left, dest: t.dest, express: t.express, lineNum: ln.lineNum });
-  if (!all.length) return `<div class="sc-empty small">시간표 정보 없음</div>`;
+  if (!all.length) return `<div class="sc-empty small">${tx("noTtInfo")}</div>`;
   all.sort((a, b) => svcMin(a.left) - svcMin(b.left));
   const multi = new Set(all.map(t => t.lineNum)).size > 1;
   const up = all.filter(t => svcMin(t.left) >= svcMin(now));
-  const sub = t => `${multi ? t.lineNum + " · " : ""}${t.dest}행${t.express ? " · 급행" : ""}`;
+  const sub = t => `${multi ? lnN(t.lineNum) + " · " : ""}${tx("bound", { d: destT(t.dest) })}${t.express ? " · " + tx("express") : ""}`;
   if (!up.length) { /* 운행 종료/새벽 → 첫차 안내 */
     const f = all[0];
-    return `<div class="tt-fb-note">실시간 정보 없음 · 첫차</div>
+    return `<div class="tt-fb-note">${tx("noLiveFirst")}</div>
       <div class="sc-row"><span class="sc-dot" style="background:var(--faint)"></span>
         <div class="sc-main"><div class="sc-eta tt-fb-eta">${f.left}</div><div class="sc-sub">${sub(f)}</div></div></div>`;
   }
@@ -5599,7 +6151,7 @@ function timetableFallbackHtml(inout) {
         <div class="sc-eta tt-fb-eta">${t.left}<span class="tt-fb-rel">${ttRelative(t.left, now)}</span></div>
         <div class="sc-sub">${sub(t)}</div>
       </div></div>`).join("");
-  return `<div class="tt-fb-note">실시간 정보 없음 · 시간표 기준 다음 열차</div>${rows}`;
+  return `<div class="tt-fb-note">${tx("noLiveNext")}</div>${rows}`;
 }
 async function loadTimetableFallback(name) {
   if (location.protocol === "file:") { scTimetable = {}; return; }
@@ -5618,44 +6170,44 @@ async function openTimetable(name, inout, week) {
   stopScTimer();
   week = week || (ttCtx && ttCtx.name === name && ttCtx.week) || weekTagToday();
   ttCtx = { name, inout, week };
-  document.getElementById("scTitle").textContent = name + " 시간표";
-  document.getElementById("scBody").innerHTML = `<div class="sc-empty">시간표 불러오는 중...</div>`;
+  document.getElementById("scTitle").textContent = tx("ttTitle", { s: sn(name) });
+  document.getElementById("scBody").innerHTML = `<div class="sc-empty">${tx("ttLoading")}</div>`;
   document.getElementById("stationCard").classList.add("open");
   try {
     const r = await fetch(`/api/timetable?name=${encodeURIComponent(name)}&week=${week}&inout=${inout}`);
     const data = await r.json();
-    if (!r.ok || data.code) throw new Error(data.message || "시간표 오류");
+    if (!r.ok || data.code) throw new Error(data.message || tx("ttErr"));
     renderTimetable(data);
   } catch (e) {
     document.getElementById("scBody").innerHTML =
-      `<div class="tt-head"><button class="sc-back" id="ttBack">← 도착 정보</button></div>
-       <div class="sc-empty">시간표를 가져오지 못했습니다.<br>${e.message}</div>`;
+      `<div class="tt-head"><button class="sc-back" id="ttBack">← ${tx("arrivalsBack")}</button></div>
+       <div class="sc-empty">${tx("ttFail")}<br>${errMsg(e)}</div>`;
     wireTtControls();
   }
 }
 function renderTimetable(data) {
   const body = document.getElementById("scBody");
   const week = data.week, inout = data.inout;
-  const dirText = inout === "1" ? "상행 · 내선" : "하행 · 외선";
+  const dirText = dirT(inout === "1" ? "상행 · 내선" : "하행 · 외선");
   const now = nowHHMM(), isToday = week === weekTagToday();
   const sections = (data.lines || []).map(ln => {
     const trains = ln.trains || [];
-    if (!trains.length) return `<div class="tt-sec"><div class="tt-line">${ln.lineNum}</div><div class="sc-empty small">이 방향 시간표가 없습니다.</div></div>`;
+    if (!trains.length) return `<div class="tt-sec"><div class="tt-line">${lnN(ln.lineNum)}</div><div class="sc-empty small">${tx("noTtDir")}</div></div>`;
     const first = trains[0].left, last = trains[trains.length - 1].left;
     const nextIdx = isToday ? trains.findIndex(t => t.left >= now) : -1;
     const rows = trains.map((t, i) => `<div class="tt-row${i === nextIdx ? " next" : ""}">
         <span class="tt-time">${t.left}</span>
-        <span class="tt-dest">${t.dest}행${t.express ? ' <span class="badge express">급행</span>' : ""}</span>
-        ${i === nextIdx ? '<span class="tt-tag">다음</span>' : ""}
+        <span class="tt-dest">${tx("bound", { d: destT(t.dest) })}${t.express ? ' <span class="badge express">' + tx("express") + '</span>' : ""}</span>
+        ${i === nextIdx ? '<span class="tt-tag">' + tx("nextTag") + '</span>' : ""}
       </div>`).join("");
     return `<div class="tt-sec">
-      <div class="tt-line">${ln.lineNum}<span class="tt-meta">첫차 ${first} · 막차 ${last}</span></div>
+      <div class="tt-line">${lnN(ln.lineNum)}<span class="tt-meta">${tx("firstLast", { f: first, l: last })}</span></div>
       <div class="tt-list">${rows}</div>
     </div>`;
-  }).join("") || `<div class="sc-empty">시간표 정보가 없습니다.</div>`;
+  }).join("") || `<div class="sc-empty">${tx("noTtAll")}</div>`;
   body.innerHTML = `
     <div class="tt-head">
-      <button class="sc-back" id="ttBack">← 도착 정보</button>
+      <button class="sc-back" id="ttBack">← ${tx("arrivalsBack")}</button>
       <div class="tt-weeks">${["1", "2", "3"].map(w => `<button data-w="${w}" class="${w === week ? "on" : ""}">${WEEK_LABEL[w]}</button>`).join("")}</div>
     </div>
     <div class="tt-dir">${dirText}</div>
@@ -5679,18 +6231,18 @@ function renderFavList() {
   if (!el) return;
   const f = favList(), cnt = document.getElementById("favCount");
   if (cnt) cnt.textContent = `${f.length} / 5`;
-  if (!f.length) { el.innerHTML = `<div class="fav-empty">지도에서 역을 누르고 <span style="color:var(--text)">&#9734;</span> 를 켜면 여기에 모입니다.</div>`; return; }
+  if (!f.length) { el.innerHTML = `<div class="fav-empty">${tx("favEmptyHtml")}</div>`; return; }
   el.innerHTML = f.map((name, i) => {
     const ls = linesAt(resolve(name)) || [];
     const color = (ls[0] && LINES[ls[0]]) ? LINES[ls[0]].color : "#8a8d93";
     return `<div class="fav-row" data-name="${name}">
       <span class="fav-dot" style="background:${color}"></span>
-      <span class="fav-name">${name}</span>
-      ${ls[0] ? `<span class="fav-line">${ls[0]}</span>` : ""}
+      <span class="fav-name">${sn(name)}</span>
+      ${ls[0] ? `<span class="fav-line">${lnN(ls[0])}</span>` : ""}
       <span class="fav-actions">
-        <button class="fav-mv" data-dir="-1" data-i="${i}" aria-label="위로"${i === 0 ? " disabled" : ""}>&#9650;</button>
-        <button class="fav-mv" data-dir="1" data-i="${i}" aria-label="아래로"${i === f.length - 1 ? " disabled" : ""}>&#9660;</button>
-        <button class="fav-del" data-name="${name}" aria-label="삭제">&#10005;</button>
+        <button class="fav-mv" data-dir="-1" data-i="${i}" aria-label="${tx("moveUp")}"${i === 0 ? " disabled" : ""}>&#9650;</button>
+        <button class="fav-mv" data-dir="1" data-i="${i}" aria-label="${tx("moveDown")}"${i === f.length - 1 ? " disabled" : ""}>&#9660;</button>
+        <button class="fav-del" data-name="${name}" aria-label="${tx("remove")}">&#10005;</button>
       </span>
     </div>`;
   }).join("");
@@ -5709,18 +6261,18 @@ document.getElementById("scFav").addEventListener("click", () => {
   try { localStorage.setItem("favStations", JSON.stringify(f)); } catch (e) {}
   syncFavBtn();
   renderFavList();
-  toast(favList().includes(scStation) ? `${scStation}역을 즐겨찾기에 추가했습니다. 접속하면 자동으로 열립니다.` : `${scStation}역 즐겨찾기를 해제했습니다.`);
+  toast(favList().includes(scStation) ? tx("favAdded", { s: sn(scStation) }) : tx("favRemoved", { s: sn(scStation) }));
 });
 /* 열차 상세 카드 — 운행 대기(정차) 중이면 상태 줄을 '{역}에서 출발 대기 · N분째'로 */
 function trainDetailHtml(t) {
   const pk = trainParkedNow(t);
-  const etaLine = pk ? `${pk.stn}에서 출발 대기 · ${Math.floor(pk.durMs / 60000)}분째` : `${t.statnNm} ${STATUS_LABEL[String(t.trainSttus)] || ""}`;
+  const etaLine = pk ? tx("dwellAt", { s: sn(pk.stn) }) + " · " + tx("dwellFor", { n: Math.floor(pk.durMs / 60000) }) : `${sn(t.statnNm)} ${STATUS_LABEL[String(t.trainSttus)] || ""}`;
   return `
     <div class="sc-row${pk ? " parked" : ""}">
       <span class="sc-dot" style="background:${colorOfTrain(t)}"></span>
       <div class="sc-main">
         <div class="sc-eta" style="color:var(--text)">${etaLine}</div>
-        <div class="sc-sub">${lineOfTrain(t)} · ${dirLabel(t)} · ${t.statnTnm}행${isExpress(t) ? " · 급행" : ""}${t.lstcarAt === "1" ? " · 막차" : ""} · 열차 ${t.trainNo}</div>
+        <div class="sc-sub">${lnN(lineOfTrain(t))} · ${dirLabel(t)} · ${tx("bound", { d: destT(t.statnTnm) })}${isExpress(t) ? " · " + tx("express") : ""}${t.lstcarAt === "1" ? " · " + tx("lastTrain") : ""} · ${tx("trainNo", { n: t.trainNo })}</div>
       </div>
     </div>`;
 }
@@ -5734,10 +6286,10 @@ function openTrainCardByNo(key) {
   scStation = null;
   stopScTimer();
   syncFavBtn();
-  document.getElementById("scTitle").textContent = `${lineOfTrain(t)} ${t.statnTnm}행`;
+  document.getElementById("scTitle").textContent = `${lnN(lineOfTrain(t))} ${tx("bound", { d: destT(t.statnTnm) })}`;
   const following = state.followKey === key;
   document.getElementById("scBody").innerHTML = trainDetailHtml(t) +
-    `<button class="sc-follow${following ? " on" : ""}" id="scFollow">${following ? "따라가기 해제" : "이 열차 따라가기"}</button>`;
+    `<button class="sc-follow${following ? " on" : ""}" id="scFollow">${following ? tx("unfollow") : tx("followTrain")}</button>`;
   document.getElementById("stationCard").classList.add("open");
   document.getElementById("scFollow").addEventListener("click", () => {
     if (state.followKey === key) stopFollow();
@@ -5745,7 +6297,7 @@ function openTrainCardByNo(key) {
       state.followKey = key;
       const st = animState.get(key);
       if (st) adapter.setView(offsetLeft(st.cur, st.heading, trackOffM), Math.max(adapter.getView().zoom, 14));
-      toast("열차를 따라갑니다. 지도를 드래그하면 해제됩니다.");
+      toast(tx("following"));
     }
     openTrainCardByNo(key);
   });
@@ -5754,7 +6306,7 @@ function stopFollow() {
   if (!state.followKey) return;
   state.followKey = null;
   const btn = document.getElementById("scFollow");
-  if (btn) { btn.classList.remove("on"); btn.textContent = "이 열차 따라가기"; }
+  if (btn) { btn.classList.remove("on"); btn.textContent = tx("followTrain"); }
 }
 /* 지도 탭: 주변의 역과 열차를 수집해 하나면 바로, 겹치면 선택 레이어 */
 /* 탭 판정용 좌표 목록: STN 전부 + TRACK_STN 앵커(같은 역 이름이 여러 좌표를 가질 수 있다) */
@@ -5810,22 +6362,22 @@ function showChooser(stn, trains) {
   if (adapter.clearSelectedStation) adapter.clearSelectedStation();
   scStation = null;
   stopScTimer();
-  document.getElementById("scTitle").textContent = "어느 정보를 볼까요?";
+  document.getElementById("scTitle").textContent = tx("whichInfo");
   const rows = [];
   if (stn) rows.push(`
     <div class="sc-row sc-pick" data-pick="stn" data-v="${stn}">
       <span class="sc-dot" style="background:#8a8d93"></span>
       <div class="sc-main">
-        <div class="sc-eta" style="color:var(--text)">${stn}</div>
-        <div class="sc-sub">역 · 실시간 도착 정보 보기</div>
+        <div class="sc-eta" style="color:var(--text)">${sn(stn)}</div>
+        <div class="sc-sub">${tx("pickStationSub")}</div>
       </div>
     </div>`);
   for (const t of trains) rows.push(`
     <div class="sc-row sc-pick" data-pick="train" data-v="${tkeyOf(t)}">
       <span class="sc-dot" style="background:${colorOfTrain(t)}"></span>
       <div class="sc-main">
-        <div class="sc-eta" style="color:var(--text)">${lineOfTrain(t)} ${t.statnTnm}행</div>
-        <div class="sc-sub">열차 · ${dirLabel(t)} · ${t.statnNm} ${STATUS_LABEL[String(t.trainSttus)] || ""}${isExpress(t) ? " · 급행" : ""}</div>
+        <div class="sc-eta" style="color:var(--text)">${lnN(lineOfTrain(t))} ${tx("bound", { d: destT(t.statnTnm) })}</div>
+        <div class="sc-sub">${tx("trainWord")} · ${dirLabel(t)} · ${sn(t.statnNm)} ${STATUS_LABEL[String(t.trainSttus)] || ""}${isExpress(t) ? " · " + tx("express") : ""}</div>
       </div>
     </div>`);
   document.getElementById("scBody").innerHTML = rows.join("");
@@ -5846,13 +6398,13 @@ function addUsage(n) {
     const v = (parseInt(localStorage.getItem(k) || "0", 10) || 0) + n;
     localStorage.setItem(k, String(v));
     const el = document.getElementById("usageToday");
-    if (el) el.textContent = v + " / 1,000회";
+    if (el) el.textContent = tx("usage", { n: v });
   } catch (e) {}
 }
 function showUsage() {
   try {
     const el = document.getElementById("usageToday");
-    if (el) el.textContent = (parseInt(localStorage.getItem(usageKey()) || "0", 10) || 0) + " / 1,000회";
+    if (el) el.textContent = tx("usage", { n: (parseInt(localStorage.getItem(usageKey()) || "0", 10) || 0) });
   } catch (e) {}
 }
 
@@ -5876,6 +6428,15 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
+/* ── 설정 패널: 언어(자동/한국어/English) — localStorage 'lang'에 저장, 적용은 페이지 재로드 ── */
+function langPref() { try { const s = localStorage.getItem("lang"); return s === "ko" || s === "en" ? s : "auto"; } catch (e) { return "auto"; } }
+function syncLangSeg() { const v = langPref(); document.querySelectorAll("#langSeg button").forEach(b => b.classList.toggle("on", b.dataset.lang === v)); }
+function setLangPref(v, noReload) {
+  try { if (v === "ko" || v === "en") localStorage.setItem("lang", v); else localStorage.removeItem("lang"); } catch (e) {}
+  syncLangSeg();
+  if (noReload) return;   /* 네이티브: 앱이 &lang= 을 바꿔 웹뷰를 다시 연다 */
+  try { const u = new URL(location.href); u.searchParams.delete("lang"); location.replace(u.toString()); } catch (e) { location.reload(); }
+}
 /* ── 설정 패널: 지도 종류(기본/네이버) 선택, localStorage에 저장 ── */
 function syncProviderSeg() {
   document.querySelectorAll("#mapSeg button").forEach(b =>
@@ -5887,7 +6448,9 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
   const scrim = document.getElementById("settingsScrim");
   const btn = document.getElementById("settingsBtn");
   if (!panel || !btn) return;
-  const openSheet = () => { panel.classList.add("open"); if (scrim) scrim.classList.add("open"); syncProviderSeg(); renderFavList(); };
+  const openSheet = () => { panel.classList.add("open"); if (scrim) scrim.classList.add("open"); syncProviderSeg(); syncLangSeg(); renderFavList(); };
+  syncLangSeg();
+  panel.querySelectorAll("#langSeg button").forEach(b => b.addEventListener("click", () => { if (b.dataset.lang !== langPref() || new URLSearchParams(location.search).has("lang")) setLangPref(b.dataset.lang); }));
   const closeSheet = () => { panel.classList.remove("open"); if (scrim) scrim.classList.remove("open"); };
   closeSettingsSheet = closeSheet;
   const favEl = document.getElementById("favList");
@@ -5936,12 +6499,12 @@ let closeSettingsSheet = null;   /* 네이티브: 역/열차 카드가 열릴 �
     showLayer(ADAPTERS[prov].containerId);
     state.mapProvider = prov;
     adapter = ADAPTERS[prov];
-    if (prov !== savedProvider) toast(`${savedProvider === "naver" ? "네이버" : "애플"} 지도를 불러오지 못해 ${prov === "naver" ? "네이버" : "애플"} 지도로 시작합니다.`);
+    if (prov !== savedProvider) toast(tx("mapFallbackStart", { a: tx(savedProvider === "naver" ? "naver" : "apple"), b: tx(prov === "naver" ? "naver" : "apple") }));
   } else {
     showLayer("map-basic");
     state.mapProvider = "basic";
     adapter = basicAdapter;
-    toast("지도를 불러오지 못해 예비 지도로 시작합니다.");
+    toast(tx("mapBackupStart"));
   }
   state.line = loadSavedLine(); /* 마지막 선택 호선 복원 */
   adapter.init(viewOf(state.line).center, viewOf(state.line).zoom);
@@ -6006,12 +6569,12 @@ function recenterToUser() {
     if (adapter.setUserLocation) adapter.setUserLocation(state.userPos);
     adapter.setView(state.userPos, 14);
   }
-  if (!("geolocation" in navigator)) { toast("이 기기에서 위치를 사용할 수 없습니다."); return; }
-  if (!state.userPos) toast("현재 위치 확인 중…"); /* 첫 요청은 권한 팝업·위치 픽스로 수 초 걸릴 수 있어 즉시 피드백 */
+  if (!("geolocation" in navigator)) { toast(tx("noGeo")); return; }
+  if (!state.userPos) toast(tx("locating")); /* 첫 요청은 권한 팝업·위치 픽스로 수 초 걸릴 수 있어 즉시 피드백 */
   navigator.geolocation.getCurrentPosition(p => {
     state.userPos = [p.coords.latitude, p.coords.longitude];
     if (adapter.map) { if (adapter.setUserLocation) adapter.setUserLocation(state.userPos); adapter.setView(state.userPos, 14); }
-  }, () => { if (!state.userPos) toast("위치 권한을 확인해 주세요."); }, { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 });
+  }, () => { if (!state.userPos) toast(tx("checkGeoPerm")); }, { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 });
 }
 /* 현재위치 토글: 누르면 활성(흰색 반전) + 내 위치로 이동, 지도를 드래그하면 자동 비활성 */
 function setLocate(on) {

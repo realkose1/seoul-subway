@@ -53,6 +53,13 @@ test("validate — 정상 본문을 정리한다", () => {
   assert.equal(v.value.app.device, "iPhone17,1");
 });
 
+test("validate — lang 은 ko|en 만 받고 나머지는 버린다(없어도 통과)", () => {
+  assert.equal(FB.validate(sample({ lang: "en" })).value.lang, "en");
+  assert.equal(FB.validate(sample({ lang: "KO" })).value.lang, "ko");
+  assert.equal("lang" in FB.validate(sample({ lang: "fr" })).value, false);
+  assert.equal("lang" in FB.validate(sample({})).value, false);
+});
+
 test("validate — 모르는 항목·kind·빈 제보는 거절", () => {
   assert.equal(FB.validate(sample({ category: ["position", "hack"] })).ok, false);
   assert.equal(FB.validate(sample({ kind: "other" })).ok, false);

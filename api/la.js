@@ -44,6 +44,7 @@ const TH = require("../lib/train-hist");
 const { computeRow, sweepRow, overdueEnd, progressKey, lastProgressAt } = require("../lib/la-core");
 const { createPusher, isDeadToken, normalizePem } = require("../lib/apns");
 const store = require("../lib/supabase");
+const I18N = require("../lib/i18n");
 
 const TRIP_TTL_MS = 3 * 60 * 60 * 1000;   /* 행 수명 3시간 — 앱이 죽어도 영원히 푸시하지 않도록 */
 const MAX_ROWS = 50;                      /* 한 틱에서 처리할 최대 행 수 */
@@ -233,14 +234,21 @@ async function opRegister(req, res, { isUpdate }) {
   const patch = { trip_id: tripId, expires_at: iso(now + TRIP_TTL_MS) };   /* 살아 있다는 신호 = 수명 연장 */
   if (b.token != null) patch.token = String(b.token);
   if (b.env != null) patch.env = b.env === "sandbox" ? "sandbox" : "prod";
-  if (b.attrs != null) patch.attrs = b.attrs;
+  /* 사용자 노출 문자열의 언어("ko"|"en") — DB 컬럼 없이 attrs.lang 에 둔다. 최상위 lang 이 attrs.lang 보다 우선.
+     update 는 attrs 를 병합하므로 lang 만 보내도 나머지 attrs 가 유지된다. 둘 다 없으면 건드리지 않는다(없으면 ko). */
+  const bAttrs = b.attrs && typeof b.attrs === "object" && !Array.isArray(b.attrs) ? b.attrs : null;
+  const langIn = b.lang != null ? b.lang : bAttrs ? bAttrs.lang : null;
+  if (bAttrs != null || langIn != null) {
+    patch.attrs = Object.assign({}, bAttrs || {});
+    if (langIn != null) patch.attrs.lang = I18N.normLang(langIn);
+  } else if (b.attrs != null) patch.attrs = b.attrs;
   if (b.state != null) patch.state = b.state;
   if (b.track !== undefined) patch.track = b.track || null;
   if (b.paused != null) patch.paused = !!b.paused;
   if (b.state != null || b.track !== undefined) patch.last_progress_at = iso(now);   /* 앱이 새 위치를 줬다 = 진척 */
 
   let row = null, created = false;
-  if (isUpdate) row = await store.patchTrip(tripId, patch, now);
+  if (isUpdate) row = await store.patchTrip(tripId, patch, now, { mergeAttrs: true });
   if (!row) {
     if (!patch.token) return res.status(404).json({ error: "unknown tripId (send op=register first)" });
     row = Object.assign({
@@ -270,7 +278,7 @@ async function opEnd(req, res) {
     if (row && row.token) {
       const pusher = pusherFactory();
       try {
-        const st = Object.assign({}, row.state || {}, { done: true, waiting: false, alight: false });
+        const st = I18N.localizeState(Object.assign({}, row.state || {}, { done: true, waiting: false, alight: false }), I18N.langOf(row));
         const r = await pusher.send({
           token: row.token, env: row.env, contentState: st, event: "end", priority: 10,
           dismissalSec: Math.floor(Date.now() / 1000) + DISMISS_AFTER_SEC, staleSec: 300,

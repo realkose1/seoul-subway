@@ -1826,3 +1826,259 @@ test("store — 24시간 넘은 기록 행 정리: DELETE 가 무시되면(anon)
     assert.deepEqual(posts[0].map((r) => [r.date, r.events.deleted]), [["ssl:la:log:old", true]]);
   } finally { globalThis.fetch = real; }
 });
+
+/* ── 영어 현지화(lang) — 내부 로직은 한국어, 출력 경계에서만 번역 ─────────────── */
+
+const I18N = require("../lib/i18n.js");
+const EN_MAP = { "천호": "Cheonho", "강남": "Gangnam", "광나루": "Gwangnaru", "왕십리": "Wangsimni", "마장": "Majang", "건대입구": "Konkuk Univ.", "하남검단산": "Hanam Geomdansan" };
+const withEnMap = (fn) => async () => {
+  I18N._setStations(EN_MAP);
+  try { await fn(); } finally { I18N._setStations(null); }
+};
+
+test("i18n — stationEn: 정확 일치·역/괄호/종착 접미사 제거·한글 없으면 그대로·모르면 원문", withEnMap(() => {
+  assert.equal(I18N.stationEn("천호"), "Cheonho");
+  assert.equal(I18N.stationEn("천호역"), "Cheonho");
+  assert.equal(I18N.stationEn("천호(풍납토성)"), "Cheonho");
+  assert.equal(I18N.stationEn("하남검단산행"), "Hanam Geomdansan");
+  assert.equal(I18N.stationEn("Cheonho"), "Cheonho");            // 멱등
+  assert.equal(I18N.stationEn(I18N.stationEn("천호")), "Cheonho");
+  assert.equal(I18N.stationEn("없는역"), "없는역");              // 표에 없으면 원문
+  assert.equal(I18N.stationEn(""), "");
+  assert.equal(I18N.stationEn(undefined), undefined);
+}));
+
+test("i18n — stationEn: 표가 비어 있어도(파일 없음) 죽지 않고 원문", () => {
+  I18N._setStations({});
+  try { assert.equal(I18N.stationEn("강남"), "강남"); } finally { I18N._setStations(null); }
+});
+
+test("i18n — 실제 stations-en.json 이 있으면 주요 역이 영어로 나온다", () => {
+  let map = null;
+  try { map = require("../lib/stations-en.json"); } catch (e) { return; }
+  assert.equal(I18N.stationEn("강남"), map["강남"]);
+  assert.match(I18N.stationEn("강남"), /^[\x00-\x7f]+$/, "영문: " + I18N.stationEn("강남"));
+  assert.ok(Object.keys(map).length > 300);
+});
+
+test("i18n — lineEn / 알 수 없는 노선·이미 영어는 그대로", () => {
+  assert.equal(I18N.lineEn("5호선"), "Line 5");
+  assert.equal(I18N.lineEn("9호선"), "Line 9");
+  assert.equal(I18N.lineEn("수인분당선"), "Suin-Bundang");
+  assert.equal(I18N.lineEn("신분당선"), "Shinbundang");
+  assert.equal(I18N.lineEn("경의중앙선"), "Gyeongui-Jungang");
+  assert.equal(I18N.lineEn("공항철도"), "AREX");
+  assert.equal(I18N.lineEn("경춘선"), "Gyeongchun");
+  assert.equal(I18N.lineEn("경강선"), "Gyeonggang");
+  assert.equal(I18N.lineEn("서해선"), "Seohae");
+  assert.equal(I18N.lineEn("우이신설선"), "Ui-Sinseol");
+  assert.equal(I18N.lineEn("신림선"), "Sillim");
+  assert.equal(I18N.lineEn("Line 5"), "Line 5");
+  assert.equal(I18N.lineEn("새노선"), "새노선");
+});
+
+test("i18n — fmtClock / clockEn: Asia/Seoul, 오전·오후 ↔ AM/PM", () => {
+  const d = new Date(Date.UTC(2026, 0, 5, 4, 36));   // 13:36 KST
+  assert.equal(I18N.fmtClock(d, "ko"), "오후 1:36");
+  assert.equal(I18N.fmtClock(d, "en"), "1:36 PM");
+  assert.equal(I18N.fmtClock(Date.UTC(2026, 0, 5, 0, 5), "en"), "9:05 AM");
+  assert.equal(I18N.fmtClock(Date.UTC(2026, 0, 5, 0, 5), "ko"), "오전 9:05");
+  assert.equal(I18N.fmtClock(Date.UTC(2026, 0, 4, 15, 5), "en"), "12:05 AM");   // 00:05 KST
+  assert.equal(I18N.fmtClock(Date.UTC(2026, 0, 5, 3, 0), "en"), "12:00 PM");    // 12:00 KST
+  assert.equal(I18N.fmtClock(d, "ko"), clockAfter(0, d.getTime()), "ko 는 기존 clockAfter 와 같다");
+  assert.equal(I18N.clockEn("오후 1:36"), "1:36 PM");
+  assert.equal(I18N.clockEn("오전 9:05"), "9:05 AM");
+  assert.equal(I18N.clockEn("1:36 PM"), "1:36 PM");   // 멱등
+  assert.equal(I18N.clockEn(""), "");
+});
+
+test("i18n — 알 수 없는/없는 lang 은 ko", () => {
+  assert.equal(I18N.normLang(undefined), "ko");
+  assert.equal(I18N.normLang("fr"), "ko");
+  assert.equal(I18N.normLang("en"), "en");
+  assert.equal(I18N.normLang("en-US"), "en");
+  assert.equal(I18N.langOf({ attrs: { to: "천호" } }), "ko");
+  assert.equal(I18N.langOf({ attrs: { lang: "en" } }), "en");
+  assert.equal(I18N.langOf({ lang: "en" }), "en");   // attrs 객체 자체
+});
+
+test("computeRow(en) — 하차 알림과 ContentState 가 영어, 내부 매칭은 한국어", withEnMap(() => {
+  const now = Date.UTC(2026, 0, 5, 4, 0);   // 13:00 KST
+  const row = { trip_id: "t", token: "tok", attrs: { to: "천호", lang: "en" }, state: prevState({ alight: false }), track: baseTrack(), last_push_at: new Date(now).toISOString() };
+  const r = computeRow(row, feedOf({ "5호선": [train("5001", "광나루", "1")] }), now);
+  assert.equal(r.push.priority, 10);
+  assert.deepEqual(r.push.alert, { title: "Get off soon", body: "Get off at the next stop, Cheonho" });
+  assert.equal(r.state.nextStation, "Cheonho");
+  assert.equal(r.state.legTo, "Cheonho");
+  assert.equal(r.state.line, "Line 5");
+  assert.equal(r.state.toLine, "Line 5");
+  assert.match(r.state.arriveAt, /^1:0\d PM$/);
+  assert.equal(r.state.alight, true);
+  assert.equal(r.state.colorHex, "#996CAC");
+  assertShape(r.state, "en");
+}));
+
+test("computeRow(en) — 최종 도착 end 알림이 영어", withEnMap(() => {
+  const now = Date.now();
+  const row = { trip_id: "t", token: "tok", attrs: { from: "광화문", to: "천호", lang: "en" }, state: prevState(), track: baseTrack(), last_push_at: new Date(now).toISOString() };
+  const r = computeRow(row, feedOf({ "5호선": [train("5001", "천호", "1")] }), now);
+  assert.equal(r.push.event, "end");
+  assert.deepEqual(r.push.alert, { title: "Arrived", body: "You have arrived at Cheonho" });
+  assert.equal(r.state.done, true);
+  assert.equal(r.state.legTo, "Cheonho");
+}));
+
+test("computeRow(en) — attrs.to 가 없으면 legTo, 둘 다 없으면 your destination", withEnMap(() => {
+  const now = Date.now();
+  const mk = (st, tk) => ({ trip_id: "t", token: "tok", attrs: { lang: "en" }, state: prevState(st), track: baseTrack(tk), last_push_at: new Date(now).toISOString() });
+  const a = computeRow(mk({}, {}), feedOf({ "5호선": [train("5001", "천호", "1")] }), now);
+  assert.equal(a.push.alert.body, "You have arrived at Cheonho");
+  const b = computeRow(mk({ legTo: "" }, { legTo: "" }), feedOf({ "5호선": [train("5001", "천호", "1")] }), now);
+  assert.equal(b.push.alert.body, "You have arrived at your destination");
+}));
+
+test("computeRow — lang 이 없거나 모르는 값이면 ko 그대로(옛 앱 빌드 호환)", () => {
+  const now = Date.now();
+  for (const attrs of [{ to: "천호" }, { to: "천호", lang: "fr" }, { to: "천호", lang: "ko" }]) {
+    const row = { trip_id: "t", token: "tok", attrs, state: prevState({ alight: false }), track: baseTrack(), last_push_at: new Date(now).toISOString() };
+    const r = computeRow(row, feedOf({ "5호선": [train("5001", "광나루", "1")] }), now);
+    assert.deepEqual(r.push.alert, { title: "곧 내리세요", body: "다음 역 천호에서 내리세요" });
+    assert.equal(r.state.nextStation, "천호");
+    assert.equal(r.state.line, "5호선");
+    assert.match(r.state.arriveAt, /^오[전후] \d+:\d\d$/);
+  }
+});
+
+test("computeRow(en) — 앱이 이미 영어 상태를 보내도 그대로(멱등), 다음 틱 비교가 일관", withEnMap(() => {
+  const now = Date.now();
+  const enPrev = prevState({ line: "Line 5", toLine: "Line 5", legTo: "Cheonho", nextStation: "Gwangnaru", arriveAt: "1:00 PM" });
+  const row = { trip_id: "t", token: "tok", attrs: { to: "Cheonho", lang: "en" }, state: enPrev, track: baseTrack(), last_push_at: new Date(now).toISOString() };
+  const r1 = computeRow(row, feedOf({ "5호선": [train("5001", "광나루", "1")] }), now);
+  assert.deepEqual(r1.push.alert, { title: "Get off soon", body: "Get off at the next stop, Cheonho" });
+  assert.equal(r1.state.line, "Line 5");
+  assert.equal(r1.state.legTo, "Cheonho");
+  // 저장된(영어) 상태로 다음 틱: 같은 위치면 바뀐 게 없다
+  const row2 = Object.assign({}, row, { state: r1.state, track: r1.track });
+  const r2 = computeRow(row2, feedOf({ "5호선": [train("5001", "광나루", "1")] }), now);
+  assert.equal(r2.changed, false);
+  assert.equal(r2.push, null);
+  // 도착도 영어 attrs.to 로
+  const r3 = computeRow(Object.assign({}, row2), feedOf({ "5호선": [train("5001", "천호", "1")] }), now);
+  assert.deepEqual(r3.push.alert, { title: "Arrived", body: "You have arrived at Cheonho" });
+}));
+
+test("computeRow(en) — 환승 대기 상태의 line/legTo/nextStation 도 영어", withEnMap(() => {
+  const now = Date.now();
+  const row = transferRow({ attrs: { from: "광화문", to: "건대입구", transfers: 1, lang: "en" }, last_push_at: new Date(now).toISOString() });
+  const r = computeRow(row, feedOf({ "5호선": [train("5001", "왕십리", "1")] }), now);
+  assert.equal(r.note, "leg-end");
+  assert.equal(r.state.waiting, true);
+  assert.equal(r.state.line, "Line 2");
+  assert.equal(r.state.nextStation, "Wangsimni");
+  assert.equal(r.state.legTo, "Konkuk Univ.");
+  assert.match(r.state.arriveAt, /^\d{1,2}:\d\d (AM|PM)$/);
+}));
+
+test("overdueEnd(en) — 도착 end 알림과 상태가 영어", withEnMap(() => {
+  const now = Date.now();
+  const st = prevState({ endEpoch: now - 10 * 60000, legTo: "천호", line: "5호선" });
+  const row = { trip_id: "o", token: "tok", attrs: { to: "천호", lang: "en" }, state: st, track: baseTrack(), last_progress_at: new Date(now - 20 * 60000).toISOString() };
+  const x = { tripId: "o", token: "tok", env: "prod", state: st, track: baseTrack(), changed: false, push: null, remove: false, note: "" };
+  const o = LA.overdueEnd(row, x, now);
+  assert.ok(o);
+  assert.deepEqual(o.push.alert, { title: "Arrived", body: "You have arrived at Cheonho" });
+  assert.equal(o.state.legTo, "Cheonho");
+  assert.equal(o.state.line, "Line 5");
+  assert.equal(o.state.done, true);
+}));
+
+test("sweepRow(en) — 만료 end 의 마지막 상태가 영어", withEnMap(() => {
+  const now = Date.now();
+  const row = store.toTrip(store.toCache({ trip_id: "e", token: "tok", paused: false, attrs: { lang: "en" },
+    state: prevState({ arriveAt: "오후 9:32" }), track: baseTrack(), expires_at: new Date(now - 60000).toISOString() }, now));
+  const x = LA.sweepRow(row, now);
+  assert.equal(x.state.arriveAt, "9:32 PM");
+  assert.equal(x.state.line, "Line 5");
+  assert.equal(x.state.legTo, "Cheonho");
+  assert.equal(x.state.done, false);
+}));
+
+test("handler — register 는 lang 을 attrs.lang 에 저장한다(최상위 lang 우선, 없으면 attrs.lang, 둘 다 없으면 건드리지 않음)", async () => {
+  envUp();
+  const save = async (body) => {
+    const f = installFetch({ rows: [], lock: { id: "other", until: Date.now() + 60000 } });
+    try {
+      await call({ method: "POST", query: { op: "register" }, body: Object.assign({ tripId: "tl", token: "tok", state: prevState(), paused: false }, body) });
+      return f.seen.writes.find((w) => w.body && w.body[0] && w.body[0].date === "ssl:la:tl").body[0].events.attrs;
+    } finally { f.restore(); }
+  };
+  assert.deepEqual(await save({ lang: "en", attrs: { to: "천호" } }), { to: "천호", lang: "en" });
+  assert.deepEqual(await save({ attrs: { to: "천호", lang: "en" } }), { to: "천호", lang: "en" });
+  assert.deepEqual(await save({ lang: "en", attrs: { to: "천호", lang: "ko" } }), { to: "천호", lang: "en" });
+  assert.deepEqual(await save({ lang: "zz", attrs: { to: "천호" } }), { to: "천호", lang: "ko" });
+  assert.deepEqual(await save({ attrs: { to: "천호" } }), { to: "천호" });   // 옛 앱 — 그대로
+});
+
+test("handler — update 의 lang 은 기존 attrs 에 병합된다(lang 만 보내도 from/to 유지)", async () => {
+  envUp();
+  const now = Date.now();
+  const rows = [store.toCache({ trip_id: "tu", token: "tok", paused: true, attrs: { from: "광화문", to: "천호" }, state: prevState(),
+    track: null, expires_at: new Date(now + 3600000).toISOString() }, now)];
+  const f = installFetch({ rows, lock: { id: "other", until: now + 60000 } });
+  try {
+    const res = await call({ method: "POST", query: { op: "update" }, body: { tripId: "tu", lang: "en" } });
+    assert.equal(res.code, 200);
+    const w = f.seen.writes.find((x) => x.body && x.body[0] && x.body[0].date === "ssl:la:tu");
+    assert.deepEqual(w.body[0].events.attrs, { from: "광화문", to: "천호", lang: "en" });
+    assert.equal(w.body[0].events.token, "tok");
+  } finally { f.restore(); }
+});
+
+test("handler — update 가 attrs 만 보내면 기존 lang 을 지우지 않는다", async () => {
+  envUp();
+  const now = Date.now();
+  const rows = [store.toCache({ trip_id: "tv", token: "tok", paused: true, attrs: { from: "광화문", to: "천호", lang: "en" }, state: prevState(),
+    track: null, expires_at: new Date(now + 3600000).toISOString() }, now)];
+  const f = installFetch({ rows, lock: { id: "other", until: now + 60000 } });
+  try {
+    await call({ method: "POST", query: { op: "update" }, body: { tripId: "tv", attrs: { to: "강남" } } });
+    const w = f.seen.writes.find((x) => x.body && x.body[0] && x.body[0].date === "ssl:la:tv");
+    assert.deepEqual(w.body[0].events.attrs, { from: "광화문", to: "강남", lang: "en" });
+  } finally { f.restore(); }
+});
+
+test("handler(en) — 틱 푸시: 알림·ContentState 영어, 저장된 상태도 영어", withEnMap(async () => {
+  envUp();
+  const now = Date.now();
+  const rows = [store.toCache({ trip_id: "te", token: "tok", paused: false, attrs: { to: "천호", lang: "en" }, state: prevState({ alight: false }),
+    track: baseTrack(), expires_at: new Date(now + 3600000).toISOString() }, now)];
+  const pz = fakePusher();
+  const f = installFetch({ rows, feed: [train("5001", "광나루", "1")] });
+  try {
+    await call({ query: { op: "tick" }, headers: { "x-cron-secret": "s3cr3t" } });
+    assert.equal(pz.sent.length, 1);
+    const s = pz.sent[0];
+    assert.deepEqual(s.alert, { title: "Get off soon", body: "Get off at the next stop, Cheonho" });
+    assert.equal(s.contentState.nextStation, "Cheonho");
+    assert.equal(s.contentState.line, "Line 5");
+    assert.match(s.contentState.arriveAt, /^\d{1,2}:\d\d (AM|PM)$/);
+    const saved = f.seen.writes.find((w) => w.body && w.body[0] && w.body[0].date === "ssl:la:te");
+    assert.equal(saved.body[0].events.state.nextStation, "Cheonho");
+  } finally { f.restore(); pz.restore(); }
+}));
+
+test("handler(en) — op=end 의 마지막 상태도 영어", withEnMap(async () => {
+  envUp();
+  const now = Date.now();
+  const rows = [store.toCache({ trip_id: "tn", token: "tok", paused: false, attrs: { lang: "en" }, state: prevState({ arriveAt: "오전 9:05" }),
+    track: baseTrack(), expires_at: new Date(now + 3600000).toISOString() }, now)];
+  const pz = fakePusher();
+  const f = installFetch({ rows });
+  try {
+    await call({ method: "POST", query: { op: "end" }, body: { tripId: "tn" } });
+    assert.equal(pz.sent.length, 1);
+    assert.equal(pz.sent[0].contentState.arriveAt, "9:05 AM");
+    assert.equal(pz.sent[0].contentState.line, "Line 5");
+    assert.equal(pz.sent[0].contentState.done, true);
+  } finally { f.restore(); pz.restore(); }
+}));

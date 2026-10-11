@@ -13,6 +13,10 @@
          → ~50초 기다렸다가 자기 자신을 다시 호출 → 활성 주행이 없어지면 멈춤
 ```
 
+> **언어(`lang`)** — 앱은 register/update 에 `lang: "ko"|"en"`(최상위, `attrs.lang` 에도)을 보낸다. 서버는 DB 스키마 변경 없이 `attrs.lang` 에 저장하고(update 는 attrs 병합),
+> 알림 문구·`nextStation`/`legTo`/`line`/`toLine`/`arriveAt` 를 그 언어로 만들어 푸시한다(내부 로직은 한국어 이름 그대로, 출력 경계에서만 `lib/i18n.js` 로 번역 — 역명 표 `lib/stations-en.json`).
+> 없거나 모르는 값이면 `ko`(옛 앱 빌드 호환).
+
 ## 파일
 
 | 파일 | 역할 |
@@ -20,6 +24,7 @@
 | `api/la.js` | register / update / end / tick / kick / cleanup / diag 한 함수 (op 라우팅) + 자기 호출 체인 |
 | `lib/trip-state.js` | 상태 머신 (Swift `bgPoll`/`bgApply` 이식) |
 | `lib/la-core.js` | 틱 1행 계산 — 다음 상태 + 보낼 푸시 결정, 만료/지연/방치 정리 판정 (순수 함수) |
+| `lib/i18n.js` | 사용자 노출 문자열 현지화(역/노선/시각/알림 문구, 멱등) + `lib/stations-en.json` |
 | `lib/apns.js` | ES256 JWT + HTTP/2 전송 |
 | `lib/supabase.js` | 저장소(sf_cache 매핑) + 체인 잠금 |
 | `lib/position-feed.js` | 실시간 위치 피드 (`api/position.js` 와 공유) |

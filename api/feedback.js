@@ -3,7 +3,7 @@
    POST /api/feedback  (JSON)
      { kind: "trip", category: ["position"|"eta"|"route"|"notify"|"lockscreen"|"other", …],
        message: string(≤1000), trip: {from,to,legs:[{line,from,to}],elapsedMin,plannedMin,transfers,arrivedAt},
-       app: {version, build, os, device} }
+       app: {version, build, os, device}, lang?: "ko"|"en" }
      → 200 {ok:true, id}   · 400 형식 오류 · 413 본문 8KB 초과 · 429 너무 잦음 · 500 저장 실패
    GET  /api/feedback?op=list&limit=50   헤더 x-cron-secret(api/la.js 의 cronSecret) — 최근 제보(개발자용)
 
@@ -85,7 +85,11 @@ function validate(body) {
   if (body.message != null && typeof body.message !== "string") return { ok: false, error: "invalid message" };
   const message = cleanText(body.message, MAX_MESSAGE, { multiline: true });
   if (!category.length && !message) return { ok: false, error: "empty feedback" };
-  return { ok: true, value: { kind: "trip", category, message, trip: cleanTrip(body.trip), app: cleanApp(body.app) } };
+  const value = { kind: "trip", category, message, trip: cleanTrip(body.trip), app: cleanApp(body.app) };
+  /* 앱 언어(선택) — 있으면 events(jsonb)에 그대로 실린다. "ko"|"en" 만 받고 다른 값은 버린다 */
+  const lang = typeof body.lang === "string" ? body.lang.trim().toLowerCase().slice(0, 2) : "";
+  if (lang === "ko" || lang === "en") value.lang = lang;
+  return { ok: true, value };
 }
 
 function clientIp(req) {
